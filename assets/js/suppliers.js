@@ -12,6 +12,10 @@ function refreshSuppliersView() {
   if (container) {
     container.innerHTML = supplierTableHtml(editable);
     updateSupplierSummaryCardsUI();
+    const clrBtn = document.getElementById('sup-search-clear-btn');
+    if (clrBtn) clrBtn.style.display = supplierSearchQuery ? 'inline-flex' : 'none';
+    const rstBtn = document.getElementById('sup-reset-btn');
+    if (rstBtn) rstBtn.style.display = (supplierSearchQuery || supplierStatusFilter !== 'all' || supplierSortBy !== 'name_asc') ? 'inline-flex' : 'none';
     if (typeof syncRouteState === 'function') syncRouteState({ push: false });
   } else {
     renderPage();
@@ -67,7 +71,7 @@ function toggleSupplierProducts(sId) {
   const extraChips = document.querySelectorAll(`.sp-extra-chip-${sId}`);
   const btn = document.getElementById(`sp-more-btn-${sId}`);
   const s = supplierById(sId);
-  const validProductIds = s ? (s.productIds || []).filter(id => Boolean(productById(id))) : [];
+  const validProductIds = s ? (typeof getSupplierProductIds === 'function' ? getSupplierProductIds(s) : (s.productIds || []).filter(id => Boolean(productById(id)))) : [];
   const moreCount = Math.max(0, validProductIds.length - 3);
 
   extraChips.forEach(chip => {
@@ -139,10 +143,8 @@ function renderSupplierFilterToolbarHtml() {
         <input type="search" id="supplier-search-input" placeholder="Search name, contact, phone, email, address, product..." value="${escapeHtml(supplierSearchQuery)}"
           oninput="setSupplierSearch(this.value)"
           style="padding:6px 28px 6px 10px; border:1px solid var(--line); border-radius:6px; font-size:12.5px; min-width:240px;">
-        ${supplierSearchQuery ? `
-          <button type="button" onclick="setSupplierSearch(''); document.getElementById('supplier-search-input').value='';"
-                  style="position:absolute; right:6px; background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:12px; padding:2px 4px;" title="Clear search">✕</button>
-        ` : ''}
+        <button type="button" id="sup-search-clear-btn" onclick="setSupplierSearch(''); const inp=document.getElementById('supplier-search-input'); if(inp) inp.value='';"
+                style="display:${supplierSearchQuery ? 'inline-flex' : 'none'}; position:absolute; right:6px; background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:12px; padding:2px 4px;" title="Clear search">✕</button>
       </div>
       <select id="supplier-status-filter" onchange="setSupplierStatusFilter(this.value)"
         style="padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:12.5px;" title="Filter by status">
@@ -159,9 +161,7 @@ function renderSupplierFilterToolbarHtml() {
         <option value="products_asc" ${supplierSortBy === 'products_asc' ? 'selected' : ''}>Sort: Fewest Products</option>
         <option value="status_active" ${supplierSortBy === 'status_active' ? 'selected' : ''}>Sort: Active First</option>
       </select>
-      ${(supplierSearchQuery || supplierStatusFilter !== 'all' || supplierSortBy !== 'name_asc') ? `
-        <button type="button" class="btn ghost small" onclick="clearSupplierFilters()" title="Reset all filters">Reset</button>
-      ` : ''}
+      <button type="button" id="sup-reset-btn" class="btn ghost small" onclick="clearSupplierFilters()" title="Reset all filters" style="display:${(supplierSearchQuery || supplierStatusFilter !== 'all' || supplierSortBy !== 'name_asc') ? 'inline-flex' : 'none'};">Reset</button>
     </div>
   `;
 }
@@ -209,7 +209,8 @@ function supplierTableHtml(editable) {
     if (supplierStatusFilter === 'pending_po' && !pendingPOIds.has(s.id)) return false;
 
     if (q) {
-      const prodNames = (s.productIds || []).map(id => {
+      const prodList = typeof getSupplierProductIds === 'function' ? getSupplierProductIds(s) : (s.productIds || []);
+      const prodNames = prodList.map(id => {
         const p = productById(id);
         return p ? `${p.name} ${p.brand} ${p.type} ${p.color || ''}` : '';
       }).join(' ').toLowerCase();
@@ -223,8 +224,16 @@ function supplierTableHtml(editable) {
   list = list.slice().sort((a, b) => {
     if (supplierSortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '');
     if (supplierSortBy === 'name_desc') return (b.name || '').localeCompare(a.name || '');
-    if (supplierSortBy === 'products_desc') return (b.productIds || []).length - (a.productIds || []).length;
-    if (supplierSortBy === 'products_asc') return (a.productIds || []).length - (b.productIds || []).length;
+    if (supplierSortBy === 'products_desc') {
+      const bCount = (typeof getSupplierProductIds === 'function' ? getSupplierProductIds(b) : (b.productIds || [])).length;
+      const aCount = (typeof getSupplierProductIds === 'function' ? getSupplierProductIds(a) : (a.productIds || [])).length;
+      return bCount - aCount;
+    }
+    if (supplierSortBy === 'products_asc') {
+      const bCount = (typeof getSupplierProductIds === 'function' ? getSupplierProductIds(b) : (b.productIds || [])).length;
+      const aCount = (typeof getSupplierProductIds === 'function' ? getSupplierProductIds(a) : (a.productIds || [])).length;
+      return aCount - bCount;
+    }
     if (supplierSortBy === 'status_active') {
       if (a.status === b.status) return (a.name || '').localeCompare(b.name || '');
       return a.status === 'active' ? -1 : 1;
@@ -258,7 +267,7 @@ function supplierTableHtml(editable) {
       <tbody>
         ${pagedList.length ? pagedList.map(s => {
           const isExpanded = expandedSupplierIds.has(s.id);
-          const validProductIds = (s.productIds || []).filter(id => Boolean(productById(id)));
+          const validProductIds = typeof getSupplierProductIds === 'function' ? getSupplierProductIds(s) : (s.productIds || []).filter(id => Boolean(productById(id)));
           const initialProductIds = validProductIds.slice(0, 3);
           const extraProductIds = validProductIds.slice(3);
           const hasMore = extraProductIds.length > 0;
@@ -341,13 +350,23 @@ function openSupplierDetailsModal(id) {
   const totalSpend = pos.filter(o => o.status === 'received' || o.status === 'completed').reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
 
   // Associated products
-  const validProductIds = (s.productIds || []).filter(pId => Boolean(productById(pId)));
+  const validProductIds = typeof getSupplierProductIds === 'function' ? getSupplierProductIds(s) : (s.productIds || []).filter(pId => Boolean(productById(pId)));
   const products = validProductIds.map(pId => productById(pId));
 
-  // Recent transactions (receiving movements for products from this supplier)
+  // Recent transactions (receiving movements for this supplier specifically)
   const prodIdSet = new Set(validProductIds);
+  const supPoNums = new Set(supplierPOs.map(po => po.poNumber).filter(Boolean));
   const recentMovements = (db.movements || [])
-    .filter(m => m.type === 'receiving' && prodIdSet.has(m.productId))
+    .filter(m => {
+      if (m.type !== 'receiving' || !prodIdSet.has(m.productId)) return false;
+      if (m.batch && m.batch.supplierId) return String(m.batch.supplierId) === String(s.id);
+      const note = String(m.note || '');
+      if (s.name && note.toLowerCase().includes(s.name.toLowerCase())) return true;
+      for (const pn of supPoNums) {
+        if (note.includes(pn)) return true;
+      }
+      return false;
+    })
     .slice()
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 10);
@@ -536,6 +555,7 @@ function openSupplierDetailsModal(id) {
 
   const footHtml = `
     <button class="btn secondary" onclick="closeModal()">Close</button>
+    ${s.status === 'active' ? `<button class="btn secondary" onclick="closeModal(); startCreatePO(); if(typeof poSelectSupplier==='function'){poSelectSupplier('${s.id}');}else{poSupplierId='${s.id}'; poWizardGoToStep(2);}">+ Create Purchase Order</button>` : ''}
     ${isAdmin ? `<button class="btn" onclick="closeModal(); openSupplierModal('${s.id}')">✏️ Edit Supplier</button>` : ''}
   `;
 
@@ -551,7 +571,7 @@ function openSupplierModal(id) {
     return;
   }
   const s = id ? supplierById(id) : null;
-  const linkedIds = new Set(s ? s.productIds : []);
+  const linkedIds = new Set(s ? (typeof getSupplierProductIds === 'function' ? getSupplierProductIds(s) : (s.productIds || [])) : []);
   const initialCount = linkedIds.size;
 
   const productRows = (db.products || []).map(p => {
@@ -744,6 +764,7 @@ async function submitSupplier(e, id) {
     productIds,
   };
 
+  let newId = null;
   if (id) {
     const existing = supplierById(id);
     const changes = [];
@@ -773,7 +794,7 @@ async function submitSupplier(e, id) {
     );
     showToast('Supplier profile updated successfully.', 'ok');
   } else {
-    const newId = uid('s');
+    newId = uid('s');
     db.suppliers.push({ id: newId, status: 'active', ...data });
     logAudit(
       'SUPPLIER_CREATE',
@@ -789,7 +810,66 @@ async function submitSupplier(e, id) {
     showToast('New supplier added successfully.', 'ok');
   }
 
-  await saveDB();
+  const targetSupplierId = id || newId;
+
+  // Two-way synchronization with db.productSuppliers
+  if (!db.productSuppliers) db.productSuppliers = [];
+  const currentLinkedSet = new Set(productIds);
+
+  // For newly linked products, ensure default relationship records exist in productSuppliers
+  productIds.forEach(pId => {
+    const p = productById(pId);
+    if (!p) return;
+    const sizes = (typeof poSizesFor === 'function' ? poSizesFor(p) : productSizes(p)) || [1];
+    sizes.forEach(sz => {
+      const sizeVal = Number(sz) || 1;
+      const exists = db.productSuppliers.some(ps => (ps.supplierId === targetSupplierId || ps.supplier_id === targetSupplierId) && (ps.productId === pId || ps.product_id === pId) && Number(ps.containerSize || ps.container_size) === sizeVal);
+      if (!exists) {
+        const cost = typeof poPurchaseCostPerUnit === 'function' ? poPurchaseCostPerUnit(p, sizeVal) : Math.round(Number(p.price || 0) * sizeVal * 0.85);
+        const moq = sizeVal >= 16 ? 2 : (sizeVal >= 4 ? 5 : 10);
+        db.productSuppliers.push({
+          id: uid('ps'),
+          productId: pId,
+          product_id: pId,
+          supplierId: targetSupplierId,
+          supplier_id: targetSupplierId,
+          containerSize: sizeVal,
+          container_size: sizeVal,
+          purchaseCost: cost,
+          purchase_cost: cost,
+          minOrderQty: moq,
+          min_order_qty: moq,
+          availability: 'available',
+          notes: 'Configured via Supplier Directory'
+        });
+      }
+    });
+  });
+
+  // For unlinked products, remove relationships from productSuppliers, mark for DB deletion, and clear p.supplierId
+  if (id) {
+    if (!Array.isArray(db.deletedProductSupplierIds)) db.deletedProductSupplierIds = [];
+    db.productSuppliers = db.productSuppliers.filter(ps => {
+      const psSupplierId = ps.supplierId || ps.supplier_id;
+      const psProdId = ps.productId || ps.product_id;
+      if (psSupplierId === targetSupplierId && !currentLinkedSet.has(psProdId)) {
+        if (ps.id && !db.deletedProductSupplierIds.includes(ps.id)) {
+          db.deletedProductSupplierIds.push(ps.id);
+        }
+        return false;
+      }
+      return true;
+    });
+    (db.products || []).forEach(p => {
+      if ((p.supplierId === targetSupplierId || p.supplier_id === targetSupplierId) && !currentLinkedSet.has(p.id) && !currentLinkedSet.has(p.productId)) {
+        p.supplierId = null;
+        p.supplier_id = null;
+      }
+    });
+  }
+
+  const savedOk = await saveDB();
+  if (!savedOk) return false;
   closeModal();
   renderPage();
   return false;
@@ -828,12 +908,14 @@ async function toggleSupplierStatus(id) {
       newValue: newStatus
     }
   );
-  await saveDB();
-  renderPage();
-  showToast(`Supplier ${s.status === 'active' ? 'activated' : 'deactivated'}.`);
+  const savedOk = await saveDB();
+  if (savedOk) {
+    renderPage();
+    showToast(`Supplier ${s.status === 'active' ? 'activated' : 'deactivated'}.`);
+  }
 }
 
-function deleteSupplier(id) {
+async function deleteSupplier(id) {
   if (typeof currentUser !== 'undefined' && currentUser && currentUser.role !== 'admin') {
     showToast('Permission denied: Only administrators can manage suppliers.', 'error');
     return;
@@ -848,22 +930,35 @@ function deleteSupplier(id) {
     return;
   }
 
-  showConfirm({
+  const confirmed = await showConfirmDialog({
     title: `Delete Supplier "${s.name}"?`,
     message: `Are you sure you want to permanently delete this supplier? If you wish to preserve records, choose Deactivate instead.`,
-    confirmLabel: 'Delete Supplier',
-    confirmClass: 'btn danger',
-    onConfirm: async () => {
-      db.suppliers = (db.suppliers || []).filter(sup => sup.id !== id);
-      logAudit('SUPPLIER_DELETE', s.name, `Deleted supplier "${s.name}"`, {
-        entityName: s.name,
-        fieldChanged: 'Supplier Account',
-        oldValue: s.name,
-        newValue: 'Deleted'
-      });
-      await saveDB();
-      renderPage();
-      showToast(`Supplier "${s.name}" deleted.`, 'ok');
+    icon: '🗑️',
+    confirmText: 'Delete Supplier',
+    cancelText: 'Cancel',
+    danger: true
+  });
+  if (!confirmed) return;
+
+  db.suppliers = (db.suppliers || []).filter(sup => sup.id !== id);
+  if (Array.isArray(db.productSuppliers)) {
+    db.productSuppliers = db.productSuppliers.filter(ps => (ps.supplierId || ps.supplier_id) !== id);
+  }
+  (db.products || []).forEach(p => {
+    if (p.supplierId === id || p.supplier_id === id) {
+      p.supplierId = null;
+      p.supplier_id = null;
     }
   });
+  logAudit('SUPPLIER_DELETE', s.name, `Deleted supplier "${s.name}"`, {
+    entityName: s.name,
+    fieldChanged: 'Supplier Account',
+    oldValue: s.name,
+    newValue: 'Deleted'
+  });
+  const savedOk = await saveDB();
+  if (savedOk) {
+    renderPage();
+    showToast(`Supplier "${s.name}" deleted.`, 'ok');
+  }
 }

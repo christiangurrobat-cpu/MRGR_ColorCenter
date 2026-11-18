@@ -69,50 +69,35 @@ function resetAlertFilters() {
 }
 
 /**
+ * Evaluates which container sizes of product p match the current alert filters and tab.
+ */
+function getProductAlertMatchingSizes(p) {
+  if (!p) return [];
+  const rawSizes = (productSizes(p) || []).slice().sort((a, b) => Number(a) - Number(b));
+  return rawSizes.filter(s => {
+    const st = LowStockService.getVariantStockStatus(p, s);
+    const variant = productSizeVariantBySize(p, s);
+    const poSt = LowStockService.getVariantPOStatus(p, s, variant ? variant.sizeId : null);
+
+    if (alertContainerSizeFilter !== 'all' && normalizeCanSize(s) !== normalizeCanSize(alertContainerSizeFilter)) return false;
+    if (alertStockStatusFilter !== 'all' && st !== alertStockStatusFilter) return false;
+
+    if (alertSizeFilter === 'all') return true;
+    if (alertTab === 'needing_po') return (st === 'low' || st === 'out') && poSt.status !== 'on_order';
+    if (alertTab === 'on_order') return poSt.status === 'on_order';
+    return st === 'low' || st === 'out';
+  });
+}
+
+/**
  * Returns filtered and sorted products according to the active tab and advanced filters.
  */
 function getAlertsList() {
-  const baseProducts = alertStockStatusFilter === 'ok' ? activeProducts() : lowStockProducts();
+  const baseProducts = activeProducts();
 
-  let list = baseProducts.sort((a, b) => {
-    const aLow = productLowSizes(a).length;
-    const bLow = productLowSizes(b).length;
-    if (bLow !== aLow) return bLow - aLow;
-    const aThresh = productTotalThresholdLiters(a) || Number(a.threshold) || 0;
-    const bThresh = productTotalThresholdLiters(b) || Number(b.threshold) || 0;
-    return (a.stock - aThresh) - (b.stock - bThresh);
-  });
+  let list = baseProducts.filter(p => getProductAlertMatchingSizes(p).length > 0);
 
-  // 1. Tab filter
-  if (alertTab === 'needing_po') {
-    list = list.filter(p => {
-      const sizes = productSizes(p);
-      return sizes.some(s => {
-        const variant = productSizeVariantBySize(p, s);
-        return LowStockService.isVariantEligible(p, s, variant ? variant.sizeId : null);
-      });
-    });
-  } else if (alertTab === 'on_order') {
-    list = list.filter(p => {
-      const sizes = productSizes(p);
-      return sizes.some(s => {
-        const variant = productSizeVariantBySize(p, s);
-        const poSt = LowStockService.getVariantPOStatus(p, s, variant ? variant.sizeId : null);
-        return poSt.status === 'on_order';
-      });
-    });
-  } else {
-    // alertTab === 'all'
-    list = list.filter(p => {
-      const sizes = productSizes(p);
-      return sizes.some(s => {
-        const st = LowStockService.getVariantStockStatus(p, s);
-        return st === 'low' || st === 'out';
-      });
-    });
-  }
-
-  // 2. Search query filter
+  // 1. Search query filter
   if (alertSearchQuery) {
     const q = alertSearchQuery.toLowerCase();
     list = list.filter(p => {
@@ -126,31 +111,23 @@ function getAlertsList() {
     });
   }
 
-  // 3. Supplier filter
+  // 2. Supplier filter
   if (alertSupplierFilter && alertSupplierFilter !== 'all') {
     list = list.filter(p => {
       const suppliers = suppliersForProduct(p.id);
       return suppliers.some(s => String(s.id) === String(alertSupplierFilter)) ||
-             String(p.supplierId || p.supplier_id || '') === String(alertSupplierFilter);
+        String(p.supplierId || p.supplier_id || '') === String(alertSupplierFilter);
     });
   }
 
-  // 4. Container size filter
-  if (alertContainerSizeFilter && alertContainerSizeFilter !== 'all') {
-    const targetSz = normalizeCanSize(alertContainerSizeFilter);
-    list = list.filter(p => {
-      const sizes = productSizes(p);
-      return sizes.some(s => normalizeCanSize(s) === targetSz);
-    });
-  }
-
-  // 5. Stock status filter
-  if (alertStockStatusFilter && alertStockStatusFilter !== 'all') {
-    list = list.filter(p => {
-      const sizes = productSizes(p);
-      return sizes.some(s => LowStockService.getVariantStockStatus(p, s) === alertStockStatusFilter);
-    });
-  }
+  list.sort((a, b) => {
+    const aLow = productLowSizes(a).length;
+    const bLow = productLowSizes(b).length;
+    if (bLow !== aLow) return bLow - aLow;
+    const aThresh = productTotalThresholdLiters(a) || Number(a.threshold) || 0;
+    const bThresh = productTotalThresholdLiters(b) || Number(b.threshold) || 0;
+    return (a.stock - aThresh) - (b.stock - bThresh);
+  });
 
   return list;
 }
@@ -171,6 +148,17 @@ function toggleSelectAllAlerts(checked) {
   } else {
     LowStockService.clear();
   }
+}
+
+function createPOForAllNeedingPO() {
+  const allLow = activeProducts();
+  const eligibleSizes = LowStockService.getAllEligibleSizes(allLow);
+  if (!eligibleSizes.length) {
+    showToast('No items currently need a purchase order.', 'info');
+    return;
+  }
+  LowStockService.selectAll(eligibleSizes);
+  createPOFromSelectedAlerts();
 }
 
 function toggleSelectProductSizes(productId, forceState = null) {
@@ -227,25 +215,7 @@ function alertsPage() {
   // Count total qualifying sizes rendered in current view
   let totalVisibleSizes = 0;
   currentList.forEach(p => {
-    const rawSizes = productSizes(p);
-    rawSizes.forEach(s => {
-      const st = LowStockService.getVariantStockStatus(p, s);
-      const variant = productSizeVariantBySize(p, s);
-      const poSt = LowStockService.getVariantPOStatus(p, s, variant ? variant.sizeId : null);
-
-      if (alertContainerSizeFilter !== 'all' && normalizeCanSize(s) !== normalizeCanSize(alertContainerSizeFilter)) return;
-      if (alertStockStatusFilter !== 'all' && st !== alertStockStatusFilter) return;
-
-      if (alertSizeFilter === 'all') {
-        totalVisibleSizes++;
-      } else if (alertTab === 'needing_po') {
-        if ((st === 'low' || st === 'out') && poSt.status !== 'on_order') totalVisibleSizes++;
-      } else if (alertTab === 'on_order') {
-        if (poSt.status === 'on_order') totalVisibleSizes++;
-      } else {
-        if (st === 'low' || st === 'out') totalVisibleSizes++;
-      }
-    });
+    totalVisibleSizes += getProductAlertMatchingSizes(p).length;
   });
 
   const hasActiveFilters = alertSearchQuery || alertSupplierFilter !== 'all' || alertContainerSizeFilter !== 'all' || alertStockStatusFilter !== 'all' || alertSizeFilter !== 'low_only';
@@ -268,7 +238,7 @@ function alertsPage() {
         </div>
         ${canOrder ? `
           <div style="display:flex; align-items:center; gap:8px;">
-            <button class="btn small" style="background:#1F6F6B; color:#fff; font-weight:700; box-shadow:0 2px 6px rgba(31,111,107,0.3);" onclick="${selectedCount === 0 ? 'toggleSelectAllAlerts(true); createPOFromSelectedAlerts();' : 'createPOFromSelectedAlerts()'}" ${summary.needingPOSizes === 0 ? 'disabled' : ''}>
+            <button class="btn small" style="background:#1F6F6B; color:#fff; font-weight:700; box-shadow:0 2px 6px rgba(31,111,107,0.3);" onclick="${selectedCount === 0 ? 'createPOForAllNeedingPO()' : 'createPOFromSelectedAlerts()'}" ${summary.needingPOSizes === 0 ? 'disabled' : ''}>
               📋 ${selectedCount > 0 ? `Create PO for Selected (${selectedCount} Sizes)` : `Create PO for Needing PO (${summary.needingPOSizes} Sizes)`} &rarr;
             </button>
           </div>
@@ -391,7 +361,7 @@ function alertsPage() {
       <!-- Filter by Supplier -->
       <select id="alerts-supplier-filter" onchange="setAlertSupplierFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:var(--ink); max-width:160px;" title="Filter by Supplier">
         <option value="all" ${alertSupplierFilter === 'all' ? 'selected' : ''}>All Suppliers</option>
-        ${activeSuppliers.map(s => `<option value="${s.id}" ${alertSupplierFilter === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+        ${activeSuppliers.map(s => `<option value="${s.id}" ${String(alertSupplierFilter) === String(s.id) ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
       </select>
 
       <!-- Filter by Container Size -->
@@ -440,10 +410,10 @@ function alertsPage() {
       <div>
         <h3 style="margin:0; font-size:16px;">
           ${alertTab === 'needing_po'
-            ? '⚠️ Products Needing Restock Purchase Order'
-            : (alertTab === 'on_order'
-              ? '🚚 Low-Stock Products with Active Purchase Orders'
-              : '📋 All Low-Stock Products & Sizes')}
+      ? '⚠️ Products Needing Restock Purchase Order'
+      : (alertTab === 'on_order'
+        ? '🚚 Low-Stock Products with Active Purchase Orders'
+        : '📋 All Low-Stock Products & Sizes')}
         </h3>
         <!-- PHASE 5: Accurate Selection Summary Display -->
         <div id="alerts-selection-summary" style="font-size:12px; color:var(--ink-soft); margin-top:3px;">
@@ -487,7 +457,7 @@ function alertsPage() {
                        id="chk-all-alerts"
                        onchange="toggleSelectAllAlerts(this.checked)"
                        title="Select / deselect all eligible sizes in current filtered list"
-                       ${eligibleSizesAll.length > 0 && selectedCount === eligibleSizesAll.length ? 'checked' : ''}>
+                       ${eligibleSizesAll.length > 0 && eligibleSizesAll.every(sz => LowStockService.selectedKeys.has(sz.key)) ? 'checked' : ''}>
               </th>
             ` : ''}
             <th style="width:220px;">Product Name</th>
@@ -506,48 +476,31 @@ function alertsPage() {
         </thead>
         <tbody>
           ${pagedList.length ? pagedList.map((p, pIdx) => {
-            let rawSizes = productSizes(p).slice().sort((a, b) => Number(a) - Number(b));
-            if (!rawSizes.length) rawSizes = [1];
+          let sizes = getProductAlertMatchingSizes(p);
+          if (!sizes.length) return '';
 
-            // Filter sizes for this product row
-            let sizes = rawSizes.filter(s => {
-              const st = LowStockService.getVariantStockStatus(p, s);
-              const variant = productSizeVariantBySize(p, s);
-              const poSt = LowStockService.getVariantPOStatus(p, s, variant ? variant.sizeId : null);
+          const rowSpan = sizes.length;
+          const bgGroup = pIdx % 2 === 1 ? 'background:#FCFBF9;' : 'background:#FFFFFF;';
+          const prodEligible = LowStockService.getProductEligibleSizes(p);
+          const parentState = LowStockService.getProductSelectionState(p.id);
 
-              if (alertContainerSizeFilter !== 'all' && normalizeCanSize(s) !== normalizeCanSize(alertContainerSizeFilter)) return false;
-              if (alertStockStatusFilter !== 'all' && st !== alertStockStatusFilter) return false;
+          return sizes.map((s, idx) => {
+            const isFirst = idx === 0;
+            const isLast = idx === rowSpan - 1;
+            const variant = productSizeVariantBySize(p, s);
+            const sizeId = variant ? variant.sizeId : null;
+            const sizeKey = getAlertSizeKey(p.id, s, sizeId);
+            const count = productCanCount(p, s);
+            const thresh = productSizeThreshold(p, s);
+            const stockVol = count * s;
+            const threshVol = thresh * s;
+            const st = LowStockService.getVariantStockStatus(p, s);
+            const poSt = LowStockService.getVariantPOStatus(p, s, sizeId);
+            const isEligible = LowStockService.isVariantEligible(p, s, sizeId);
+            const isChecked = LowStockService.isSelected(p.id, s, sizeId);
+            const borderBottom = isLast ? 'border-bottom: 2px solid #D8D1C4;' : 'border-bottom: 1px solid #F0ECE1;';
 
-              if (alertSizeFilter === 'all') return true;
-              if (alertTab === 'needing_po') return (st === 'low' || st === 'out') && poSt.status !== 'on_order';
-              if (alertTab === 'on_order') return poSt.status === 'on_order';
-              return st === 'low' || st === 'out';
-            });
-
-            if (!sizes.length) return '';
-
-            const rowSpan = sizes.length;
-            const bgGroup = pIdx % 2 === 1 ? 'background:#FCFBF9;' : 'background:#FFFFFF;';
-            const prodEligible = LowStockService.getProductEligibleSizes(p);
-            const parentState = LowStockService.getProductSelectionState(p.id);
-
-            return sizes.map((s, idx) => {
-              const isFirst = idx === 0;
-              const isLast = idx === rowSpan - 1;
-              const variant = productSizeVariantBySize(p, s);
-              const sizeId = variant ? variant.sizeId : null;
-              const sizeKey = getAlertSizeKey(p.id, s, sizeId);
-              const count = productCanCount(p, s);
-              const thresh = productSizeThreshold(p, s);
-              const stockVol = count * s;
-              const threshVol = thresh * s;
-              const st = LowStockService.getVariantStockStatus(p, s);
-              const poSt = LowStockService.getVariantPOStatus(p, s, sizeId);
-              const isEligible = LowStockService.isVariantEligible(p, s, sizeId);
-              const isChecked = LowStockService.isSelected(p.id, s, sizeId);
-              const borderBottom = isLast ? 'border-bottom: 2px solid #D8D1C4;' : 'border-bottom: 1px solid #F0ECE1;';
-
-              return `
+            return `
               <tr class="alert-row alert-prod-row-${p.id} ${isLast ? 'product-row-last' : ''} ${isChecked ? 'row-selected' : ''} ${poSt.status === 'on_order' ? 'row-on-order' : ''}" style="${bgGroup}">
                 
                 <!-- PHASE 4.A: Parent Checkbox (first row only) & PHASE 4.B: Child Size Checkbox -->
@@ -673,15 +626,15 @@ function alertsPage() {
                   `)}
                 </td>
               </tr>`;
-            }).join('');
-          }).join('') : `
+          }).join('');
+        }).join('') : `
             <tr>
               <td colspan="13" class="empty-state">
                 ${alertTab === 'needing_po'
-                  ? '🎉 Excellent! No low-stock products currently need purchase orders.'
-                  : (alertTab === 'on_order'
-                    ? 'No low-stock products are currently on order.'
-                    : 'All products and container sizes are above their reorder thresholds.')}
+      ? '🎉 Excellent! No low-stock products currently need purchase orders.'
+      : (alertTab === 'on_order'
+        ? 'No low-stock products are currently on order.'
+        : 'All products and container sizes are above their reorder thresholds.')}
               </td>
             </tr>
           `}

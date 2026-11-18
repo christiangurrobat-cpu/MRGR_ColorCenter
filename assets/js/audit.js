@@ -274,13 +274,6 @@ function auditActClass(a) {
   return '';
 }
 
-function thisMonthStartISO() {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}-01`;
-}
-
 function formatAuditDateReadable(iso) {
   if (!iso) return '';
   const parts = iso.split('-');
@@ -462,14 +455,20 @@ function setAuditDatePreset(preset) {
 function onAuditDateChange() {
   const fromEl = document.getElementById('al-from');
   const toEl = document.getElementById('al-to');
-  let f = fromEl ? fromEl.value : '';
-  let t = toEl ? toEl.value : '';
+  const toIso = (v) => {
+    if (!v) return '';
+    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
+    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
+  };
+  let f = toIso(fromEl ? fromEl.value : '');
+  let t = toIso(toEl ? toEl.value : '');
   if (f && t && f > t) {
     const tmp = f;
     f = t;
     t = tmp;
-    if (fromEl) fromEl.value = f;
-    if (toEl) toEl.value = t;
+    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
+    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
   }
   auditFilters.from = f;
   auditFilters.to = t;
@@ -628,7 +627,7 @@ function auditLogPage() {
   ${isHistorical ? `
     <div class="historical-records-banner">
       <div>
-        🏛️ <b>Historical Audit Records:</b> Showing ${!f.from && !f.to ? 'All-Time' : (f.from.slice(0, 4) === f.to.slice(0, 4) ? `Year ${f.from.slice(0, 4)}` : `${formatDateReadable(f.from)} – ${formatDateReadable(f.to)}`)} events. All system audit trail events are permanently retained and cannot be overwritten.
+        🏛️ <b>Historical Audit Records:</b> Showing ${!f.from && !f.to ? 'All-Time' : (f.from && f.to && f.from.slice(0, 4) === f.to.slice(0, 4) ? `Year ${f.from.slice(0, 4)}` : `${f.from ? formatDateReadable(f.from) : 'Start'} – ${f.to ? formatDateReadable(f.to) : 'Present'}`)} events. All system audit trail events are permanently retained and cannot be overwritten.
       </div>
       <button type="button" class="btn ghost small" onclick="setAuditDatePreset('year')" style="color:#7B4F09; border-color:#D19A42; background:#fff;">Return to Current Year (${curY}) &rarr;</button>
     </div>
@@ -1568,14 +1567,19 @@ async function loadAuditLogs() {
   let serverStats = null;
   try {
     const r = await fetch('api/audit.php?' + qs);
-    const data = await r.json();
+    const data = await r.json().catch(() => ({}));
     if (reqId !== auditRequestSeq) return; // Discard stale overlapping response
-    rows = data.logs || [];
-    total = typeof data.total === 'number' ? data.total : rows.length;
-    if (typeof data.page === 'number') pagState.page = data.page;
-    if (data.stats) serverStats = data.stats;
+    if (!r.ok || data.success === false) {
+      showToast(data.error || ('Failed to load audit logs (HTTP ' + r.status + ')'), 'error');
+    } else {
+      rows = data.logs || [];
+      total = typeof data.total === 'number' ? data.total : rows.length;
+      if (typeof data.page === 'number') pagState.page = data.page;
+      if (data.stats) serverStats = data.stats;
+    }
   } catch (e) {
     if (reqId !== auditRequestSeq) return;
+    showToast('Could not connect to Audit Log API.', 'error');
   }
 
   pagState.loading = false;

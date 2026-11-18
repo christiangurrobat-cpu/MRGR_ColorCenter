@@ -16,6 +16,7 @@ function setPosPage(newPage) {
 
 function setPosCategoryFilter(cat) {
   posCategoryFilter = cat;
+  posCurrentPage = 1;
   const pills = document.querySelectorAll('.pos-cat-pill');
   pills.forEach(p => p.classList.toggle('active', p.dataset.cat === cat));
   if (typeof syncRouteState === 'function') syncRouteState({ push: false });
@@ -46,7 +47,24 @@ function clearPosCart() {
   showToast('Current Sale cart has been cleared.', 'info');
 }
 
+let posBatchStatusBySize = {};
+let posBatchStatusLoadedAt = 0;
+async function posLoadBatchStatus(force = false) {
+  if (!force && Date.now() - posBatchStatusLoadedAt < 10000) return;
+  try {
+    const res = await fetch('api/batches.php?action=pos_status', { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.bySize) {
+        posBatchStatusBySize = data.bySize;
+        posBatchStatusLoadedAt = Date.now();
+      }
+    }
+  } catch (e) { /* offline / fallback to server-side check */ }
+}
+
 function posPage() {
+  posLoadBatchStatus(false);
   const categories = ['Automotive Paint', 'House Paint', 'Specialty Paint'];
   const cartItemCount = cart.reduce((sum, item) => sum + (item.qty || 1), 0);
   const totalActive = activeProducts().length;
@@ -75,7 +93,7 @@ function posPage() {
           <!-- Search Box with Clear Button -->
           <div class="pos-search-wrap">
             <span class="pos-search-icon">🔍</span>
-            <input id="pos-search" type="text" class="pos-search-input" placeholder="Search by paint name, brand, color, or size…" value="${escapeHtml(posSearchQuery)}" oninput="renderPosProductList()">
+            <input id="pos-search" type="text" class="pos-search-input" placeholder="Search by paint name, brand, color, or size…" value="${escapeHtml(posSearchQuery)}" oninput="posCurrentPage=1; renderPosProductList()">
             <button type="button" class="pos-search-clear" onclick="clearPosSearch()" title="Clear search">✕</button>
           </div>
 
@@ -107,6 +125,12 @@ function posPage() {
             <h3 style="margin:0;">Current Sale</h3>
           </div>
           <div class="row" style="gap:6px; align-items:center;">
+            ${typeof getPosVatBadgeHtml === 'function' ? getPosVatBadgeHtml() : ''}
+            ${(currentUser && currentUser.role === 'admin') ? `
+              <button type="button" class="btn ghost small" style="padding:2px 8px; font-size:11px;" onclick="openVatSettingsModal()" title="Manage Philippine VAT Settings">
+                ⚙️ VAT Settings
+              </button>
+            ` : ''}
             ${cart.length ? `<button type="button" class="btn ghost small" style="padding:2px 8px; font-size:11px; color:var(--danger);" onclick="clearPosCart()" title="Empty cart">🗑️ Clear</button>` : ''}
             <span class="badge ${cart.length ? 'ok' : 'mid'}" id="cart-count-badge" style="font-size:11.5px; padding:3px 10px;">
               ${cart.length ? `🛒 ${cart.length} item${cart.length === 1 ? '' : 's'} (${cartItemCount} qty)` : 'Cart Empty'}
@@ -215,7 +239,8 @@ function renderPosProductList() {
   const pagedList = list.slice(startIndex, endIndex);
 
   container.innerHTML = pagedList.map(p => {
-    const isOut = Number(p.stock) <= 0;
+    const isOut = typeof isProductOutOfStock === 'function' ? isProductOutOfStock(p) : ((Number(p.stock) || 0) <= 0);
+    const isLow = typeof isProductLowStock === 'function' ? isProductLowStock(p) : false;
     const hex = getProductDefaultColor(p);
     const rgb = hexToRgb(hex);
     const rgbaBg = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`;
@@ -223,10 +248,15 @@ function renderPosProductList() {
     const detected = detectMixedColorName(rgb.r, rgb.g, rgb.b);
     const colorLabel = p.color && p.color !== '-' ? p.color : detected.name;
 
-    // Stock availability status indicator (Only show Out of Stock if 0 available)
-    const stockBadgeHtml = isOut
-      ? `<span>·</span> <span class="pos-stock-tag out-of-stock" title="Out of stock (0L available)"><span class="dot"></span> Out of Stock</span>`
-      : '';
+    // Stock availability status indicator (In Stock: Green, Low Stock: Orange, Out of Stock: Red)
+    let stockBadgeHtml = '';
+    if (isOut) {
+      stockBadgeHtml = `<span>·</span> <span class="pos-stock-tag out-of-stock" title="Out of stock (0 available)"><span class="dot"></span> Out of Stock</span>`;
+    } else if (isLow) {
+      stockBadgeHtml = `<span>·</span> <span class="pos-stock-tag low-stock" title="Low stock on one or more container sizes"><span class="dot"></span> Low Stock</span>`;
+    } else {
+      stockBadgeHtml = `<span>·</span> <span class="pos-stock-tag in-stock" title="Healthy stock available"><span class="dot"></span> In Stock</span>`;
+    }
 
     return `
     <div class="pos-product ${isOut ? 'out-of-stock-row' : ''}" 
@@ -474,22 +504,43 @@ if (typeof window !== 'undefined' && !window._posMoreSizesListenersAttached) {
   });
 }
 
+function getCartReservedLitersForProduct(prod, excludeIndex = -1) {
+  if (!prod) return { sealed: 0, mix: 0, total: 0 };
+  const matchesProd = (pid) => pid && (pid === prod.id || pid === prod.productId);
+  let sealed = 0;
+  let mix = 0;
+  cart.forEach((c, idx) => {
+    if (idx === excludeIndex) return;
+    if (c.type === 'product' && matchesProd(c.productId)) {
+      sealed += (Number(c.qty) || 0) * (Number(c.size) || 1);
+    } else if (c.type === 'colormix' && Array.isArray(c.components)) {
+      c.components.forEach(comp => {
+        if (matchesProd(comp.productId)) {
+          mix += Number(comp.liters) || 0;
+        }
+      });
+    }
+  });
+  return { sealed: Number(sealed.toFixed(2)), mix: Number(mix.toFixed(2)), total: Number((sealed + mix).toFixed(2)) };
+}
+
 function addSizeToCart(productId, size = 1) {
   const p = productById(productId);
   if (!p || p.stock <= 0) { showToast('This product is out of stock.', 'error'); return; }
 
-  // Check available stock in liters across all lines of this product
-  const existingForProduct = cart.filter(c => c.type === 'product' && c.productId === productId);
-  const currentLitersInCart = existingForProduct.reduce((sum, c) => sum + (c.qty * (Number(c.size) || 1)), 0);
+  // Check available stock in liters across all product & colormix lines in cart
+  const reserved = getCartReservedLitersForProduct(p);
+  const totalAvail = typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock;
+  const availForSealed = Math.min(p.stock - reserved.sealed, totalAvail - reserved.total);
 
-  if (currentLitersInCart + size > p.stock) {
-    showToast(`Not enough stock — only ${formatLiters(p.stock - currentLitersInCart)} available.`, 'error');
+  if (size > availForSealed + 1e-6) {
+    showToast(`Not enough stock — only ${formatLiters(Math.max(0, availForSealed))} available.`, 'error');
     return;
   }
 
   // If canStock breakdown is tracked, check can count for this size
   if (productHasCanBreakdown(p)) {
-    const existingSameSize = cart.find(c => c.type === 'product' && c.productId === productId && (Number(c.size) || 1) === size);
+    const existingSameSize = cart.find(c => c.type === 'product' && (c.productId === p.id || c.productId === p.productId) && (Number(c.size) || 1) === size);
     const cansInCart = existingSameSize ? existingSameSize.qty : 0;
     const availableCans = productCanCount(p, size);
     if (cansInCart + 1 > availableCans) {
@@ -499,19 +550,45 @@ function addSizeToCart(productId, size = 1) {
   }
 
   const variant = productSizeVariantBySize(p, size);
-  const existing = cart.find(c => c.type === 'product' && (c.productId === p.id || c.productId === p.productId) && (c.sizeId ? c.sizeId === (variant ? variant.sizeId : null) : (Number(c.size) || 1) === size));
-  const unitPriceForSize = variant ? Number(variant.pricePerCan.toFixed(2)) : Number((p.price * size).toFixed(2));
+  const sizeId = variant ? variant.sizeId : null;
+  const batchInfo = (sizeId && posBatchStatusBySize && posBatchStatusBySize[sizeId]) ? posBatchStatusBySize[sizeId] : null;
+  const existing = cart.find(c => c.type === 'product' && (c.productId === p.id || c.productId === p.productId) && (c.sizeId ? c.sizeId === sizeId : (Number(c.size) || 1) === size));
+  const nextQty = existing ? (existing.qty + 1) : 1;
+  if (batchInfo && batchInfo.nonExpiredQty < nextQty) {
+    if (batchInfo.expiredQty > 0 && batchInfo.nonExpiredQty <= 0) {
+      showToast(`Sale blocked: Remaining ${fmtSize(size)} stock for "${p.name}" is expired and cannot be sold.`, 'error');
+    } else {
+      showToast(`Only ${batchInfo.nonExpiredQty} non-expired ${fmtSize(size)} unit(s) available for "${p.name}".`, 'error');
+    }
+    return;
+  }
+
+  const originalUnitPrice = variant ? Number(variant.pricePerCan.toFixed(2)) : Number((p.price * size).toFixed(2));
+  const nearExpiryDiscountPct = (batchInfo && Number(batchInfo.fifoDiscountPct) > 0) ? Number(batchInfo.fifoDiscountPct) : 0;
+  const nearExpiryDiscountAmount = nearExpiryDiscountPct > 0
+    ? Number((originalUnitPrice * (nearExpiryDiscountPct / 100)).toFixed(2))
+    : 0;
+  const unitPriceForSize = nearExpiryDiscountPct > 0
+    ? Number(Math.max(0, originalUnitPrice - nearExpiryDiscountAmount).toFixed(2))
+    : originalUnitPrice;
 
   if (existing) {
     existing.qty += 1;
+    existing.unitPrice = unitPriceForSize;
+    existing.originalUnitPrice = originalUnitPrice;
+    existing.nearExpiryDiscountPct = nearExpiryDiscountPct;
+    existing.nearExpiryDiscountAmount = nearExpiryDiscountAmount;
+    existing.nearExpiryStatus = (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoExpiryStatus : null;
+    existing.nearExpiryBatchId = (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoBatchId : null;
+    existing.nearExpiryBatchNumber = (batchInfo && nearExpiryDiscountPct > 0) ? (batchInfo.fifoBatchNumber || null) : null;
     existing.lineTotal = Number((existing.qty * existing.unitPrice).toFixed(2));
   } else {
     cart.push({
       type: 'product',
       productId: p.productId || p.id,
       product_id: p.productId || p.id,
-      sizeId: variant ? variant.sizeId : null,
-      size_id: variant ? variant.sizeId : null,
+      sizeId: sizeId,
+      size_id: sizeId,
       containerSize: size,
       name: p.name,
       brand: p.brand,
@@ -519,8 +596,15 @@ function addSizeToCart(productId, size = 1) {
       size: size,
       qty: 1,
       unitPrice: unitPriceForSize,
+      originalUnitPrice: originalUnitPrice,
+      nearExpiryDiscountPct: nearExpiryDiscountPct,
+      nearExpiryDiscountAmount: nearExpiryDiscountAmount,
+      nearExpiryStatus: (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoExpiryStatus : null,
+      nearExpiryBatchId: (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoBatchId : null,
+      nearExpiryBatchNumber: (batchInfo && nearExpiryDiscountPct > 0) ? (batchInfo.fifoBatchNumber || null) : null,
       pricePerLiter: p.price,
-      lineTotal: unitPriceForSize
+      lineTotal: unitPriceForSize,
+      taxClassification: p.taxClassification || p.tax_classification || 'vatable'
     });
   }
   refreshCartUI();
@@ -556,14 +640,18 @@ function handleCartQtyInput(index, input) {
     const p = productById(line.productId);
     if (p) {
       const size = Number(line.size) || 1;
-      const otherLiters = cart
-        .filter((c, idx) => idx !== index && c.type === 'product' && c.productId === line.productId)
-        .reduce((sum, c) => sum + (c.qty * (Number(c.size) || 1)), 0);
+      const reserved = getCartReservedLitersForProduct(p, index);
+      const totalAvail = typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock;
+      const availLiters = Math.min(p.stock - reserved.sealed, totalAvail - reserved.total);
 
-      const maxAllowed = Math.floor((p.stock - otherLiters) / size);
+      const maxAllowed = Math.floor(Math.max(0, availLiters) / size);
       if (newQty > maxAllowed) {
-        showToast(`Not enough stock. Only ${Math.max(0, maxAllowed)} of ${size}L available (${formatLiters(p.stock)} total stock).`, 'error');
-        newQty = Math.max(1, maxAllowed);
+        showToast(`Not enough stock. Only ${maxAllowed} of ${size}L available (${formatLiters(Math.max(0, availLiters))} remaining).`, 'error');
+        if (maxAllowed <= 0) {
+          input.value = line.qty;
+          return;
+        }
+        newQty = maxAllowed;
         input.value = newQty;
       }
 
@@ -571,7 +659,11 @@ function handleCartQtyInput(index, input) {
         const maxCans = productCanCount(p, size);
         if (newQty > maxCans) {
           showToast(`Only ${maxCans} in stock for ${size}L.`, 'error');
-          newQty = Math.max(1, maxCans);
+          if (maxCans <= 0) {
+            input.value = line.qty;
+            return;
+          }
+          newQty = maxCans;
           input.value = newQty;
         }
       }
@@ -582,9 +674,14 @@ function handleCartQtyInput(index, input) {
       for (const comp of line.components) {
         const p = productById(comp.productId);
         const reqLiters = Number((newQty * ((Number(comp.percentage) || 0) / 100)).toFixed(2));
-        if (p && productMixAvailableStock(p) < reqLiters) {
-          showToast(`Not enough stock for mix ingredient "${comp.name}".`, 'error');
-          return;
+        if (p) {
+          const reserved = getCartReservedLitersForProduct(p, index);
+          const avail = (typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock) - reserved.total;
+          if (avail + 1e-6 < reqLiters) {
+            showToast(`Not enough stock for mix ingredient "${comp.name}" (${formatLiters(Math.max(0, avail))} available).`, 'error');
+            input.value = line.qty;
+            return;
+          }
         }
       }
       line.components = line.components.map(comp => ({
@@ -596,7 +693,9 @@ function handleCartQtyInput(index, input) {
   }
 
   line.qty = newQty;
-  line.lineTotal = Number((line.qty * line.unitPrice).toFixed(2));
+  line.lineTotal = (line.type === 'colormix' && line.baseGrandTotal && line.baseLiters)
+    ? Number(((line.qty / line.baseLiters) * line.baseGrandTotal).toFixed(2))
+    : Number((line.qty * line.unitPrice).toFixed(2));
   updateCartLineDOM(index);
 }
 
@@ -657,14 +756,14 @@ function setCartQty(index, rawVal) {
     if (!p) return;
     const size = Number(line.size) || 1;
 
-    // Check against total stock in liters across other lines of this product
-    const otherLiters = cart
-      .filter((c, idx) => idx !== index && c.type === 'product' && c.productId === line.productId)
-      .reduce((sum, c) => sum + (c.qty * (Number(c.size) || 1)), 0);
+    // Check against total stock in liters across other product & colormix lines
+    const reserved = getCartReservedLitersForProduct(p, index);
+    const totalAvail = typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock;
+    const availLiters = Math.min(p.stock - reserved.sealed, totalAvail - reserved.total);
 
-    if (otherLiters + (newQty * size) > p.stock) {
-      const maxAllowed = Math.floor((p.stock - otherLiters) / size);
-      showToast(`Not enough stock. Only ${Math.max(0, maxAllowed)} of ${size}L available (${formatLiters(p.stock)} total stock).`, 'error');
+    if (newQty * size > availLiters + 1e-6) {
+      const maxAllowed = Math.floor(Math.max(0, availLiters) / size);
+      showToast(`Not enough stock. Only ${maxAllowed} of ${size}L available (${formatLiters(Math.max(0, availLiters))} remaining).`, 'error');
       if (maxAllowed <= 0) {
         cart.splice(index, 1);
       } else {
@@ -698,10 +797,14 @@ function setCartQty(index, rawVal) {
       for (const comp of line.components) {
         const p = productById(comp.productId);
         const reqLiters = Number((newQty * ((Number(comp.percentage) || 0) / 100)).toFixed(2));
-        if (p && productMixAvailableStock(p) < reqLiters) {
-          showToast(`Not enough stock for mix ingredient "${comp.name}" (need ${formatStock(reqLiters)}L, available ${formatStock(productMixAvailableStock(p))}L).`, 'error');
-          refreshCartUI();
-          return;
+        if (p) {
+          const reserved = getCartReservedLitersForProduct(p, index);
+          const avail = (typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock) - reserved.total;
+          if (avail + 1e-6 < reqLiters) {
+            showToast(`Not enough stock for mix ingredient "${comp.name}" (need ${formatStock(reqLiters)}L, available ${formatStock(Math.max(0, avail))}L).`, 'error');
+            refreshCartUI();
+            return;
+          }
         }
       }
       line.components = line.components.map(comp => ({
@@ -711,7 +814,9 @@ function setCartQty(index, rawVal) {
     }
     line.qty = newQty;
     line.liters = newQty;
-    line.lineTotal = Number((line.qty * line.unitPrice).toFixed(2));
+    line.lineTotal = (line.baseGrandTotal && line.baseLiters)
+      ? Number(((line.qty / line.baseLiters) * line.baseGrandTotal).toFixed(2))
+      : Number((line.qty * line.unitPrice).toFixed(2));
   }
   refreshCartUI();
 }
@@ -787,7 +892,7 @@ function cartLinesHtml() {
         </div>
         <span class="cmeta" id="cart-meta-${i}">
           ${isMix ? `Custom Mix · <strong>${c.liters}L</strong> · ${peso(c.unitPrice)}/L` :
-        `${escapeHtml(c.brand || '')} · Size: <strong>${c.size || 1}L</strong> · ${peso(c.unitPrice)} each · <span class="total-liters" style="color:var(--teal); font-weight:600;">${(c.qty * (Number(c.size) || 1)).toFixed(2)} L total</span>`}
+        `${escapeHtml(c.brand || '')} · Size: <strong>${c.size || 1}L</strong> · ${c.nearExpiryDiscountPct > 0 ? `<del class="muted">${peso(c.originalUnitPrice)}</del> <strong style="color:#065F46;">${peso(c.unitPrice)}</strong> <span class="badge" style="background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; font-size:10px; padding:0 5px;">🏷️ -${c.nearExpiryDiscountPct}% (-${peso(c.nearExpiryDiscountAmount || (c.originalUnitPrice - c.unitPrice))})</span>${c.nearExpiryBatchNumber ? ` <span class="muted">· Batch <code>${escapeHtml(c.nearExpiryBatchNumber)}</code></span>` : ''}` : `${peso(c.unitPrice)} each`} · <span class="total-liters" style="color:var(--teal); font-weight:600;">${(c.qty * (Number(c.size) || 1)).toFixed(2)} L total</span>`}
         </span>
       </div>
       <div class="cprice" id="cart-price-${i}">
@@ -806,28 +911,351 @@ function cartLinesHtml() {
   }).join('');
 }
 
-function cartTotals() {
-  const subtotal = Number(cart.reduce((t, c) => t + (Number(c.lineTotal) || 0), 0).toFixed(2));
-  const isEligible = subtotal >= 2500;
-  const discountPct = isEligible ? 10 : 0;
-  const discountAmount = isEligible ? Number((subtotal * 0.10).toFixed(2)) : 0;
-  const total = isEligible ? Number((subtotal - discountAmount).toFixed(2)) : subtotal;
-  const neededToQualify = isEligible ? 0 : Number((2500 - subtotal).toFixed(2));
+
+/* ============================================================
+   PHILIPPINE 12% BIR VALUE-ADDED TAX (VAT) MODULE
+   ============================================================ */
+
+function getVatSettings() {
+  if (typeof db !== 'undefined' && db) {
+    if (db.vatSettings && typeof db.vatSettings === 'object') {
+      return db.vatSettings;
+    }
+    if (db.settings && db.settings.vat_settings) {
+      return db.settings.vat_settings;
+    }
+  }
+  return {
+    taxStatus: 'vat_registered',
+    pricingType: 'inclusive',
+    vatRate: 12.00
+  };
+}
+
+async function saveVatSettings(newSettings) {
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Access denied: Only Administrators can configure Philippine VAT settings.', 'error');
+    return false;
+  }
+  const taxStatus = (newSettings.taxStatus === 'non_vat') ? 'non_vat' : 'vat_registered';
+  const pricingType = (newSettings.pricingType === 'exclusive') ? 'exclusive' : 'inclusive';
+  const rawRate = Number(newSettings.vatRate);
+  const vatRate = (!isNaN(rawRate) && rawRate >= 0) ? Number(rawRate.toFixed(2)) : 12.00;
+
+  const clean = { taxStatus, pricingType, vatRate };
+  
+  if (typeof db !== 'undefined' && db) {
+    db.vatSettings = clean;
+    if (!db.settings) db.settings = {};
+    db.settings.vat_settings = clean;
+  }
+
+  try {
+    const res = await fetch('api/db.php?action=save_vat_settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vatSettings: clean,
+        currentUser: currentUser
+      })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      showToast(data.error || 'Failed to save VAT settings.', 'error');
+      return false;
+    }
+    
+    if (typeof logAudit === 'function') {
+      logAudit('UPDATE_VAT_SETTINGS', 'Settings', `Admin ${currentUser.name} updated Philippine VAT configuration to ${taxStatus.toUpperCase()} (${vatRate}%, ${pricingType})`, {
+        entityName: 'Philippine Tax Settings',
+        fieldChanged: 'VAT Configuration',
+        newValue: JSON.stringify(clean)
+      });
+    }
+
+    showToast('Philippine VAT configuration saved successfully!', 'success');
+    renderCartTotals();
+    updateCheckoutButtonState();
+    const bEl = document.getElementById('pos-vat-status-badge');
+    if (bEl && typeof getPosVatBadgeHtml === 'function') {
+      bEl.outerHTML = getPosVatBadgeHtml();
+    }
+    return true;
+  } catch (err) {
+    console.error('Error saving VAT settings:', err);
+    showToast('Network error while saving VAT settings.', 'error');
+    return false;
+  }
+}
+
+function getPosVatBadgeHtml() {
+  const current = getVatSettings();
+  const isVatReg = current.taxStatus !== 'non_vat';
+  const isExclusive = current.pricingType === 'exclusive';
+  const rate = current.vatRate !== undefined ? current.vatRate : 12;
+  const label = isVatReg
+    ? `🇵🇭 ${rate}% VAT (${isExclusive ? 'Exclusive' : 'Inclusive'})`
+    : `🇵🇭 Non-VAT Registered`;
+  const bg = isVatReg ? '#EDF5F4' : '#F2EDE4';
+  const color = isVatReg ? '#1F6F6B' : '#786F66';
+  const border = isVatReg ? '#C4DFDC' : 'var(--line)';
+
+  return `
+    <span id="pos-vat-status-badge" class="badge" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:11px; font-weight:700;" title="Philippine Tax Status">
+      ${label}
+    </span>
+  `;
+}
+
+function openVatSettingsModal() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Access denied: Only Administrators can configure Philippine VAT settings.', 'error');
+    return;
+  }
+  const current = getVatSettings();
+  const isVatReg = current.taxStatus !== 'non_vat';
+  const isExclusive = current.pricingType === 'exclusive';
+  const vatRate = current.vatRate !== undefined ? current.vatRate : 12.00;
+
+  openModal(
+    '⚙️ Philippine 12% VAT Configuration',
+    `
+    <form id="vat-settings-form" onsubmit="event.preventDefault(); submitVatSettingsModal();" style="display:flex; flex-direction:column; gap:16px;">
+      <div style="background:#EDF5F4; border:1px solid #C4DFDC; border-radius:8px; padding:12px 14px; font-size:12.5px; color:#1F6F6B;">
+        <div style="font-weight:700; margin-bottom:3px; display:flex; align-items:center; gap:6px;">
+          <span>🇵🇭</span>
+          <span>Bureau of Internal Revenue (BIR) Value-Added Tax (VAT)</span>
+        </div>
+        <div>Configure your business tax registration status, default VAT rate, and pricing method for Point of Sale transactions.</div>
+      </div>
+
+      <div class="field">
+        <label style="font-weight:700; font-size:13px; color:var(--ink); margin-bottom:6px; display:block;">
+          Business Tax Status <span style="color:var(--danger);">*</span>
+        </label>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:2px solid ${isVatReg ? 'var(--teal)' : 'var(--line)'}; border-radius:8px; background:${isVatReg ? '#F4F9F8' : '#fff'}; cursor:pointer;" id="label-tax-status-vat">
+            <input type="radio" name="vat_tax_status" value="vat_registered" ${isVatReg ? 'checked' : ''} onchange="onVatTaxStatusRadioChange(this.value)" style="margin-top:2px;">
+            <div>
+              <div style="font-weight:700; color:var(--ink); font-size:13px;">VAT Registered</div>
+              <div class="muted small" style="font-size:11px; margin-top:2px;">Subject to standard 12% Philippine VAT on VATable sales.</div>
+            </div>
+          </label>
+          <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:2px solid ${!isVatReg ? 'var(--teal)' : 'var(--line)'}; border-radius:8px; background:${!isVatReg ? '#F4F9F8' : '#fff'}; cursor:pointer;" id="label-tax-status-nonvat">
+            <input type="radio" name="vat_tax_status" value="non_vat" ${!isVatReg ? 'checked' : ''} onchange="onVatTaxStatusRadioChange(this.value)" style="margin-top:2px;">
+            <div>
+              <div style="font-weight:700; color:var(--ink); font-size:13px;">Non-VAT Registered</div>
+              <div class="muted small" style="font-size:11px; margin-top:2px;">Exempt from charging VAT. No VAT will be calculated on transactions.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div id="vat-config-details" style="${!isVatReg ? 'display:none;' : ''}">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="field">
+            <label style="font-weight:700; font-size:13px; color:var(--ink); margin-bottom:6px; display:block;">
+              Pricing Method <span style="color:var(--danger);">*</span>
+            </label>
+            <select id="vat-pricing-type" style="width:100%; padding:9px 12px; font-size:13px; border:1px solid var(--line); border-radius:6px; background:#fff;">
+              <option value="inclusive" ${!isExclusive ? 'selected' : ''}>VAT-Inclusive (Item prices already include 12% VAT)</option>
+              <option value="exclusive" ${isExclusive ? 'selected' : ''}>VAT-Exclusive (12% VAT is added on top of item prices)</option>
+            </select>
+            <div class="muted small" style="font-size:11px; margin-top:4px;">
+              • <b>VAT-Inclusive:</b> VATable Sales = Amount ÷ 1.12<br>
+              • <b>VAT-Exclusive:</b> VAT = Subtotal × 12%
+            </div>
+          </div>
+
+          <div class="field">
+            <label style="font-weight:700; font-size:13px; color:var(--ink); margin-bottom:6px; display:block;">
+              VAT Rate (%) <span style="color:var(--danger);">*</span>
+            </label>
+            <div style="position:relative;">
+              <input type="number" id="vat-rate-input" step="0.01" min="0" max="100" value="${vatRate}"
+                style="width:100%; padding:9px 28px 9px 12px; font-size:14px; font-weight:700; font-family:'Space Grotesk',monospace; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
+              <span style="position:absolute; right:10px; top:50%; transform:translateY(-50%); font-weight:700; color:var(--ink-soft); font-size:13px;">%</span>
+            </div>
+            <div class="muted small" style="font-size:11px; margin-top:4px;">Standard Philippine statutory VAT rate is 12.00%.</div>
+          </div>
+        </div>
+      </div>
+    </form>
+    `,
+    `
+    <button type="button" class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button type="button" class="btn" onclick="submitVatSettingsModal()" style="background:var(--teal); color:#fff;">Save Configuration</button>
+    `
+  );
+}
+
+function onVatTaxStatusRadioChange(val) {
+  const isVat = val === 'vat_registered';
+  const details = document.getElementById('vat-config-details');
+  if (details) details.style.display = isVat ? 'block' : 'none';
+  const lblVat = document.getElementById('label-tax-status-vat');
+  const lblNonVat = document.getElementById('label-tax-status-nonvat');
+  if (lblVat) {
+    lblVat.style.borderColor = isVat ? 'var(--teal)' : 'var(--line)';
+    lblVat.style.background = isVat ? '#F4F9F8' : '#fff';
+  }
+  if (lblNonVat) {
+    lblNonVat.style.borderColor = !isVat ? 'var(--teal)' : 'var(--line)';
+    lblNonVat.style.background = !isVat ? '#F4F9F8' : '#fff';
+  }
+}
+
+async function submitVatSettingsModal() {
+  const statusRadio = document.querySelector('input[name="vat_tax_status"]:checked');
+  const taxStatus = statusRadio ? statusRadio.value : 'vat_registered';
+  const pricingTypeEl = document.getElementById('vat-pricing-type');
+  const pricingType = pricingTypeEl ? pricingTypeEl.value : 'inclusive';
+  const rateEl = document.getElementById('vat-rate-input');
+  const vatRate = rateEl ? (parseFloat(rateEl.value) || 0) : 12.00;
+
+  const ok = await saveVatSettings({ taxStatus, pricingType, vatRate });
+  if (ok) {
+    closeModal();
+  }
+}
+
+/**
+ * Centralized Philippine VAT calculation function.
+ * Single source of truth for POS cart, confirmation modal, receipt, and sales history.
+ */
+function calculateSaleVat(items, discountAmount = 0, customVatSettings = null) {
+  const vatSettings = customVatSettings || getVatSettings();
+  const taxStatus = (vatSettings && vatSettings.taxStatus === 'non_vat') ? 'non_vat' : 'vat_registered';
+  const pricingType = (vatSettings && vatSettings.pricingType === 'exclusive') ? 'exclusive' : 'inclusive';
+  const rawRate = Number(vatSettings && vatSettings.vatRate);
+  const vatRate = (!isNaN(rawRate) && rawRate >= 0) ? rawRate : 12.0;
+
+  const safeItems = Array.isArray(items) ? items : [];
+  let sVatable = 0;
+  let sExempt = 0;
+  let sZeroRated = 0;
+
+  for (const item of safeItems) {
+    const lineTotal = Number(item.lineTotal !== undefined ? item.lineTotal : ((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))) || 0;
+    const taxType = (item.taxClassification || item.tax_classification || (item.productId && typeof productById === 'function' && productById(item.productId) && (productById(item.productId).taxClassification || productById(item.productId).tax_classification)) || 'vatable').toLowerCase();
+
+    if (taxType === 'exempt' || taxType === 'vat_exempt') {
+      sExempt += lineTotal;
+    } else if (taxType === 'zero_rated' || taxType === 'zero-rated' || taxType === 'zero') {
+      sZeroRated += lineTotal;
+    } else {
+      sVatable += lineTotal;
+    }
+  }
+
+  sVatable = Number(sVatable.toFixed(2));
+  sExempt = Number(sExempt.toFixed(2));
+  sZeroRated = Number(sZeroRated.toFixed(2));
+  const subtotal = Number((sVatable + sExempt + sZeroRated).toFixed(2));
+
+  const safeDiscount = Math.max(0, Math.min(subtotal, Number(Number(discountAmount).toFixed(2)) || 0));
+  const netSubtotal = Number((subtotal - safeDiscount).toFixed(2));
+
+  if (taxStatus === 'non_vat' || vatRate <= 0) {
+    return {
+      subtotal,
+      discountAmount: safeDiscount,
+      netSubtotal,
+      vatableSales: 0.00,
+      vatAmount: 0.00,
+      vatExemptSales: 0.00,
+      zeroRatedSales: 0.00,
+      total: netSubtotal,
+      vatRate: 0.00,
+      taxStatus: 'non_vat',
+      pricingType
+    };
+  }
+
+  let nVatable = sVatable;
+  let nExempt = sExempt;
+  let nZeroRated = sZeroRated;
+
+  if (subtotal > 0 && safeDiscount > 0) {
+    const vatableDisc = Number((safeDiscount * (sVatable / subtotal)).toFixed(2));
+    const exemptDisc = Number((safeDiscount * (sExempt / subtotal)).toFixed(2));
+    nVatable = Number(Math.max(0, sVatable - vatableDisc).toFixed(2));
+    nExempt = Number(Math.max(0, sExempt - exemptDisc).toFixed(2));
+    nZeroRated = Number(Math.max(0, netSubtotal - nVatable - nExempt).toFixed(2));
+  }
+
+  const rateFactor = vatRate / 100.0;
+  let vatableSales = 0.00;
+  let vatAmount = 0.00;
+  let total = 0.00;
+
+  if (pricingType === 'inclusive') {
+    // VAT-Inclusive:
+    // VATable Sales = VAT-Inclusive Amount / (1 + Rate)
+    // VAT Amount = VAT-Inclusive Amount - VATable Sales
+    if (nVatable > 0) {
+      vatableSales = Number((nVatable / (1.0 + rateFactor)).toFixed(2));
+      vatAmount = Number((nVatable - vatableSales).toFixed(2));
+    }
+    total = netSubtotal;
+  } else {
+    // VAT-Exclusive:
+    // VAT Amount = VATable Sales * Rate
+    // Total Amount Due = Net Subtotal + VAT
+    vatableSales = nVatable;
+    vatAmount = Number((vatableSales * rateFactor).toFixed(2));
+    total = Number((netSubtotal + vatAmount).toFixed(2));
+  }
+
   return {
     subtotal,
+    discountAmount: safeDiscount,
+    netSubtotal,
+    vatableSales,
+    vatAmount,
+    vatExemptSales: nExempt,
+    zeroRatedSales: nZeroRated,
+    total,
+    vatRate,
+    taxStatus,
+    pricingType
+  };
+}
+
+function cartTotals() {
+  const grossSubtotal = Number(cart.reduce((t, c) => t + (Number(c.lineTotal) || 0), 0).toFixed(2));
+  const isEligible = grossSubtotal >= 2500;
+  const discountPct = isEligible ? 10 : 0;
+  const discountAmount = isEligible ? Number((grossSubtotal * 0.10).toFixed(2)) : 0;
+  const neededToQualify = isEligible ? 0 : Number((2500 - grossSubtotal).toFixed(2));
+
+  const vatCalc = calculateSaleVat(cart, discountAmount);
+
+  return {
+    subtotal: vatCalc.subtotal,
     discountPct,
     discountPercentage: discountPct,
-    discountAmount,
-    discount: discountAmount,
+    discountAmount: vatCalc.discountAmount,
+    discount: vatCalc.discountAmount,
+    netSubtotal: vatCalc.netSubtotal,
+    vatableSales: vatCalc.vatableSales,
+    vatAmount: vatCalc.vatAmount,
+    vatExemptSales: vatCalc.vatExemptSales,
+    zeroRatedSales: vatCalc.zeroRatedSales,
+    total: vatCalc.total,
+    vatRate: vatCalc.vatRate,
+    taxStatus: vatCalc.taxStatus,
+    pricingType: vatCalc.pricingType,
     isEligible,
-    neededToQualify,
-    total
+    neededToQualify
   };
 }
 
 function cartTotalsHtml() {
   const t = cartTotals();
   const hasItems = cart.length > 0;
+  const isVatReg = t.taxStatus !== 'non_vat';
+
   return `
   <div class="pos-payment-card">
     <div class="cart-total-row">
@@ -836,7 +1264,7 @@ function cartTotalsHtml() {
     </div>
     ${t.isEligible ? `
       <div class="cart-total-row pos-discount-row">
-        <span>Discount (10%)</span>
+        <span>Discount (${t.discountPct}%)</span>
         <span style="font-weight:700; font-family:'Space Grotesk',monospace;">-${peso(t.discountAmount)}</span>
       </div>
       <div class="pos-promo-indicator qualified">
@@ -849,8 +1277,40 @@ function cartTotalsHtml() {
         <span>Add ${peso(t.neededToQualify)} more to qualify for a 10% discount.</span>
       </div>
     ` : '')}
+
+    <!-- Philippine BIR VAT Breakdown -->
+    <div class="pos-vat-breakdown" style="border-top:1px dashed var(--line); border-bottom:1px dashed var(--line); padding:6px 0; margin:6px 0; font-size:12px;">
+      ${isVatReg ? `
+        <div class="cart-total-row" style="padding:2px 0;">
+          <span class="muted">VATable Sales:</span>
+          <span style="font-family:'Space Grotesk',monospace; font-weight:600;">${peso(t.vatableSales)}</span>
+        </div>
+        <div class="cart-total-row" style="padding:2px 0;">
+          <span class="muted">VAT Amount (${t.vatRate}%):</span>
+          <span style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal, #1F6F6B);">${peso(t.vatAmount)}</span>
+        </div>
+        ${(t.vatExemptSales > 0) ? `
+          <div class="cart-total-row" style="padding:2px 0;">
+            <span class="muted">VAT-Exempt Sales:</span>
+            <span style="font-family:'Space Grotesk',monospace; font-weight:600;">${peso(t.vatExemptSales)}</span>
+          </div>
+        ` : ''}
+        ${(t.zeroRatedSales > 0) ? `
+          <div class="cart-total-row" style="padding:2px 0;">
+            <span class="muted">Zero-Rated Sales:</span>
+            <span style="font-family:'Space Grotesk',monospace; font-weight:600;">${peso(t.zeroRatedSales)}</span>
+          </div>
+        ` : ''}
+      ` : `
+        <div class="cart-total-row" style="padding:2px 0;">
+          <span class="muted">Tax Status:</span>
+          <span class="badge" style="background:#F2EDE4; border:1px solid var(--line); font-size:10.5px; padding:1px 6px;">Non-VAT Registered</span>
+        </div>
+      `}
+    </div>
+
     <div class="cart-total-row grand">
-      <span>Total Due</span>
+      <span>Total Amount Due</span>
       <span class="total-amount">${peso(t.total)}</span>
     </div>
   </div>`;
@@ -869,11 +1329,13 @@ function updateCheckoutButtonState() {
   const hasItems = cart.length > 0;
   const t = cartTotals();
 
-  // Stock verification across all items
+  // Stock verification across all items (including colormix ingredients)
   let stockError = '';
   if (hasItems) {
     const litersByProd = {};
+    const mixLitersByProd = {};
     const cansBySize = {};
+    const prodByIdMap = {};
     for (const c of cart) {
       if (c.type === 'product') {
         const p = productById(c.productId);
@@ -881,10 +1343,11 @@ function updateCheckoutButtonState() {
           stockError = `"${c.name}" is out of stock.`;
           break;
         }
+        prodByIdMap[p.id] = p;
         const size = Number(c.size) || 1;
         const qty = Number(c.qty) || 0;
         litersByProd[p.id] = (litersByProd[p.id] || 0) + (qty * size);
-        if (litersByProd[p.id] > p.stock) {
+        if (litersByProd[p.id] > p.stock + 1e-6) {
           stockError = `Not enough stock for "${p.name}".`;
           break;
         }
@@ -895,6 +1358,24 @@ function updateCheckoutButtonState() {
             stockError = `Not enough ${size}L units for "${p.name}".`;
             break;
           }
+        }
+      } else if (c.type === 'colormix' && Array.isArray(c.components)) {
+        for (const comp of c.components) {
+          const p = productById(comp.productId);
+          if (!p) continue;
+          prodByIdMap[p.id] = p;
+          mixLitersByProd[p.id] = (mixLitersByProd[p.id] || 0) + (Number(comp.liters) || 0);
+        }
+      }
+    }
+    if (!stockError) {
+      for (const pid of Object.keys(prodByIdMap)) {
+        const p = prodByIdMap[pid];
+        const totalReq = (litersByProd[pid] || 0) + (mixLitersByProd[pid] || 0);
+        const totalAvail = typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock;
+        if (totalReq > totalAvail + 1e-6) {
+          stockError = `Not enough combined stock for "${p.name}".`;
+          break;
         }
       }
     }
@@ -1081,7 +1562,44 @@ function promptCustomerPurchaseConfirmation(data) {
               <span>10% Discount Applied!</span>
             </div>
           ` : ''}
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px dashed var(--line); margin-top:6px;">
+
+          <!-- Philippine BIR VAT Breakdown in Confirmation Modal -->
+          <div style="border-top:1px dashed var(--line); border-bottom:1px dashed var(--line); padding:6px 0; margin:6px 0; font-size:12.5px;">
+            ${(totals.taxStatus !== 'non_vat') ? `
+              <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                <span class="muted">VATable Sales:</span>
+                <span style="font-family:'Space Grotesk',monospace; font-weight:600;">${peso(totals.vatableSales || 0)}</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                <span class="muted">VAT Amount (${totals.vatRate || 12}%):</span>
+                <span style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal, #1F6F6B);">${peso(totals.vatAmount || 0)}</span>
+              </div>
+              ${(Number(totals.vatExemptSales || 0) > 0) ? `
+                <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                  <span class="muted">VAT-Exempt Sales:</span>
+                  <span style="font-family:'Space Grotesk',monospace; font-weight:600;">${peso(totals.vatExemptSales)}</span>
+                </div>
+              ` : `
+                <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                  <span class="muted">VAT-Exempt Sales:</span>
+                  <span style="font-family:'Space Grotesk',monospace; color:#8A8070;">₱0.00</span>
+                </div>
+              `}
+              ${(Number(totals.zeroRatedSales || 0) > 0) ? `
+                <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                  <span class="muted">Zero-Rated Sales:</span>
+                  <span style="font-family:'Space Grotesk',monospace; font-weight:600;">${peso(totals.zeroRatedSales)}</span>
+                </div>
+              ` : ''}
+            ` : `
+              <div style="display:flex; justify-content:space-between; padding:2px 0;">
+                <span class="muted">Tax Classification:</span>
+                <span class="badge" style="background:#F2EDE4; border:1px solid var(--line); font-size:11px; font-weight:600;">Non-VAT Registered (0% VAT)</span>
+              </div>
+            `}
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; margin-top:2px;">
             <span style="font-size:15px; font-weight:700; color:var(--ink);">Total Amount Due:</span>
             <span id="pos-confirm-total-due" data-amount="${totalDue}" style="font-size:22px; font-weight:800; font-family:'Space Grotesk',monospace; color:var(--teal);">${peso(totalDue)}</span>
           </div>
@@ -1274,6 +1792,7 @@ async function completeSale() {
     const reqCansByProdSize = {};
     const reqSealedLitersByProd = {};
     const reqMixLitersByProd = {};
+    const prodRefMap = {};
 
     for (const c of items) {
       if (c.type === 'product') {
@@ -1285,6 +1804,7 @@ async function completeSale() {
           showToast(`Product "${c.name}" is no longer available.`, 'error');
           return;
         }
+        prodRefMap[p.id] = p;
         const sizeKey = `${p.id}_${size}`;
         reqCansByProdSize[sizeKey] = (reqCansByProdSize[sizeKey] || 0) + qty;
         reqSealedLitersByProd[p.id] = Number(((reqSealedLitersByProd[p.id] || 0) + liters).toFixed(2));
@@ -1293,7 +1813,7 @@ async function completeSale() {
           showToast(`Not enough ${size}L units for ${p.name} (only ${productCanCount(p, size)} in stock).`, 'error');
           return;
         }
-        if (reqSealedLitersByProd[p.id] > p.stock) {
+        if (reqSealedLitersByProd[p.id] > p.stock + 1e-6) {
           showToast(`Not enough stock for ${p.name} (${formatLiters(p.stock)} available).`, 'error');
           return;
         }
@@ -1301,14 +1821,20 @@ async function completeSale() {
         for (const comp of c.components) {
           const p = productById(comp.productId);
           if (p) {
+            prodRefMap[p.id] = p;
             reqMixLitersByProd[p.id] = Number(((reqMixLitersByProd[p.id] || 0) + (Number(comp.liters) || 0)).toFixed(2));
-            const remainingAvail = Number((productMixAvailableStock(p) - (reqSealedLitersByProd[p.id] || 0)).toFixed(2));
-            if (remainingAvail < reqMixLitersByProd[p.id]) {
-              showToast(`Not enough stock on ingredient "${comp.name}" (${formatStock(Math.max(0, remainingAvail))}L available, need ${formatStock(reqMixLitersByProd[p.id])}L) for ${c.colorName} mix.`, 'error');
-              return;
-            }
           }
         }
+      }
+    }
+    // Cross-validate combined sealed + colormix ingredient requirements in order-independent pass
+    for (const pid of Object.keys(prodRefMap)) {
+      const p = prodRefMap[pid];
+      const combinedReq = Number(((reqSealedLitersByProd[pid] || 0) + (reqMixLitersByProd[pid] || 0)).toFixed(2));
+      const totalAvail = Number(productMixAvailableStock(p).toFixed(2));
+      if (combinedReq > totalAvail + 1e-6) {
+        showToast(`Not enough combined stock for "${p.name}" (${formatStock(totalAvail)}L available, need ${formatStock(combinedReq)}L across sale & color mix).`, 'error');
+        return;
       }
     }
 
@@ -1350,9 +1876,37 @@ async function completeSale() {
       discountPercentage: t.discountPct,
       discountAmount: t.discountAmount,
       discount: t.discountAmount,
+      vatRate: t.vatRate,
+      vat_rate: t.vatRate,
+      vatableSales: t.vatableSales,
+      vatable_sales: t.vatableSales,
+      vatAmount: t.vatAmount,
+      vat_amount: t.vatAmount,
+      vatExemptSales: t.vatExemptSales,
+      vat_exempt_sales: t.vatExemptSales,
+      zeroRatedSales: t.zeroRatedSales,
+      zero_rated_sales: t.zeroRatedSales,
+      taxStatus: t.taxStatus,
+      tax_status: t.taxStatus,
+      pricingType: t.pricingType,
+      pricing_type: t.pricingType,
       total: t.total,
       status: 'completed',
     };
+    const prevSalesLen = db.sales.length;
+    const prevMovesLen = db.movements.length;
+    const prodSnapshots = Object.keys(prodRefMap).map(pid => {
+      const p = prodRefMap[pid];
+      return {
+        p,
+        stock: p.stock,
+        canStock: p.canStock ? JSON.parse(JSON.stringify(p.canStock)) : p.canStock,
+        openedStock: p.openedStock,
+        openedCanSize: p.openedCanSize,
+        openedBySize: p.openedBySize ? JSON.parse(JSON.stringify(p.openedBySize)) : p.openedBySize
+      };
+    });
+
     db.sales.push(sale);
 
     const saleStockChanges = [];
@@ -1427,7 +1981,8 @@ async function completeSale() {
                 id: uid('mv'),
                 date: sale.date,
                 type: 'colormix',
-                productId: p.id,
+                productId: p.productId || p.id,
+                product_id: p.productId || p.id,
                 productName: `${p.name} (for ${c.colorName} mix)`,
                 colorName: c.colorName,
                 qtyChange: -comp.liters,
@@ -1514,7 +2069,20 @@ async function completeSale() {
       }
     );
 
-    await saveDB();
+    const saved = await saveDB();
+    if (!saved) {
+      db.sales.length = prevSalesLen;
+      db.movements.length = prevMovesLen;
+      prodSnapshots.forEach(snap => {
+        snap.p.stock = snap.stock;
+        snap.p.canStock = snap.canStock;
+        snap.p.openedStock = snap.openedStock;
+        snap.p.openedCanSize = snap.openedCanSize;
+        snap.p.openedBySize = snap.openedBySize;
+        if (typeof syncProductVariants === 'function') syncProductVariants(snap.p);
+      });
+      return;
+    }
     cart = [];
     currentSaleCustomerName = '';
     const custInp = document.getElementById('pos-customer-name');
@@ -1525,9 +2093,9 @@ async function completeSale() {
     window._isCompletingSale = false;
     const btn = document.getElementById('btn-complete-sale');
     if (btn) {
-      btn.disabled = false;
       btn.innerHTML = '✓ Complete &amp; Print Receipt';
     }
+    updateCheckoutButtonState();
   }
 }
 
@@ -1566,6 +2134,11 @@ function showReceipt(sale) {
           <span>${escapeHtml(i.brand || (p && p.brand) || '')}${sizeLabel}${litersText}</span>
           ${colorLabel ? ` · Color: <b>${escapeHtml(colorLabel)}</b>` : ''}
         </div>
+        ${(Number(i.nearExpiryDiscountPct) > 0) ? `
+          <div style="font-size:10.5px; color:#065F46; margin-top:2px;">
+            🏷️ Near-Expiry Discount: -${Number(i.nearExpiryDiscountPct)}% (Orig: ${peso(i.originalUnitPrice || i.unitPrice)}, Saved: ${peso(i.nearExpiryDiscountAmount || 0)})${i.nearExpiryBatchNumber ? ` · Batch ${escapeHtml(i.nearExpiryBatchNumber)}` : ''}
+          </div>
+        ` : ''}
         ${i.components && i.components.length ? `
           <div style="font-size:10.5px; color:#786F66; margin-top:2px;">
             Blend Formula: ${i.components.map(cp => `${cp.percentage}% ${escapeHtml(cp.name)} (${formatStock(cp.liters)}L)`).join(', ')}
@@ -1635,8 +2208,62 @@ function showReceipt(sale) {
           <span class="num" style="font-weight:700;">-${peso(Number(sale.discountAmount || sale.discount || 0))}</span>
         </div>
       ` : ''}
+
+      <!-- Philippine BIR VAT Breakdown on Receipt -->
+      ${(() => {
+        const vatRate = sale.vatRate !== undefined ? Number(sale.vatRate) : (sale.vat_rate !== undefined ? Number(sale.vat_rate) : null);
+        const vatableSales = sale.vatableSales !== undefined ? Number(sale.vatableSales) : (sale.vatable_sales !== undefined ? Number(sale.vatable_sales) : null);
+        const vatAmount = sale.vatAmount !== undefined ? Number(sale.vatAmount) : (sale.vat_amount !== undefined ? Number(sale.vat_amount) : null);
+        const vatExemptSales = sale.vatExemptSales !== undefined ? Number(sale.vatExemptSales) : (sale.vat_exempt_sales !== undefined ? Number(sale.vat_exempt_sales) : 0);
+        const zeroRatedSales = sale.zeroRatedSales !== undefined ? Number(sale.zeroRatedSales) : (sale.zero_rated_sales !== undefined ? Number(sale.zero_rated_sales) : 0);
+        const taxStatus = sale.taxStatus || sale.tax_status || (vatRate === 0 ? 'non_vat' : 'vat_registered');
+
+        if (vatAmount === null || isNaN(vatAmount)) return '';
+
+        if (taxStatus !== 'non_vat') {
+          return `
+            <div style="border-top:1px dashed var(--line, #ddd); border-bottom:1px dashed var(--line, #ddd); padding:4px 0; margin:4px 0; font-size:11.5px;">
+              <div class="pos-receipt-total-row" style="padding:1px 0;">
+                <span class="muted">VATable Sales:</span>
+                <span class="num">${peso(vatableSales || 0)}</span>
+              </div>
+              <div class="pos-receipt-total-row" style="padding:1px 0;">
+                <span class="muted">VAT Amount (${vatRate || 12}%):</span>
+                <span class="num" style="font-weight:700; color:var(--teal, #1F6F6B);">${peso(vatAmount || 0)}</span>
+              </div>
+              ${(vatExemptSales > 0) ? `
+                <div class="pos-receipt-total-row" style="padding:1px 0;">
+                  <span class="muted">VAT-Exempt Sales:</span>
+                  <span class="num">${peso(vatExemptSales)}</span>
+                </div>
+              ` : `
+                <div class="pos-receipt-total-row" style="padding:1px 0;">
+                  <span class="muted">VAT-Exempt Sales:</span>
+                  <span class="num">₱0.00</span>
+                </div>
+              `}
+              ${(zeroRatedSales > 0) ? `
+                <div class="pos-receipt-total-row" style="padding:1px 0;">
+                  <span class="muted">Zero-Rated Sales:</span>
+                  <span class="num">${peso(zeroRatedSales)}</span>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        } else {
+          return `
+            <div style="border-top:1px dashed var(--line, #ddd); border-bottom:1px dashed var(--line, #ddd); padding:4px 0; margin:4px 0; font-size:11.5px;">
+              <div class="pos-receipt-total-row" style="padding:1px 0;">
+                <span class="muted">Tax Classification:</span>
+                <span style="font-size:11px; font-weight:600;">Non-VAT Registered</span>
+              </div>
+            </div>
+          `;
+        }
+      })()}
+
       <div class="pos-receipt-total-row ${(returnedVal > 0 || refundTotal > 0) ? '' : 'grand'}">
-        <span>Total Due:</span>
+        <span>Total Amount Due:</span>
         <span class="grand-val">${peso(sale.total)}</span>
       </div>
       ${(returnedVal > 0 || refundTotal > 0) ? `
@@ -1646,7 +2273,7 @@ function showReceipt(sale) {
       ` : ''}
       <div class="pos-receipt-total-row" style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line, #ddd);">
         <span class="muted">Payment Method:</span>
-        <span style="font-weight:700;">Cash</span>
+        <span style="font-weight:700;">${escapeHtml(sale.paymentMethod || sale.payment_method || 'Cash')}</span>
       </div>
       <div class="pos-receipt-total-row">
         <span class="muted">Cash Tendered:</span>
@@ -1684,6 +2311,7 @@ function printReceiptSection() {
 <!DOCTYPE html>
 <html>
   <head>
+    <base href="${escapeAttr(window.location.href)}">
     <title>Receipt - MRGR Color Center</title>
     <style>
       body { font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 13px; color: #26211C; padding: 24px; line-height: 1.45; background: #fff; }
@@ -1711,7 +2339,7 @@ function printReceiptSection() {
   </head>
   <body>
     ${receiptEl.outerHTML}
-    <script>window.onload = function(){ window.print(); window.close(); }<\/script>
+    <script>window.onafterprint = function(){ window.close(); }; window.onload = function(){ setTimeout(function(){ window.print(); }, 150); }<\/script>
   </body>
 </html>
   `);

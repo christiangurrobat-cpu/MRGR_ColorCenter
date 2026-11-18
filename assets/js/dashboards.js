@@ -11,6 +11,7 @@ function renderAuditCategoryBadgeSimple(cat, action) {
     purchase_orders: { label: '📋 Purchase Order', bg: '#F0FDF4', color: '#166534', border: '#BBF7D0' },
     sales_transactions: { label: '🛒 POS Sale', bg: '#F3E8FF', color: '#6B21A8', border: '#E9D5FF' },
     returns_refunds: { label: '↩️ Return/Refund', bg: '#FFF1F2', color: '#9F1239', border: '#FECDD3' },
+    color_mixing: { label: '🎨 Color Mix', bg: '#FDF4FF', color: '#86198F', border: '#F5D0FE' },
     user_management: { label: '👤 User Admin', bg: '#F1F5F9', color: '#334155', border: '#CBD5E1' }
   };
   const c = catMap[cat] || { label: action || 'Activity', bg: '#F5F1E9', color: 'var(--ink-soft)', border: '#E2DACD' };
@@ -27,8 +28,20 @@ function renderAdminAuditLogRows(rows) {
     const userName = escapeHtml(r.user_name || r.userName || 'System');
     const action = escapeHtml(r.action || '');
     const rawDetails = (r.details || r.detailsClean || '');
-    const details = escapeHtml(typeof cleanDisplayAuditText === 'function' ? cleanDisplayAuditText(rawDetails) : rawDetails);
-    const category = typeof getAuditActionCategory === 'function' ? getAuditActionCategory(r.action) : '';
+    const details = escapeHtml(typeof cleanAuditDisplayString === 'function' ? cleanAuditDisplayString(rawDetails) : (typeof cleanDisplayAuditText === 'function' ? cleanDisplayAuditText(rawDetails) : rawDetails));
+    const actUpper = String(r.action || '').toUpperCase();
+    const category = typeof getAuditActionCategory === 'function'
+      ? getAuditActionCategory(r.action)
+      : (actUpper.includes('LOGIN') || actUpper.includes('LOGOUT') ? 'login_logout'
+        : actUpper.includes('UNAUTHORIZED') || actUpper.includes('SECURITY') ? 'security_events'
+        : actUpper.includes('USER') || actUpper.includes('PASSWORD') ? 'user_management'
+        : actUpper.includes('COLOR_MIX') ? 'color_mixing'
+        : actUpper.includes('RETURN') || actUpper.includes('REFUND') || actUpper.includes('VOID') ? 'returns_refunds'
+        : actUpper.includes('SALE') ? 'sales_transactions'
+        : actUpper.includes('PO_') ? 'purchase_orders'
+        : actUpper.includes('PRODUCT') ? 'product_changes'
+        : actUpper.includes('STOCK') || actUpper.includes('ADJUST') || actUpper.includes('RECEIV') ? 'stock_movements'
+        : '');
     const categoryBadge = renderAuditCategoryBadgeSimple(category, action);
 
     return `
@@ -677,6 +690,10 @@ function adminDashboard() {
     return staffDashboard();
   }
   const todaySales = salesOn(todayISO());
+  const todayCompletedCount = todaySales.filter(s => {
+    const st = String(s.status || 'completed').trim().toLowerCase();
+    return st !== 'voided' && st !== 'void' && st !== 'cancelled' && st !== 'canceled';
+  }).length;
   const low = lowStockProducts();
   const summary = LowStockService.getRestockSummary();
   const pendingPOs = (db.purchaseOrders || []).filter(o => o.status === 'pending');
@@ -738,11 +755,17 @@ function adminDashboard() {
       <button class="btn small" style="background:var(--teal); color:#fff;" onclick="goToApprovalsTab('adjustments')" title="Approve or reject pending stock adjustment requests">
         ⚖️ Approve / Reject Adjustments ${pendingAdj.length ? `<span class="nav-badge">${pendingAdj.length}</span>` : ''}
       </button>
+      <button class="btn small secondary" onclick="goToExpiration('all')" title="Open Expiration Tracking module">
+        🗓️ Expiration Tracking ${typeof expBadgeCount === 'function' && expBadgeCount() > 0 ? `<span class="nav-badge" style="background:var(--danger);">${expBadgeCount()}</span>` : ''}
+      </button>
       <button class="btn secondary small" onclick="goTo('users')" title="Manage user accounts, roles, and staff permissions">
         👤 Manage Staff &amp; Users ${getModuleBadgeHtml('users')}
       </button>
       <button class="btn secondary small" onclick="goTo('suppliers')" title="Manage supplier accounts, terms, and contacts">
         👥 Manage Suppliers
+      </button>
+      <button class="btn secondary small" onclick="openVatSettingsModal()" title="Configure Philippine VAT Rate, Tax Status, and Pricing Model">
+        ⚙️ Philippine VAT Settings
       </button>
       <button class="btn secondary small" onclick="goToApprovalsTab('purchaseOrders')" title="Review and authorize purchase orders">
         📋 Review Purchase Orders ${pendingPOs.length ? `<span class="nav-badge">${pendingPOs.length}</span>` : ''}
@@ -769,7 +792,7 @@ function adminDashboard() {
     <div class="stat-card clickable" onclick="if (typeof goToReportsSalesHistory === 'function') { goToReportsSalesHistory(); } else { goTo('reports'); }" title="Click to view sales history in Reports">
       <div class="label">💰 Today's Sales</div>
       <div class="value">${peso(sumSales(todaySales))}</div>
-      <div class="sub">${todaySales.length} transaction${todaySales.length === 1 ? '' : 's'} completed</div>
+      <div class="sub">${todayCompletedCount} transaction${todayCompletedCount === 1 ? '' : 's'} completed</div>
       <div class="stat-card-footer">
         <span class="stat-action-link">View Sales History &rarr;</span>
       </div>
@@ -846,6 +869,16 @@ function adminDashboard() {
         <span class="stat-action-link">Monitor POs &rarr;</span>
       </div>
     </div>
+
+    <!-- Card 8: Expiration Tracking -->
+    <div class="stat-card clickable ${typeof expBadgeCount === 'function' && expBadgeCount() > 0 ? 'danger' : ''}" onclick="goToExpiration('all')" title="Click to monitor batch expiration dates and shelf life">
+      <div class="label">🗓️ Expiration Tracking</div>
+      <div class="value">${typeof EXP !== 'undefined' && EXP && EXP.summary ? `${(EXP.summary.expired || 0) + (EXP.summary.critical || 0)} Urgent` : 'Batches'}</div>
+      <div class="sub">${typeof EXP !== 'undefined' && EXP && EXP.summary ? `<b>${EXP.summary.expired || 0}</b> expired · <b>${EXP.summary.critical || 0}</b> critical · <b>${EXP.summary.soon || 0}</b> soon` : 'Shelf-life & FIFO monitoring'}</div>
+      <div class="stat-card-footer">
+        <span class="stat-action-link">Expiration Tracking &rarr;</span>
+      </div>
+    </div>
   </div>
 
   ${totalPending > 0 ? `
@@ -869,6 +902,9 @@ function adminDashboard() {
 
   <!-- Panel 1: Recent Transactions -->
   ${renderAdminRecentTransactionsPanel(recent)}
+
+  <!-- Expiration Tracking Widget -->
+  ${typeof expDashboardWidget === 'function' ? expDashboardWidget() : ''}
 
   <!-- Panel 2: Purchase Order Monitoring -->
   ${renderAdminPOMonitoringPanel()}
@@ -924,8 +960,8 @@ function adminDashboard() {
     return sizes.map((s, idx) => {
       const isFirst = idx === 0;
       const isLast = idx === rowSpan - 1;
-      const sizeRow = (p.sizes || []).find(r => String(r.size) === String(s));
-      const sizeId = sizeRow ? sizeRow.id : '';
+      const sizeVariant = typeof productSizeVariantBySize === 'function' ? productSizeVariantBySize(p, s) : null;
+      const sizeId = sizeVariant ? (sizeVariant.sizeId || '') : '';
       const count = productCanCount(p, s);
       const thresh = productSizeThreshold(p, s);
       const stockVol = count * Number(s);
@@ -1732,6 +1768,9 @@ function staffDashboard() {
       <button type="button" class="staff-action-btn-highlight accent-warm" onclick="goTo('inventory')" title="Browse catalog inventory and check stock counts">
         <span>📦</span> Inventory Management ${getModuleBadgeHtml('inventory')}
       </button>
+      <button type="button" class="staff-action-btn-highlight accent-adjust" onclick="goToExpiration('all')" title="Monitor batch expiration dates and shelf life">
+        <span>🗓️</span> Expiration Tracking ${getModuleBadgeHtml('expiration')}
+      </button>
 
       <!-- Secondary Shortcuts -->
       <div class="staff-action-secondary-group">
@@ -1864,6 +1903,9 @@ function staffDashboard() {
 
   <!-- 4. INCOMING DELIVERIES (Scheduled & In-Transit PO Shipments) -->
   ${renderStaffIncomingDeliveriesPanel()}
+
+  <!-- Expiration Tracking Widget -->
+  ${typeof expDashboardWidget === 'function' ? expDashboardWidget() : ''}
 
   <!-- 5. RECENT STOCK MOVEMENTS (6 Columns, Filters, Pagination, View Details) -->
   <div class="staff-movements-panel">

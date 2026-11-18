@@ -182,14 +182,20 @@ function setSalesDatePreset(preset) {
 function onSalesDateRangeChange() {
   const fromEl = document.getElementById('sh-date-from');
   const toEl = document.getElementById('sh-date-to');
-  let f = fromEl ? fromEl.value : '';
-  let t = toEl ? toEl.value : '';
+  const toIso = (v) => {
+    if (!v) return '';
+    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
+    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
+  };
+  let f = toIso(fromEl ? fromEl.value : '');
+  let t = toIso(toEl ? toEl.value : '');
   if (f && t && f > t) {
     const tmp = f;
     f = t;
     t = tmp;
-    if (fromEl) fromEl.value = f;
-    if (toEl) toEl.value = t;
+    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
+    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
   }
   salesDateFrom = f;
   salesDateTo = t;
@@ -246,12 +252,17 @@ function isCurrentUserSale(s) {
 
 function renderCashierSalesSummaryHtml(cashierSales, fromDate, toDate) {
   const periodInfo = getReportingPeriodDisplayInfo(fromDate, toDate);
-  const completedSales = cashierSales.filter(s => s.status !== 'voided' && s.status !== 'cancelled');
+  const completedSales = cashierSales.filter(s => {
+    const ns = normalizeSaleStatus(s.status);
+    return ns !== 'voided' && ns !== 'cancelled';
+  });
   const totalGross = completedSales.reduce((sum, s) => sum + Number(s.subtotal || s.total || 0), 0);
-  const totalNet = completedSales.reduce((sum, s) => {
-    const refund = Number(s.refundTotal || 0);
-    return sum + (Number(s.total || 0) - refund);
-  }, 0);
+  const totalNet = typeof sumSales === 'function'
+    ? sumSales(completedSales)
+    : completedSales.reduce((sum, s) => {
+        const refund = Number(s.refundTotal || 0);
+        return sum + (Number(s.total || 0) - refund);
+      }, 0);
   const totalTx = completedSales.length;
   const returnTx = cashierSales.filter(s => Array.isArray(s.returns) && s.returns.length > 0).length;
 
@@ -666,7 +677,7 @@ function salesHistoryTableHtml() {
               ${normStatus === 'void_rejected' ? `
                 <button class="btn ghost small" style="color:var(--danger); border-color:#FCA5A5; background:#FEE2E2; font-size:11px;" onclick='openVoidDetailsModal("${s.id}")' title="View Admin rejection details">✕ Void Rejected</button>
               ` : ''}
-              ${normStatus !== 'refunded' && normStatus !== 'voided' && normStatus !== 'pending_void' ? (
+              ${normStatus !== 'refunded' && normStatus !== 'voided' && normStatus !== 'pending_void' && normStatus !== 'cancelled' ? (
             hasSaleReturnableItems(s)
               ? `<button class="btn secondary small" onclick='openReturnRefundModal("${s.id}")' title="Process Return &amp; Exchange under store policy">↩️ Return / Exchange</button>`
               : (saleHasOnlyCustomMixItems(s)
@@ -1183,17 +1194,22 @@ async function executeApproveVoid(vrId, remarks = '') {
 
   // Attempt backend API approval first
   try {
-    await fetch('api/void.php?action=approve_request', {
+    const res = await fetch('api/void.php?action=approve_request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         voidRequestId: vr ? vr.id : sale.voidRequestId,
-        adminRemarks: remarks,
-        currentUser: { id: currentUser.id, role: currentUser.role, username: currentUser.username, name: currentUser.name }
+        adminRemarks: remarks
       })
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      showToast(data.error || ('Void approval failed (HTTP ' + res.status + ').'), 'error');
+      return;
+    }
   } catch (err) {
-    console.warn('api/void.php approve_request fallback to db sync:', err.message);
+    showToast('Could not connect to server to approve void request.', 'error');
+    return;
   }
 
   // 1. Revert Inventory: Exactly once
@@ -1342,17 +1358,22 @@ async function executeRejectVoid(vrId, rejectNote = '') {
 
   // Attempt backend API rejection first
   try {
-    await fetch('api/void.php?action=reject_request', {
+    const res = await fetch('api/void.php?action=reject_request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         voidRequestId: vr ? vr.id : sale.voidRequestId,
-        rejectionReason: note,
-        currentUser: { id: currentUser.id, role: currentUser.role, username: currentUser.username, name: currentUser.name }
+        rejectionReason: note
       })
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      showToast(data.error || ('Void rejection failed (HTTP ' + res.status + ').'), 'error');
+      return;
+    }
   } catch (err) {
-    console.warn('api/void.php reject_request fallback to db sync:', err.message);
+    showToast('Could not connect to server to reject void request.', 'error');
+    return;
   }
 
   // 1. Update Sale Status to Void Rejected (Keeps original completed sale & inventory intact)
@@ -1540,13 +1561,19 @@ function openReturnRefundModal(saleId, keepState = false) {
   const hasColorMixItems = saleItems.some(it => it.type === 'colormix');
   const anyRestrictedMixItems = hasColorMixItems;
 
+  const saleSubtotal = Number(sale.subtotal || 0);
+  const saleTotal = Number(sale.total || 0);
+  const discountRatio = (saleSubtotal > 0 && saleTotal > 0 && saleTotal < saleSubtotal)
+    ? (saleTotal / saleSubtotal)
+    : (Number(sale.discountPct || 0) > 0 ? Math.max(0, 1 - Number(sale.discountPct) / 100) : 1);
+
   const rowsHtml = saleItems.map((item, idx) => {
     const qtyPurchased = Number(item.qty || 0);
     const qtyReturned = Number(item.returnedQty || 0);
     const returnable = Math.max(0, Number((qtyPurchased - qtyReturned).toFixed(2)));
 
     const rawUnitPrice = Number(item.unitPrice !== undefined ? item.unitPrice : (item.price !== undefined ? item.price : (Number(item.lineTotal || 0) / Math.max(1, Number(item.qty || 1))))) || 0;
-    const effectiveUnitPrice = Number(rawUnitPrice.toFixed(2));
+    const effectiveUnitPrice = Number((rawUnitPrice * discountRatio).toFixed(2));
 
     const isBlend = item.type === 'colormix';
     const policy = getItemReturnPolicy(item, isSameDay, adminReviewApproved);
@@ -1751,6 +1778,51 @@ function openReturnRefundModal(saleId, keepState = false) {
         <input id="ret-note" type="text" placeholder="e.g. Unopened containers inspected, customer selected new shade">
       </div>
     </div>
+
+    <!-- ADMIN REVIEW EXCEPTION PANEL (for Custom Color Mix or Post-Purchase-Day Exceptions) -->
+    ${(anyRestrictedMixItems || !isSameDay) ? `
+      <div style="margin-top:10px; background:#FFF8EB; border:1px solid #F2D29B; border-radius:var(--radius-sm); padding:10px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div style="font-size:12px; color:#7B4F09; font-weight:700;">
+            🛡️ Administrator Exception Review ${adminReviewApproved ? `<span class="badge ok" style="margin-left:6px;">✓ Authorized (${escapeHtml(adminReviewAdminName || 'Admin')})</span>` : '<span class="badge mid" style="margin-left:6px;">Restricted Items Require Admin Review</span>'}
+          </div>
+          ${adminReviewApproved ? `
+            <button type="button" class="btn ghost small" onclick="cancelInlineAdminReview('${sale.id}')" style="font-size:11px;">Revoke Authorization</button>
+          ` : `
+            <button type="button" class="btn secondary small" onclick="toggleAdminReviewSection()" style="font-size:11px;">🔐 Admin Review / Authorize</button>
+          `}
+        </div>
+        <div id="ret-admin-review-panel" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #E5C17B;">
+          <div class="form-grid" style="gap:8px;">
+            <div class="field">
+              <label style="font-size:11px;">Exception Reason</label>
+              <select id="ret-inline-admin-reason" style="font-size:12px;">
+                <option value="Store mixing error / off-shade formula remedy">Store mixing error / off-shade formula remedy</option>
+                <option value="Approved post-purchase-day defect remedy">Approved post-purchase-day defect remedy</option>
+                <option value="Manager goodwill exception">Manager goodwill exception</option>
+              </select>
+            </div>
+            <div class="field">
+              <label style="font-size:11px;">Admin Remarks (optional)</label>
+              <input id="ret-inline-admin-note" type="text" placeholder="e.g. Verified off-shade batch">
+            </div>
+            ${!(currentUser && currentUser.role === 'admin') ? `
+              <div class="field">
+                <label style="font-size:11px;">Admin Username</label>
+                <input id="ret-inline-admin-user" type="text" placeholder="Admin username">
+              </div>
+              <div class="field">
+                <label style="font-size:11px;">Admin Password</label>
+                <input id="ret-inline-admin-pass" type="password" placeholder="Admin password">
+              </div>
+            ` : ''}
+          </div>
+          <div style="margin-top:8px; text-align:right;">
+            <button type="button" class="btn small" id="btn-approve-inline-admin" onclick="submitInlineAdminReview('${sale.id}')">🔐 Authenticate &amp; Authorize</button>
+          </div>
+        </div>
+      </div>
+    ` : ''}
 
     <!-- INVENTORY RESTORATION DISPOSITION SECTION -->
     <div id="ret-restock-section" style="margin-top:10px; background:#F8FAF9; border:1px solid #D1E5E1; border-radius:var(--radius-sm); padding:10px 14px;">
@@ -2347,7 +2419,10 @@ function renderExchangeReplacementCart(saleId) {
 
 function openStartReturnPickerModal() {
   const allSales = (db.sales || [])
-    .filter(s => (s.status || 'completed') !== 'voided' && isCurrentUserSale(s))
+    .filter(s => {
+      const ns = normalizeSaleStatus(s.status);
+      return ns !== 'voided' && ns !== 'cancelled' && ns !== 'pending_void' && isCurrentUserSale(s);
+    })
     .slice()
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -2380,7 +2455,7 @@ function openStartReturnPickerModal() {
     }
 
     const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager');
-    const eligibleFiltered = filtered.filter(s => (s.status || 'completed') !== 'refunded' && (hasSaleReturnableItems(s) || (isAdmin && saleHasOnlyCustomMixItems(s))));
+    const eligibleFiltered = filtered.filter(s => normalizeSaleStatus(s.status) !== 'refunded' && (hasSaleReturnableItems(s) || (isAdmin && saleHasOnlyCustomMixItems(s))));
 
     if (!eligibleFiltered.length) {
       container.innerHTML = `
@@ -2687,8 +2762,35 @@ async function processSaleReturn(saleId) {
           showToast(`Insufficient stock for replacement item: ${exItem.name}.`, 'error');
           return;
         }
+        if (productHasCanBreakdown(p) && productCanCount(p, exItem.size || 1) < exItem.qty) {
+          showToast(`Insufficient ${exItem.size || 1}L units in stock for replacement item: ${exItem.name}.`, 'error');
+          return;
+        }
         if (!isSameReplacementPrice(p, exItem.size || 1, exItem.origProductId, exItem.origUnitPrice !== undefined ? exItem.origUnitPrice : exItem.unitPrice)) {
           showToast(`Replacement item "${exItem.name}" must have the exact same price as the returned product.`, 'error');
+          return;
+        }
+      }
+    }
+    // Aggregate replacement stock across all rows in case multiple rows pick the same product/size
+    const exLitersByProd = {};
+    const exCansBySize = {};
+    for (const exItem of returnExchangeCart) {
+      if (exItem.isMix || exItem.type === 'colormix') continue;
+      const p = productById(exItem.productId);
+      if (!p) continue;
+      const sz = Number(exItem.size) || 1;
+      const q = Number(exItem.qty) || 0;
+      exLitersByProd[p.id] = (exLitersByProd[p.id] || 0) + (q * sz);
+      if (exLitersByProd[p.id] > p.stock + 1e-6) {
+        showToast(`Combined replacement quantity exceeds available stock for ${p.name}.`, 'error');
+        return;
+      }
+      if (productHasCanBreakdown(p)) {
+        const sk = `${p.id}_${sz}`;
+        exCansBySize[sk] = (exCansBySize[sk] || 0) + q;
+        if (exCansBySize[sk] > productCanCount(p, sz)) {
+          showToast(`Combined replacement ${sz}L units exceed available stock for ${p.name}.`, 'error');
           return;
         }
       }
@@ -2931,9 +3033,10 @@ async function processSaleReturn(saleId) {
     }
   }
 
-  // 7. Update Sale Financials & Status
+  // 7. Update Sale Financials & Status (cap refundTotal at sale.total so netTotal never goes negative)
   const netReduction = Number((thisRefundAmount - thisExchangeAmount).toFixed(2));
-  sale.refundTotal = Number(((sale.refundTotal || 0) + netReduction).toFixed(2));
+  const maxRefundable = Number(sale.total || 0);
+  sale.refundTotal = Math.min(maxRefundable, Math.max(0, Number(((sale.refundTotal || 0) + netReduction).toFixed(2))));
   const allFullyReturned = sale.items.every(it => Number(it.returnedQty || 0) >= Number(it.qty || 0));
   sale.status = allFullyReturned ? 'refunded' : 'partially_refunded';
 
@@ -3264,6 +3367,7 @@ function printReturnSlipSection() {
 <!DOCTYPE html>
 <html>
   <head>
+    <base href="${escapeAttr(window.location.href)}">
     <title>Return &amp; Exchange Voucher - MRGR Color Center</title>
     <style>
       body { font-family: 'Inter', system-ui, sans-serif; font-size: 13px; color: #26211C; padding: 24px; line-height: 1.5; }
@@ -3283,7 +3387,7 @@ function printReturnSlipSection() {
   </head>
   <body>
     ${slipEl.outerHTML}
-    <script>window.onload = function(){ window.print(); window.close(); }<\/script>
+    <script>window.onafterprint = function(){ window.close(); }; window.onload = function(){ setTimeout(function(){ window.print(); }, 150); }<\/script>
   </body>
 </html>
   `);

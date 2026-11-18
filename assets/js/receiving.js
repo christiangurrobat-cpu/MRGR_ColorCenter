@@ -374,6 +374,7 @@ async function disposeOpenedStock(productId, size) {
       productSizes(p).forEach(s => { pools[s] = productOpenedLiters(p, s); });
       pools[canSize] = 0;
       setProductOpenedBySize(p, pools);
+      if (typeof syncProductVariants === 'function') syncProductVariants(p);
       db.movements.push({
         id: uid('mv'),
         date: nowISO(),
@@ -405,7 +406,15 @@ function onReceivingPOChange() {
   const sel = document.getElementById('mv-po');
   if (!sel) return;
   receivingPOId = sel.value;
+  rcvBatchDraft = {}; // batch/expiry entries belong to the PO being received
   renderReceivingPOPreview();
+}
+
+/* Batch / expiration details typed on the receiving form (per PO line index) — feeds Expiration Tracking */
+let rcvBatchDraft = {};
+function rcvBatchDraftSet(idx, field, value) {
+  if (!rcvBatchDraft[idx]) rcvBatchDraft[idx] = { batchNumber: '', expirationDate: '', notes: '' };
+  rcvBatchDraft[idx][field] = value;
 }
 
 function renderReceivingPOPreview() {
@@ -485,6 +494,19 @@ function renderReceivingPOPreview() {
         : (isDone ? '✓ Fully Received' : 'No change')}
         </div>
       </div>
+      ${isDone ? '' : `
+      <div class="rcv-batch-fields" title="Batch details for Expiration Tracking">
+        <label>Batch / Lot No.
+          <input type="text" id="rcv-batch-input-${i}" maxlength="100" placeholder="Auto-generated if blank" value="${escapeAttr(rcvBatchDraft[i] ? rcvBatchDraft[i].batchNumber : '')}" oninput="rcvBatchDraftSet(${i}, 'batchNumber', this.value)">
+        </label>
+        <label>Expiration Date
+          <input type="date" id="rcv-exp-input-${i}" value="${escapeAttr(rcvBatchDraft[i] ? rcvBatchDraft[i].expirationDate : '')}" onchange="rcvBatchDraftSet(${i}, 'expirationDate', this.value)">
+        </label>
+        <label>Restocking Notes
+          <input type="text" id="rcv-note-input-${i}" maxlength="255" placeholder="Optional delivery / condition note" value="${escapeAttr(rcvBatchDraft[i] ? (rcvBatchDraft[i].notes || '') : '')}" oninput="rcvBatchDraftSet(${i}, 'notes', this.value)">
+        </label>
+        <span class="hint">🗓️ Optional — leave the date empty to track as “Not Specified”.</span>
+      </div>`}
     </div>`;
   }).join('');
 
@@ -1179,11 +1201,12 @@ function confirmAndSubmitAdjustments() {
     const p = state.product;
     const isAdd = state.isAdd;
     const isOpened = state.isOpened;
+    const qDisplay = isOpened ? r.qty : state.qtyNum;
     const changeTag = isAdd
-      ? `<b style="color:var(--success);">+${r.qty} unit${r.qty === 1 ? '' : 's'} (+${formatLiters(state.litersAbs)})</b>`
+      ? `<b style="color:var(--success);">+${qDisplay} unit${qDisplay === 1 ? '' : 's'} (+${formatLiters(state.litersAbs)})</b>`
       : (isOpened
-        ? `<b style="color:#9A6216;">Dispose ${formatLiters(r.qty)}</b>`
-        : `<b style="color:var(--danger);">-${r.qty} unit${r.qty === 1 ? '' : 's'} (-${formatLiters(state.litersAbs)})</b>`);
+        ? `<b style="color:#9A6216;">Dispose ${formatLiters(qDisplay)}</b>`
+        : `<b style="color:var(--danger);">-${qDisplay} unit${qDisplay === 1 ? '' : 's'} (-${formatLiters(state.litersAbs)})</b>`);
 
     return `
       <div style="padding:9px 12px; background:#FAF7F2; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; font-size:13px; text-align:left;">
@@ -1337,6 +1360,7 @@ async function executeStockAdjustment(validRows, actorName = null, options = {})
       productSizes(p).forEach(s => { pools[s] = productOpenedLiters(p, s); });
       pools[canSize] = newOpened;
       setProductOpenedBySize(p, pools);
+      if (typeof syncProductVariants === 'function') syncProductVariants(p);
       syncProductVariants(p);
       const variant = productSizeVariantBySize(p, canSize);
       const sizeId = row.sizeId || (variant ? variant.sizeId : null);
@@ -1437,11 +1461,23 @@ async function executeStockAdjustment(validRows, actorName = null, options = {})
   }
 }
 
+function safeParseAdjRows(req) {
+  if (!req) return [];
+  if (Array.isArray(req.rows)) return req.rows;
+  if (!req.rowsJson) return [];
+  try {
+    const parsed = JSON.parse(req.rowsJson);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function confirmApproveAdjRequest(reqId) {
   const req = (db.adjustmentRequests || []).find(r => r.id === reqId);
   if (!req || req.status !== 'pending') return;
 
-  const rows = Array.isArray(req.rows) ? req.rows : (req.rowsJson ? JSON.parse(req.rowsJson) : []);
+  const rows = safeParseAdjRows(req);
   let hasStockDiscrepancy = false;
 
   const reviewHtml = rows.map(r => {
@@ -1483,9 +1519,27 @@ function confirmApproveAdjRequest(reqId) {
     `;
   }).join('');
 
+  if (hasStockDiscrepancy) {
+    showPOConfirm({
+      icon: '🚫',
+      title: 'Cannot Approve — Insufficient Stock',
+      message: `
+        <div style="text-align:left; font-size:13px; color:var(--ink-soft);">
+          <p>Request <b>${escapeHtml(req.reqNumber)}</b> cannot be approved because one or more requested deductions exceed current warehouse stock:</p>
+          <div style="max-height:200px; overflow-y:auto; margin:8px 0;">${reviewHtml}</div>
+          <p style="font-size:12px; color:var(--danger); font-weight:600;">Please reject this request so staff can resubmit with valid quantities.</p>
+        </div>
+      `,
+      confirmLabel: 'OK',
+      confirmClass: 'btn secondary',
+      onConfirm: () => {}
+    });
+    return;
+  }
+
   showPOConfirm({
-    icon: hasStockDiscrepancy ? '⚠️' : '✅',
-    title: hasStockDiscrepancy ? 'Approve Stock Adjustment (Stock Alert)?' : 'Approve Stock Adjustment?',
+    icon: '✅',
+    title: 'Approve Stock Adjustment?',
     message: `
       <div style="text-align:left; font-size:13px; color:var(--ink-soft);">
         <p>Do you want to approve request <b>${escapeHtml(req.reqNumber)}</b> submitted by <b>${escapeHtml(req.requestedBy)}</b>?</p>
@@ -1503,7 +1557,7 @@ async function approveAdjRequest(reqId) {
   const req = (db.adjustmentRequests || []).find(r => r.id === reqId);
   if (!req || req.status !== 'pending') return;
 
-  const rows = Array.isArray(req.rows) ? req.rows : (req.rowsJson ? JSON.parse(req.rowsJson) : []);
+  const rows = safeParseAdjRows(req);
   // Execute updates without triggering premature toast, page render, or resetting the draft form
   await executeStockAdjustment(rows, req.requestedBy, { skipSave: true, skipReset: true, skipToast: true, skipRender: true });
 
@@ -1560,7 +1614,7 @@ function viewAdjRequestDetails(reqId) {
   const req = (db.adjustmentRequests || []).find(r => r.id === reqId);
   if (!req) return;
 
-  const rows = Array.isArray(req.rows) ? req.rows : (req.rowsJson ? JSON.parse(req.rowsJson) : []);
+  const rows = safeParseAdjRows(req);
   const isAdmin = currentUser && currentUser.role === 'admin';
   const isPending = req.status === 'pending';
 
@@ -1689,7 +1743,7 @@ function renderAdjRequestsViewHtml() {
           </thead>
           <tbody>
             ${(reqPag.pagedItems || reqPag.pageItems || []).length ? (reqPag.pagedItems || reqPag.pageItems || []).map(req => {
-    const rows = Array.isArray(req.rows) ? req.rows : (req.rowsJson ? JSON.parse(req.rowsJson) : []);
+    const rows = safeParseAdjRows(req);
     const dateStr = formatDateShort(req.date);
     const isPending = req.status === 'pending';
     const isApproved = req.status === 'approved';
@@ -1765,6 +1819,7 @@ async function submitMovement(e) {
   const date = nowISO();
 
   if (type === 'receiving') {
+    if (window._isSubmittingReceiving) return false;
     const poSel = document.getElementById('mv-po');
     const po = (db.purchaseOrders || []).find(o => poSel && o.id === poSel.value);
     if (!po || (po.status !== 'ordered' && po.status !== 'partial')) {
@@ -1774,13 +1829,36 @@ async function submitMovement(e) {
 
     const items = getPOItems(po);
     const batchQtys = {};
+    const batchMeta = {};
     let totalToReceive = 0;
 
     for (let i = 0; i < items.length; i++) {
       const input = document.getElementById(`rcv-qty-input-${i}`);
-      const val = input ? Math.max(0, parseFloat(input.value) || 0) : 0;
+      const rawVal = input ? Math.max(0, parseFloat(input.value) || 0) : 0;
+      if (rawVal > 0 && !Number.isInteger(rawVal)) {
+        showToast(`Receiving quantity for "${items[i].productName || 'Item'}" must be a whole number of containers.`, 'error');
+        return false;
+      }
+      const val = Math.floor(rawVal);
       batchQtys[i] = val;
       totalToReceive += val;
+      const bnEl = document.getElementById(`rcv-batch-input-${i}`);
+      const exEl = document.getElementById(`rcv-exp-input-${i}`);
+      const ntEl = document.getElementById(`rcv-note-input-${i}`);
+      const expVal = exEl ? exEl.value : '';
+      if (val > 0 && expVal && expVal < todayISO()) {
+        const ok = await showConfirmDialog({
+          title: 'Expiration date is in the past',
+          message: `<b>${escapeHtml(items[i].productName || 'Item')}</b> is being received with an expiration date of <b>${escapeHtml(expVal)}</b>, which has already passed. It will be tracked as <b>Expired</b>. Continue?`,
+          confirmText: 'Receive anyway', danger: true
+        });
+        if (!ok) return false;
+      }
+      batchMeta[i] = {
+        batchNumber: bnEl ? bnEl.value.trim() : '',
+        expirationDate: expVal || '',
+        notes: ntEl ? ntEl.value.trim() : ''
+      };
     }
 
     if (totalToReceive <= 0) {
@@ -1788,15 +1866,24 @@ async function submitMovement(e) {
       return false;
     }
 
-    const result = await completePOReceiving(po, '', batchQtys);
+    window._isSubmittingReceiving = true;
+    const rcvBtn = document.getElementById('btn-submit-rcv');
+    if (rcvBtn) rcvBtn.disabled = true;
+    try {
+      const result = await completePOReceiving(po, '', batchQtys, batchMeta);
+      rcvBatchDraft = {};
 
-    if (result.allCompleted) {
-      receivingPOId = '';
-      showToast(`PO ${po.poNumber} confirmed as fully received — all stock updated.`, 'ok');
-    } else {
-      showToast(`PO ${po.poNumber} partial delivery recorded (${result.receivedItemCount} items updated). PO status is Partial.`, 'ok');
+      if (result.allCompleted) {
+        receivingPOId = '';
+        showToast(`PO ${po.poNumber} confirmed as fully received — all stock updated.`, 'ok');
+      } else {
+        showToast(`PO ${po.poNumber} partial delivery recorded (${result.receivedItemCount} items updated). PO status is Partial.`, 'ok');
+      }
+      renderPage();
+    } finally {
+      window._isSubmittingReceiving = false;
+      if (rcvBtn) rcvBtn.disabled = false;
     }
-    renderPage();
     return false;
   }
   else if (type === 'adjustment') {

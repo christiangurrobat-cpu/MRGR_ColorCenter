@@ -190,7 +190,7 @@ textarea {
 }
 
 .login-side .brand-name {
-  font-family: 'Space Grotesk';
+  font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
   font-weight: 700;
   font-size: 20px;
   letter-spacing: -0.01em;

@@ -1,5 +1,44 @@
 <?php
-$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+if (!is_string($uri) || $uri === '') {
+    $uri = '/';
+}
+
+function serveAllowedStaticOrPhp($baseDir, $relPath, $mimes) {
+    $relPath = '/' . ltrim($relPath, '/');
+    $baseReal = realpath($baseDir);
+    $targetReal = realpath($baseDir . $relPath);
+    if ($baseReal === false || $targetReal === false || strpos($targetReal, $baseReal . DIRECTORY_SEPARATOR) !== 0) {
+        return false;
+    }
+    if (is_dir($targetReal)) {
+        return false;
+    }
+    $normRel = str_replace('\\', '/', substr($targetReal, strlen($baseReal)));
+    if (substr($normRel, -4) === '.php') {
+        // Only allow root entry PHP files and api/*.php
+        if (!preg_match('#^/(index|login|admin)\.php$#', $normRel) && !preg_match('#^/api/[a-zA-Z0-9_-]+\.php$#', $normRel)) {
+            http_response_code(403);
+            exit;
+        }
+        require $targetReal;
+        exit;
+    }
+    // Only allow static assets and favicons
+    if (strpos($normRel, '/assets/') !== 0 && $normRel !== '/favicon.ico' && $normRel !== '/favicon.png') {
+        http_response_code(403);
+        exit;
+    }
+    if (php_sapi_name() === 'cli-server') {
+        return false;
+    }
+    $ext = strtolower(pathinfo($targetReal, PATHINFO_EXTENSION));
+    if (isset($mimes[$ext])) {
+        header('Content-Type: ' . $mimes[$ext]);
+    }
+    readfile($targetReal);
+    exit;
+}
 
 // Force logout / fresh login screen when launched via start-app.vbs (?login=1) or /login.php
 if (isset($_GET['login']) || $uri === '/login.php' || $uri === '/sales&inventory/login.php') {
@@ -50,35 +89,14 @@ if (strpos($uri, '/sales&inventory') === 0) {
         readfile(__DIR__ . '/index.html');
         exit;
     }
-    $file = __DIR__ . $sub;
-    if (file_exists($file) && !is_dir($file)) {
-        if (substr($file, -4) === '.php') {
-            require $file;
-            exit;
-        }
-        $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
-        if (isset($mimes[$ext])) {
-            header('Content-Type: ' . $mimes[$ext]);
-        }
-        readfile($file);
-        exit;
+    $handled = serveAllowedStaticOrPhp(__DIR__, $sub, $mimes);
+    if ($handled === false && php_sapi_name() === 'cli-server') {
+        return false;
     }
 } elseif ($uri !== '/' && $uri !== '/index.html' && $uri !== '/index.php' && $uri !== '/login.php') {
-    $rootFile = __DIR__ . $uri;
-    if (file_exists($rootFile) && !is_dir($rootFile)) {
-        if (php_sapi_name() === 'cli-server') {
-            return false;
-        }
-        if (substr($rootFile, -4) === '.php') {
-            require $rootFile;
-            exit;
-        }
-        $ext = strtolower(pathinfo($rootFile, PATHINFO_EXTENSION));
-        if (isset($mimes[$ext])) {
-            header('Content-Type: ' . $mimes[$ext]);
-        }
-        readfile($rootFile);
-        exit;
+    $handled = serveAllowedStaticOrPhp(__DIR__, $uri, $mimes);
+    if ($handled === false && php_sapi_name() === 'cli-server') {
+        return false;
     }
 }
 

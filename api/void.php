@@ -7,6 +7,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/batch_lib.php';
 
 try {
     $conn = getDBConnection();
@@ -19,11 +20,9 @@ try {
 $rawInput = file_get_contents('php://input');
 $payload = json_decode($rawInput, true) ?: [];
 
-// Resolve authenticated user & role
-$sessionUserId = $_SESSION['user_id'] ?? null;
-$clientUser = $payload['currentUser'] ?? null;
-$actingUserId = (string)($sessionUserId ?: ($clientUser['id'] ?? ''));
-$actingRole = (string)($clientUser['role'] ?? '');
+// Resolve authenticated user & role strictly from PHP session
+$actingUserId = (string)($_SESSION['user_id'] ?? '');
+$actingRole = '';
 $actingUser = null;
 
 if ($actingUserId !== '') {
@@ -112,7 +111,12 @@ if ($action === 'submit_request') {
         exit;
     }
 
-    // RBAC: Cashiers can only submit void requests for their own sales
+    // RBAC: Only cashiers (for their own sales) and admins may submit void requests
+    if (!in_array($actingRole, ['cashier', 'admin'], true)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Access denied: Only cashiers or administrators can submit void requests.']);
+        exit;
+    }
     if ($actingRole === 'cashier') {
         $cashierId = (string)($sale['cashier_id'] ?? '');
         $cashierName = (string)($sale['cashier_name'] ?? '');
@@ -265,6 +269,13 @@ if ($action === 'approve_request') {
             exit;
         }
 
+        if ($vr['status'] !== 'pending') {
+            $conn->rollback();
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => "Void request has already been {$vr['status']}."]);
+            exit;
+        }
+
         if ($vr['status'] === 'approved' || (int)$vr['inventory_restored'] === 1) {
             $conn->rollback();
             http_response_code(400);
@@ -310,8 +321,8 @@ if ($action === 'approve_request') {
                 $litersRestored = round($qty * $size, 2);
 
                 if ($productId) {
-                    // Fetch product
-                    $pStmt = $conn->prepare("SELECT id, name, stock, can_stock FROM products WHERE id = ? OR product_id = ? LIMIT 1");
+                    // Fetch product with row lock
+                    $pStmt = $conn->prepare("SELECT id, name, stock, can_stock FROM products WHERE id = ? OR product_id = ? LIMIT 1 FOR UPDATE");
                     $pStmt->bind_param("ss", $productId, $productId);
                     $pStmt->execute();
                     $product = $pStmt->get_result()->fetch_assoc();
@@ -377,6 +388,11 @@ if ($action === 'approve_request') {
                             $mvStmt->execute();
                             $mvStmt->close();
                         }
+
+                        // Sync batch ledger so inventory_batches stays consistent with inventory.sealed_quantity
+                        if ($sizeId) {
+                            batchProcessMovement($conn, ['id' => $mvId], 'adjustment', $sizeId, $pDbId, $size, $litersRestored, $adminName, $trailNote, $now);
+                        }
                     }
                 }
             } elseif ($itemType === 'colormix') {
@@ -393,7 +409,7 @@ if ($action === 'approve_request') {
                 $mvStmt = $conn->prepare("INSERT INTO movements (id, date, type, product_name, qty_change, staff_name, note)
                     VALUES (?, ?, 'adjustment', ?, ?, ?, ?)");
                 if ($mvStmt) {
-                    $mvStmt->bind_param("sssdsd", $mvId, $now, $mvProdName, $zeroLiters, $adminName, $trailNote);
+                    $mvStmt->bind_param("sssdss", $mvId, $now, $mvProdName, $zeroLiters, $adminName, $trailNote);
                     $mvStmt->execute();
                     $mvStmt->close();
                 }
@@ -501,6 +517,13 @@ if ($action === 'reject_request') {
             exit;
         }
 
+        if ($vr['status'] !== 'pending') {
+            $conn->rollback();
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => "Void request has already been {$vr['status']}."]);
+            exit;
+        }
+
         $saleId = (string)$vr['sale_id'];
         $sStmt = $conn->prepare("SELECT * FROM sales WHERE id = ? FOR UPDATE");
         $sStmt->bind_param("s", $saleId);
@@ -575,7 +598,19 @@ if ($action === 'reject_request') {
 // Action 4: Get Pending Void Requests
 // -------------------------------------------------------------
 if ($action === 'get_pending' || $action === 'list') {
-    $vres = $conn->query("SELECT * FROM void_requests WHERE status = 'pending' ORDER BY date DESC");
+    if (!in_array($actingRole, ['admin', 'cashier'], true)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Access denied.']);
+        exit;
+    }
+    if ($actingRole === 'admin') {
+        $vres = $conn->query("SELECT * FROM void_requests WHERE status = 'pending' ORDER BY date DESC");
+    } else {
+        $vst = $conn->prepare("SELECT * FROM void_requests WHERE status = 'pending' AND cashier_id = ? ORDER BY date DESC");
+        $vst->bind_param("s", $actingUser['id']);
+        $vst->execute();
+        $vres = $vst->get_result();
+    }
     $list = [];
     if ($vres) {
         while ($r = $vres->fetch_assoc()) {

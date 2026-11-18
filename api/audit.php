@@ -2,6 +2,9 @@
 // Audit log API: POST = record an entry (append-only), GET = list entries with filtering, stats, pagination & CSV export.
 date_default_timezone_set('Asia/Manila');
 header('Content-Type: application/json; charset=utf-8');
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once __DIR__ . '/../config/database.php';
 
 /**
@@ -370,6 +373,26 @@ try {
     }
 
     if ($method === 'POST') {
+        $sessionUserId = (string)($_SESSION['user_id'] ?? '');
+        if ($sessionUserId === '') {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'error' => 'Authentication required.']);
+            exit;
+        }
+        $uAuthSt = $conn->prepare("SELECT id, name, role, status FROM users WHERE id = ? LIMIT 1");
+        $authUser = null;
+        if ($uAuthSt) {
+            $uAuthSt->bind_param('s', $sessionUserId);
+            $uAuthSt->execute();
+            $authUser = $uAuthSt->get_result()->fetch_assoc();
+            $uAuthSt->close();
+        }
+        if (!$authUser || $authUser['status'] !== 'active') {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Access denied: inactive or unknown user.']);
+            exit;
+        }
+
         $d = json_decode(file_get_contents('php://input'), true) ?: [];
 
         // Reject any attempt to edit or delete existing audit records via POST payload
@@ -383,24 +406,9 @@ try {
         }
 
         $now = date('Y-m-d H:i:s');
-        $uid = substr(trim((string)($d['userId'] ?? '')), 0, 64);
-        $uname = substr(trim((string)($d['userName'] ?? '')), 0, 255);
-        $role = substr(trim((string)($d['userRole'] ?? '')), 0, 32);
-
-        // Verify authenticated user details from users table when userId is known
-        if ($uid !== '' && ($uname === '' || $role === '')) {
-            $uSt = $conn->prepare("SELECT name, role FROM users WHERE id = ? LIMIT 1");
-            if ($uSt) {
-                $uSt->bind_param('s', $uid);
-                $uSt->execute();
-                $uRow = $uSt->get_result()->fetch_assoc();
-                if ($uRow) {
-                    if ($uname === '') $uname = substr((string)$uRow['name'], 0, 255);
-                    if ($role === '') $role = substr((string)$uRow['role'], 0, 32);
-                }
-                $uSt->close();
-            }
-        }
+        $uid = substr((string)$authUser['id'], 0, 64);
+        $uname = substr((string)$authUser['name'], 0, 255);
+        $role = substr((string)$authUser['role'], 0, 32);
 
         $action = substr(strtoupper(trim((string)($d['action'] ?? ''))), 0, 64);
         $entity = substr(trim((string)($d['entity'] ?? '')), 0, 64);
@@ -421,6 +429,7 @@ try {
         }
 
         if ($action === '') {
+            http_response_code(400);
             echo json_encode(['success' => false, 'error' => 'Missing action']);
             exit;
         }
@@ -507,7 +516,7 @@ try {
     }
 
     // RBAC: Verify user role for accessing the Audit Log (Administrator Only)
-    $reqUserId = trim((string)($_GET['userId'] ?? $_SERVER['HTTP_X_USER_ID'] ?? ''));
+    $reqUserId = trim((string)($_SESSION['user_id'] ?? ''));
     $isAdminAuthorized = false;
     if ($reqUserId !== '') {
         $uChk = $conn->prepare("SELECT role, status FROM users WHERE id = ? LIMIT 1");
@@ -694,7 +703,8 @@ try {
     $todayGlobalCount = (int)($todayGlobalRow['cnt'] ?? 0);
 
     // Total records in the entire audit_logs table (unfiltered)
-    $dbTotalRow = $conn->query("SELECT COUNT(*) AS cnt FROM audit_logs")->fetch_assoc();
+    $dbTotalRes = $conn->query("SELECT COUNT(*) AS cnt FROM audit_logs");
+    $dbTotalRow = $dbTotalRes ? ($dbTotalRes->fetch_assoc() ?: []) : [];
     $dbTotal = (int)($dbTotalRow['cnt'] ?? 0);
 
     // 2. Apply server-side LIMIT and OFFSET pagination

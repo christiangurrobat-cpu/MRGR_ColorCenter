@@ -4,7 +4,9 @@
 function openModal(title, bodyHtml, footHtml, size) {
   const bar = document.getElementById('alerts-floating-bar');
   if (bar) bar.style.display = 'none';
-  document.getElementById('modal-root').innerHTML = `
+  const root = document.getElementById('modal-root');
+  if (!root) return;
+  root.innerHTML = `
 <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
   <div class="modal-box ${size || ''}">
     <div class="modal-header"><h3>${title}</h3><button onclick="closeModal()">&times;</button></div>
@@ -12,7 +14,7 @@ function openModal(title, bodyHtml, footHtml, size) {
     <div class="modal-foot">${footHtml || `<button class="btn secondary" onclick="closeModal()">Close</button>`}</div>
   </div>
 </div>`;
-  if (document.getElementById('mv-type')) toggleMovementFields();
+  if (document.getElementById('mv-type') && typeof toggleMovementFields === 'function') toggleMovementFields();
 }
 function closeModal() {
   if (typeof posConfirmPromiseResolve === 'function') {
@@ -20,7 +22,8 @@ function closeModal() {
     posConfirmPromiseResolve = null;
     fn(false);
   }
-  document.getElementById('modal-root').innerHTML = '';
+  const root = document.getElementById('modal-root');
+  if (root) root.innerHTML = '';
   if (typeof LowStockService !== 'undefined' && typeof LowStockService.syncUI === 'function') {
     LowStockService.syncUI();
   }

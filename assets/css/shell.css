@@ -470,7 +470,7 @@
 }
 
 .stat-card .value {
-  font-family: 'Space Grotesk';
+  font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
   font-size: 26px;
   font-weight: 700;
 }

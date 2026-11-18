@@ -480,12 +480,16 @@ if (!window._appCalListenersAttached) {
   }, true);
 }
 function formatDateTime(iso) {
+  if (!iso) return '-';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' +
     d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
 }
 function formatDateOnly(iso) {
+  if (!iso) return '-';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
 }
 function formatDateShort(iso) {
@@ -536,7 +540,8 @@ function generateReceiptNo() {
 function getReceiptNo(sale) {
   if (!sale) return 'OR-0000';
   if (sale.receiptNo) return sale.receiptNo;
-  const d = sale.date ? new Date(sale.date) : new Date();
+  let d = sale.date ? new Date(sale.date) : new Date();
+  if (isNaN(d.getTime())) d = new Date();
   const dateStr = d.getFullYear().toString() +
     String(d.getMonth() + 1).padStart(2, '0') +
     String(d.getDate()).padStart(2, '0');
@@ -547,6 +552,7 @@ function getReceiptNo(sale) {
 
 function showToast(message, type) {
   const root = document.getElementById('toast-root');
+  if (!root) return;
   const el = document.createElement('div');
   el.className = 'toast' + (type ? ' ' + type : '');
   const icon = type === 'ok' ? '🎉' : (type === 'error' ? '⚠️' : 'ℹ️');
@@ -592,6 +598,8 @@ function formatHeaderTime(d) {
 function buildSeedData() {
   return {
     products: [],
+    productSizes: [],
+    productSuppliers: [],
     suppliers: [],
     users: [],
     sales: [],
@@ -738,6 +746,26 @@ function normalizeDbPayload(rawDb) {
 
   if (!Array.isArray(processed.adjustmentRequests)) processed.adjustmentRequests = [];
   if (!Array.isArray(processed.voidRequests)) processed.voidRequests = [];
+
+  if (Array.isArray(processed.productSuppliers)) {
+    processed.productSuppliers = processed.productSuppliers.map(ps => ({
+      id: ps.id || ('ps_' + Math.random().toString(36).slice(2, 9)),
+      productId: ps.productId || ps.product_id,
+      product_id: ps.productId || ps.product_id,
+      supplierId: ps.supplierId || ps.supplier_id,
+      supplier_id: ps.supplierId || ps.supplier_id,
+      containerSize: Number(ps.containerSize ?? ps.container_size) || 0,
+      container_size: Number(ps.containerSize ?? ps.container_size) || 0,
+      purchaseCost: Number(ps.purchaseCost ?? ps.purchase_cost) || 0,
+      purchase_cost: Number(ps.purchaseCost ?? ps.purchase_cost) || 0,
+      minOrderQty: Number(ps.minOrderQty ?? ps.min_order_qty) || 10,
+      min_order_qty: Number(ps.minOrderQty ?? ps.min_order_qty) || 10,
+      availability: ps.availability || 'available',
+      notes: ps.notes || ''
+    }));
+  } else {
+    processed.productSuppliers = [];
+  }
   return { db: processed, migratedDecimals };
 }
 
@@ -806,7 +834,7 @@ async function silentRefreshFromDB() {
     } catch (e) { }
 
     // If modal is active or user is typing, avoid disrupting active typing or open dialogs
-    const activeModal = document.querySelector('.modal-overlay:not(.hidden), .modal:not(.hidden), [id$="-modal"]:not([style*="display: none"])');
+    const activeModal = document.querySelector('.modal-backdrop, .app-confirm-overlay, .modal-overlay:not(.hidden), .modal:not(.hidden), [id$="-modal"]:not([style*="display: none"])');
     const isTyping = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'SELECT');
 
     if (currentPage === 'pos') {
@@ -905,12 +933,14 @@ async function saveDB() {
       throw new Error(errData.error || ('HTTP ' + res.status));
     }
     if (db.deletedProductIds && db.deletedProductIds.length) db.deletedProductIds = [];
+    if (db.deletedProductSupplierIds && db.deletedProductSupplierIds.length) db.deletedProductSupplierIds = [];
 
     // Broadcast update to all other open tabs on this machine
     broadcastDbUpdate();
   } catch (e) {
     console.error('Save to MySQL failed', e);
-    showToast('Could not save to database — check connection.', 'error');
+    showToast(e && e.message ? ('Save failed: ' + e.message) : 'Could not save to database — check connection.', 'error');
+    return false;
   }
 
   // 3. Keep module navigation notification badges fresh in real-time
@@ -922,6 +952,7 @@ async function saveDB() {
   if (typeof refreshColorMixPresetAvailabilityUI === 'function') {
     try { refreshColorMixPresetAvailabilityUI(); } catch (e) { }
   }
+  return true;
 }
 
 /* ============================================================
@@ -1163,8 +1194,8 @@ function triggerPaginationUpdate(key) {
       result = state.onUpdate(state.page, state.pageSize);
     } else if (typeof state.onUpdate === 'string' && typeof window[state.onUpdate] === 'function') {
       result = window[state.onUpdate](state.page, state.pageSize);
-    } else if (typeof renderMain === 'function') {
-      result = renderMain();
+    } else if (typeof renderPage === 'function') {
+      result = renderPage();
     }
   } catch (err) {
     console.error('Pagination update error for', key, err);

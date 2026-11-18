@@ -18,6 +18,9 @@ try {
 
 $action = $_GET['action'] ?? '';
 
+require_once __DIR__ . '/batch_lib.php';
+try { batchEnsureSchema($conn); } catch (Throwable $e) { error_log('Batch schema: ' . $e->getMessage()); }
+
 // Schema migration helper: ensures schema consistency without running 30+ redundant DDL queries on every request
 function ensureDBSchemaMigrated($conn, $force = false) {
     $flagFile = __DIR__ . '/.schema_migrated';
@@ -303,6 +306,98 @@ function ensureDBSchemaMigrated($conn, $force = false) {
         $conn->query("UPDATE movements m JOIN product_sizes ps ON m.size_id = ps.size_id SET m.product_id = ps.product_id WHERE m.product_id != ps.product_id OR m.product_id IS NULL OR m.product_id = ''");
         $conn->query("UPDATE movements m JOIN products p ON (m.product_id = p.id OR m.product_id = p.product_id) SET m.product_name = p.name WHERE (m.product_name = 'Unknown product' OR m.product_name = '' OR m.product_name = '0') AND m.type != 'colormix'");
 
+        // Auto-migrate: settings table for application configuration
+        $conn->query("CREATE TABLE IF NOT EXISTS settings (
+            setting_key VARCHAR(100) PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Auto-seed default Philippine 12% VAT settings if missing
+        $chkSet = $conn->query("SELECT setting_key FROM settings WHERE setting_key = 'vat_settings' LIMIT 1");
+        if ($chkSet && $chkSet->num_rows === 0) {
+            $defaultVat = json_encode([
+                'taxStatus' => 'vat_registered',
+                'pricingType' => 'inclusive',
+                'vatRate' => 12.00
+            ]);
+            $conn->query("INSERT INTO settings (setting_key, setting_value) VALUES ('vat_settings', '$defaultVat')");
+        }
+
+        // Auto-migrate: Philippine VAT columns on sales table
+        $chkVatRate = $conn->query("SHOW COLUMNS FROM sales LIKE 'vat_rate'");
+        if ($chkVatRate && $chkVatRate->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN vat_rate DECIMAL(5,2) NOT NULL DEFAULT 12.00 AFTER change_amount");
+        }
+        $chkVatableSales = $conn->query("SHOW COLUMNS FROM sales LIKE 'vatable_sales'");
+        if ($chkVatableSales && $chkVatableSales->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN vatable_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER vat_rate");
+        }
+        $chkVatAmount = $conn->query("SHOW COLUMNS FROM sales LIKE 'vat_amount'");
+        if ($chkVatAmount && $chkVatAmount->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN vat_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER vatable_sales");
+        }
+        $chkVatExempt = $conn->query("SHOW COLUMNS FROM sales LIKE 'vat_exempt_sales'");
+        if ($chkVatExempt && $chkVatExempt->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN vat_exempt_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER vat_amount");
+        }
+        $chkZeroRated = $conn->query("SHOW COLUMNS FROM sales LIKE 'zero_rated_sales'");
+        if ($chkZeroRated && $chkZeroRated->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN zero_rated_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER vat_exempt_sales");
+        }
+        $chkTaxStatus = $conn->query("SHOW COLUMNS FROM sales LIKE 'tax_status'");
+        if ($chkTaxStatus && $chkTaxStatus->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN tax_status VARCHAR(50) NOT NULL DEFAULT 'vat_registered' AFTER zero_rated_sales");
+        }
+        $chkPricingType = $conn->query("SHOW COLUMNS FROM sales LIKE 'pricing_type'");
+        if ($chkPricingType && $chkPricingType->num_rows === 0) {
+            $conn->query("ALTER TABLE sales ADD COLUMN pricing_type VARCHAR(50) NOT NULL DEFAULT 'inclusive' AFTER tax_status");
+        }
+
+        // Auto-migrate: tax_classification on products table (vatable, exempt, zero_rated)
+        $chkTaxClass = $conn->query("SHOW COLUMNS FROM products LIKE 'tax_classification'");
+        if ($chkTaxClass && $chkTaxClass->num_rows === 0) {
+            $conn->query("ALTER TABLE products ADD COLUMN tax_classification VARCHAR(50) NOT NULL DEFAULT 'vatable' AFTER category");
+        }
+
+        // Auto-migrate: product_suppliers table for multi-supplier support per product & container size
+        $conn->query("CREATE TABLE IF NOT EXISTS `product_suppliers` (
+            `id` VARCHAR(50) NOT NULL PRIMARY KEY,
+            `product_id` VARCHAR(50) NOT NULL,
+            `supplier_id` VARCHAR(50) NOT NULL,
+            `container_size` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+            `purchase_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+            `min_order_qty` INT NOT NULL DEFAULT 10,
+            `availability` VARCHAR(50) NOT NULL DEFAULT 'available',
+            `notes` VARCHAR(255) NULL,
+            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY `uk_prod_supp_size` (`product_id`, `supplier_id`, `container_size`),
+            INDEX `idx_ps_product` (`product_id`),
+            INDEX `idx_ps_supplier` (`supplier_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+        // Auto-migrate: purchase_order_items table
+        $conn->query("CREATE TABLE IF NOT EXISTS `purchase_order_items` (
+            `id` VARCHAR(50) NOT NULL PRIMARY KEY,
+            `po_id` VARCHAR(50) NOT NULL,
+            `product_id` VARCHAR(50) NOT NULL,
+            `product_name` VARCHAR(200) NOT NULL DEFAULT '',
+            `brand` VARCHAR(100) NULL,
+            `color` VARCHAR(100) NULL,
+            `size_id` VARCHAR(50) NULL,
+            `container_size` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+            `quantity` INT NOT NULL DEFAULT 0,
+            `received_quantity` INT NOT NULL DEFAULT 0,
+            `unit_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+            `total_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+            `supplier_id` VARCHAR(50) NOT NULL,
+            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_poi_po` (`po_id`),
+            INDEX `idx_poi_supplier` (`supplier_id`),
+            INDEX `idx_poi_product` (`product_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
         // Auto-migrate: convert any plaintext passwords in users table to bcrypt hashes
         try {
             $uRes = $conn->query("SELECT id, password FROM users");
@@ -323,16 +418,19 @@ function ensureDBSchemaMigrated($conn, $force = false) {
         } catch (Throwable $e) {}
 
         @file_put_contents($flagFile, date('Y-m-d H:i:s'));
-    } catch (Throwable $e) { /* ignore */ }
+    } catch (Throwable $e) {
+        error_log('ensureDBSchemaMigrated error: ' . $e->getMessage());
+    }
 }
 
-$isMigrationRequested = ($action === 'migrate_schema' || isset($_GET['migrate']));
-if ($isMigrationRequested || !file_exists(__DIR__ . '/.schema_migrated')) {
-    ensureDBSchemaMigrated($conn, $isMigrationRequested);
-    if ($action === 'migrate_schema') {
-        echo json_encode(['success' => true, 'message' => 'Schema migration verified successfully.']);
-        exit;
-    }
+function safeDateSql($val, string $format = 'Y-m-d H:i:s', ?string $default = null): ?string {
+    if ($val === null || $val === '') return $default;
+    $ts = strtotime((string)$val);
+    return ($ts !== false) ? date($format, $ts) : $default;
+}
+
+if (!file_exists(__DIR__ . '/.schema_migrated')) {
+    ensureDBSchemaMigrated($conn, false);
 }
 
 // Helper function: check product dependencies on backend before deletion
@@ -370,7 +468,8 @@ function getProductBackendDependencies($conn, $productId, $internalId) {
         $stmt->bind_param("ss", $id1, $id2);
         $stmt->execute();
         if ($invRow = $stmt->get_result()->fetch_assoc()) {
-            if ((int)($invRow['sealed_cnt'] ?? 0) > 0 && !in_array("Has remaining sealed stock", $deps)) {
+            $hasSealedDep = !empty(array_filter($deps, function($d) { return strpos($d, 'Has remaining sealed stock') === 0; }));
+            if ((int)($invRow['sealed_cnt'] ?? 0) > 0 && !$hasSealedDep) {
                 $deps[] = "Has " . ((int)$invRow['sealed_cnt']) . " sealed unit(s) in warehouse inventory";
             }
             if ((float)($invRow['rem_vol'] ?? 0) > 0) {
@@ -452,24 +551,8 @@ function getProductBackendDependencies($conn, $productId, $internalId) {
     return array_values(array_unique($deps));
 }
 
-// Check product dependencies endpoint
-if ($action === 'check_product_dependencies') {
-    $id = $_GET['id'] ?? '';
-    $pid = $_GET['product_id'] ?? $id;
-    $deps = getProductBackendDependencies($conn, $pid, $id);
-    echo json_encode([
-        'success' => true,
-        'hasDependencies' => !empty($deps),
-        'dependencies' => $deps
-    ]);
-    exit;
-}
-
-// RBAC: Identify authenticated acting user from session (or secure auth header)
+// RBAC: Identify authenticated acting user strictly from PHP session
 $sessionUserId = $_SESSION['user_id'] ?? null;
-if (empty($sessionUserId) && !empty($_SERVER['HTTP_X_USER_ID'])) {
-    $sessionUserId = trim((string)$_SERVER['HTTP_X_USER_ID']);
-}
 
 $actingUser = null;
 $actingUserId = null;
@@ -490,6 +573,43 @@ if (!empty($sessionUserId)) {
         }
         $uStmt->close();
     }
+}
+
+if (!$actingUser) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'Authentication required.']);
+    exit;
+}
+
+if ($action === 'migrate_schema' || isset($_GET['migrate'])) {
+    if ($actingRole !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Access denied: Administrator authorization required.']);
+        exit;
+    }
+    ensureDBSchemaMigrated($conn, true);
+    if ($action === 'migrate_schema') {
+        echo json_encode(['success' => true, 'message' => 'Schema migration verified successfully.']);
+        exit;
+    }
+}
+
+// Check product dependencies endpoint
+if ($action === 'check_product_dependencies') {
+    if (!in_array($actingRole, ['admin', 'staff'], true)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Access denied.']);
+        exit;
+    }
+    $id = $_GET['id'] ?? '';
+    $pid = $_GET['product_id'] ?? $id;
+    $deps = getProductBackendDependencies($conn, $pid, $id);
+    echo json_encode([
+        'success' => true,
+        'hasDependencies' => !empty($deps),
+        'dependencies' => $deps
+    ]);
+    exit;
 }
 
 // Sales History Summary endpoint (Admin Only)
@@ -541,6 +661,42 @@ if ($action === 'sales_history_summary') {
         'success' => true,
         'summary' => $sRes
     ]);
+    exit;
+}
+
+// Save VAT Settings endpoint (Admin Only)
+if ($action === 'save_vat_settings') {
+    $rawInput = file_get_contents('php://input');
+    $payload = json_decode($rawInput, true);
+
+    if ($actingRole !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Access denied: Only Administrators can configure Philippine VAT settings.']);
+        exit;
+    }
+    $vatSettings = $payload['vatSettings'] ?? $payload;
+    if (!$vatSettings || !is_array($vatSettings)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Invalid VAT settings payload.']);
+        exit;
+    }
+    $taxStatus = ($vatSettings['taxStatus'] ?? '') === 'non_vat' ? 'non_vat' : 'vat_registered';
+    $pricingType = ($vatSettings['pricingType'] ?? '') === 'exclusive' ? 'exclusive' : 'inclusive';
+    $vatRate = isset($vatSettings['vatRate']) ? max(0, (float)$vatSettings['vatRate']) : 12.00;
+    
+    $cleanSettings = [
+        'taxStatus' => $taxStatus,
+        'pricingType' => $pricingType,
+        'vatRate' => $vatRate
+    ];
+    
+    $setStmt = $conn->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('vat_settings', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+    $valJson = json_encode($cleanSettings);
+    $setStmt->bind_param("s", $valJson);
+    $setStmt->execute();
+    $setStmt->close();
+    
+    echo json_encode(['success' => true, 'vatSettings' => $cleanSettings]);
     exit;
 }
 
@@ -611,6 +767,20 @@ if ($action === 'get_sale' || $action === 'receipt') {
             'discountAmount' => $discountAmount,
             'discount' => $discountAmount,
             'total' => (float)($r['total'] ?: ($r['subtotal'] - $discountAmount)),
+            'vatRate' => isset($r['vat_rate']) ? (float)$r['vat_rate'] : 12.00,
+            'vat_rate' => isset($r['vat_rate']) ? (float)$r['vat_rate'] : 12.00,
+            'vatableSales' => isset($r['vatable_sales']) ? (float)$r['vatable_sales'] : 0.00,
+            'vatable_sales' => isset($r['vatable_sales']) ? (float)$r['vatable_sales'] : 0.00,
+            'vatAmount' => isset($r['vat_amount']) ? (float)$r['vat_amount'] : 0.00,
+            'vat_amount' => isset($r['vat_amount']) ? (float)$r['vat_amount'] : 0.00,
+            'vatExemptSales' => isset($r['vat_exempt_sales']) ? (float)$r['vat_exempt_sales'] : 0.00,
+            'vat_exempt_sales' => isset($r['vat_exempt_sales']) ? (float)$r['vat_exempt_sales'] : 0.00,
+            'zeroRatedSales' => isset($r['zero_rated_sales']) ? (float)$r['zero_rated_sales'] : 0.00,
+            'zero_rated_sales' => isset($r['zero_rated_sales']) ? (float)$r['zero_rated_sales'] : 0.00,
+            'taxStatus' => $r['tax_status'] ?? 'vat_registered',
+            'tax_status' => $r['tax_status'] ?? 'vat_registered',
+            'pricingType' => $r['pricing_type'] ?? 'inclusive',
+            'pricing_type' => $r['pricing_type'] ?? 'inclusive',
             'status' => $r['status'] ?? 'completed',
             'voidReason' => $r['void_reason'] ?? null,
             'voidedAt' => !empty($r['voided_at']) ? (DateTime::createFromFormat('Y-m-d H:i:s', $r['voided_at'], new DateTimeZone('Asia/Manila')) ? DateTime::createFromFormat('Y-m-d H:i:s', $r['voided_at'], new DateTimeZone('Asia/Manila'))->format(DateTime::ATOM) : $r['voided_at']) : null,
@@ -652,6 +822,22 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
         }
     }
     try {
+        // Load Settings
+        $settings = [];
+        $resSettings = $conn->query("SELECT setting_key, setting_value FROM settings");
+        if ($resSettings) {
+            while ($sRow = $resSettings->fetch_assoc()) {
+                $decoded = json_decode($sRow['setting_value'] ?? '', true);
+                $settings[$sRow['setting_key']] = ($decoded !== null) ? $decoded : $sRow['setting_value'];
+            }
+        }
+        $defaultVatSettings = [
+            'taxStatus' => 'vat_registered',
+            'pricingType' => 'inclusive',
+            'vatRate' => 12.00
+        ];
+        $vatSettings = $settings['vat_settings'] ?? $defaultVatSettings;
+
         // Load product sizes joined with inventory
         $sizesByProd = [];
         $allProductSizes = [];
@@ -723,8 +909,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
             $prodId = !empty($r['product_id']) ? $r['product_id'] : $r['id'];
             $prodName = !empty($r['product_name']) ? $r['product_name'] : $r['name'];
             $category = !empty($r['category']) ? $r['category'] : $r['type'];
+            $taxClassification = !empty($r['tax_classification']) ? $r['tax_classification'] : 'vatable';
 
             $products[] = [
+                'taxClassification' => $taxClassification,
+                'tax_classification' => $taxClassification,
                 'id' => $r['id'],
                 'productId' => $prodId,
                 'product_id' => $prodId,
@@ -785,6 +974,29 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
                 'productIds' => $productIds,
                 'status' => $r['status']
             ];
+        }
+
+        // Product Suppliers (Multi-supplier relationships with per-size purchase cost, MOQ, availability)
+        $productSuppliers = [];
+        $resPs = $conn->query("SELECT * FROM product_suppliers ORDER BY product_id, container_size, purchase_cost");
+        if ($resPs) {
+            while ($r = $resPs->fetch_assoc()) {
+                $productSuppliers[] = [
+                    'id' => $r['id'],
+                    'productId' => $r['product_id'],
+                    'product_id' => $r['product_id'],
+                    'supplierId' => $r['supplier_id'],
+                    'supplier_id' => $r['supplier_id'],
+                    'containerSize' => (float)$r['container_size'],
+                    'container_size' => (float)$r['container_size'],
+                    'purchaseCost' => (float)$r['purchase_cost'],
+                    'purchase_cost' => (float)$r['purchase_cost'],
+                    'minOrderQty' => (int)$r['min_order_qty'],
+                    'min_order_qty' => (int)$r['min_order_qty'],
+                    'availability' => $r['availability'] ?? 'available',
+                    'notes' => $r['notes'] ?? ''
+                ];
+            }
         }
 
         // Users (passwords and hashes are strictly excluded from API response)
@@ -853,6 +1065,20 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
                     'discountAmount' => $discountAmount,
                     'discount' => $discountAmount,
                     'total' => (float)($r['total'] ?: ($r['subtotal'] - $discountAmount)),
+                    'vatRate' => isset($r['vat_rate']) ? (float)$r['vat_rate'] : 12.00,
+                    'vat_rate' => isset($r['vat_rate']) ? (float)$r['vat_rate'] : 12.00,
+                    'vatableSales' => isset($r['vatable_sales']) ? (float)$r['vatable_sales'] : 0.00,
+                    'vatable_sales' => isset($r['vatable_sales']) ? (float)$r['vatable_sales'] : 0.00,
+                    'vatAmount' => isset($r['vat_amount']) ? (float)$r['vat_amount'] : 0.00,
+                    'vat_amount' => isset($r['vat_amount']) ? (float)$r['vat_amount'] : 0.00,
+                    'vatExemptSales' => isset($r['vat_exempt_sales']) ? (float)$r['vat_exempt_sales'] : 0.00,
+                    'vat_exempt_sales' => isset($r['vat_exempt_sales']) ? (float)$r['vat_exempt_sales'] : 0.00,
+                    'zeroRatedSales' => isset($r['zero_rated_sales']) ? (float)$r['zero_rated_sales'] : 0.00,
+                    'zero_rated_sales' => isset($r['zero_rated_sales']) ? (float)$r['zero_rated_sales'] : 0.00,
+                    'taxStatus' => $r['tax_status'] ?? 'vat_registered',
+                    'tax_status' => $r['tax_status'] ?? 'vat_registered',
+                    'pricingType' => $r['pricing_type'] ?? 'inclusive',
+                    'pricing_type' => $r['pricing_type'] ?? 'inclusive',
                     'status' => $r['status'] ?? 'completed',
                     'voidReason' => $r['void_reason'] ?? null,
                     'voidedAt' => !empty($r['voided_at']) ? (DateTime::createFromFormat('Y-m-d H:i:s', $r['voided_at'], new DateTimeZone('Asia/Manila')) ? DateTime::createFromFormat('Y-m-d H:i:s', $r['voided_at'], new DateTimeZone('Asia/Manila'))->format(DateTime::ATOM) : $r['voided_at']) : null,
@@ -1006,8 +1232,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
         echo json_encode([
             'success' => true,
             'db' => [
+                'settings' => $settings,
+                'vatSettings' => $vatSettings,
                 'products' => $products,
                 'productSizes' => $allProductSizes,
+                'productSuppliers' => $productSuppliers,
                 'inventory' => $allInventory,
                 'suppliers' => $suppliers,
                 'users' => $users,
@@ -1037,35 +1266,30 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     }
 
     $dbData = $payload['db'];
-    
-    // RBAC: Verify acting user and role from authenticated session or database
-    $sessionUserId = $_SESSION['user_id'] ?? null;
-    $actingUser = $payload['currentUser'] ?? null;
-    $actingUserId = (string)($sessionUserId ?: ($actingUser['id'] ?? ''));
-    $actingRole = (string)($actingUser['role'] ?? '');
-
-    if ($actingUserId !== '') {
-        $uStmt = $conn->prepare("SELECT id, username, name, role, status FROM users WHERE id = ? LIMIT 1");
-        if ($uStmt) {
-            $uStmt->bind_param("s", $actingUserId);
-            $uStmt->execute();
-            $uRes = $uStmt->get_result();
-            if ($uRow = $uRes->fetch_assoc()) {
-                if ($uRow['status'] !== 'active') {
-                    http_response_code(403);
-                    echo json_encode(['success' => false, 'error' => 'User account is inactive. Access denied.']);
-                    exit;
-                }
-                $actingRole = (string)$uRow['role'];
-                $actingUser = $uRow;
-            }
-            $uStmt->close();
-        }
-    }
+    // $actingUser, $actingUserId, $actingRole are already verified strictly from $_SESSION['user_id'] above.
 
     $conn->begin_transaction();
 
     try {
+        // Sync VAT Settings if provided by Admin
+        if (isset($dbData['vatSettings']) || isset($dbData['settings']['vat_settings'])) {
+            if ($actingRole === 'admin') {
+                $vs = $dbData['vatSettings'] ?? $dbData['settings']['vat_settings'];
+                if (is_array($vs)) {
+                    $taxStatus = ($vs['taxStatus'] ?? '') === 'non_vat' ? 'non_vat' : 'vat_registered';
+                    $pricingType = ($vs['pricingType'] ?? '') === 'exclusive' ? 'exclusive' : 'inclusive';
+                    $vatRate = isset($vs['vatRate']) ? max(0, (float)$vs['vatRate']) : 12.00;
+                    $cleanVs = ['taxStatus' => $taxStatus, 'pricingType' => $pricingType, 'vatRate' => $vatRate];
+                    $vsJson = json_encode($cleanVs);
+                    $vStmt = $conn->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('vat_settings', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+                    if ($vStmt) {
+                        $vStmt->bind_param("s", $vsJson);
+                        $vStmt->execute();
+                        $vStmt->close();
+                    }
+                }
+            }
+        }
         // Pre-fetch existing adjustment request statuses for RBAC
         $existingReqStatuses = [];
         $erRes = $conn->query("SELECT id, status FROM adjustment_requests");
@@ -1086,8 +1310,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
         // 1. Sync Products
         if (!empty($dbData['products']) && is_array($dbData['products'])) {
-            $stmt = $conn->prepare("INSERT INTO products (id, product_id, product_name, name, brand, type, category, color, color_hex, supplier_id, price, recent_price, pending_price, price_history, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, deactivated_at, deactivated_by, updated_by, discontinue_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            $stmt = $conn->prepare("INSERT INTO products (id, product_id, product_name, name, brand, type, category, tax_classification, color, color_hex, supplier_id, price, recent_price, pending_price, price_history, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, deactivated_at, deactivated_by, updated_by, discontinue_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     product_id = VALUES(product_id),
                     product_name = VALUES(product_name),
@@ -1095,6 +1319,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     brand = VALUES(brand),
                     type = VALUES(type),
                     category = VALUES(category),
+                    tax_classification = VALUES(tax_classification),
                     color = VALUES(color),
                     color_hex = VALUES(color_hex),
                     supplier_id = VALUES(supplier_id),
@@ -1155,7 +1380,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
             // Pre-fetch all existing products to detect and skip unchanged products
             $existingProdMap = [];
-            $epRes = $conn->query("SELECT id, product_id, name, brand, type, category, color, color_hex, supplier_id, price, recent_price, pending_price, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, updated_at FROM products");
+            $epRes = $conn->query("SELECT id, product_id, name, brand, type, category, tax_classification, color, color_hex, supplier_id, price, recent_price, pending_price, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, discontinue_reason, updated_at FROM products");
             if ($epRes) {
                 while ($epRow = $epRes->fetch_assoc()) {
                     $pidKey = (string)$epRow['id'];
@@ -1175,7 +1400,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $pThresh = (float)($p['threshold'] ?? 5);
                     $pName = (string)($p['productName'] ?? ($p['product_name'] ?? ($p['name'] ?? '')));
                     $pBrand = (string)($p['brand'] ?? '');
+                    $pType = (string)($p['type'] ?? '');
+                    $pCategory = (string)($p['category'] ?? $pType);
+                    $pTaxClass = (string)($p['taxClassification'] ?? ($p['tax_classification'] ?? 'vatable'));
                     $pColor = (string)($p['color'] ?? '-');
+                    $pColorHex = !empty($p['colorHex']) ? (string)$p['colorHex'] : (!empty($p['color_hex']) ? (string)$p['color_hex'] : '');
+                    $pSupplierId = !empty($p['supplierId']) ? (string)$p['supplierId'] : (!empty($p['supplier_id']) ? (string)$p['supplier_id'] : '');
+                    $pDeactReason = !empty($p['deactivationReason']) ? (string)$p['deactivationReason'] : '';
+                    $pDiscReason = !empty($p['discontinueReason']) ? (string)$p['discontinueReason'] : '';
                     $pRecent = (isset($p['recentPrice']) && $p['recentPrice'] !== null && $p['recentPrice'] !== '') ? (float)$p['recentPrice'] : null;
                     $pPending = (isset($p['pendingPrice']) && $p['pendingPrice'] !== null && $p['pendingPrice'] !== '') ? (float)$p['pendingPrice'] : null;
                     $exRecent = ($existingP['recent_price'] !== null && $existingP['recent_price'] !== '') ? (float)$existingP['recent_price'] : null;
@@ -1187,30 +1419,47 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $pOpenedBySize = isset($p['openedBySize']) && (is_array($p['openedBySize']) || is_object($p['openedBySize'])) ? (array)$p['openedBySize'] : [];
                     $exOpenedBySize = (!empty($existingP['opened_by_size']) && is_array(json_decode($existingP['opened_by_size'], true))) ? json_decode($existingP['opened_by_size'], true) : [];
 
+                    $pSizesArr = isset($p['sizes']) && is_array($p['sizes']) ? array_values($p['sizes']) : [];
+                    $exSizesArr = (!empty($existingP['sizes']) && is_array(json_decode($existingP['sizes'], true))) ? json_decode($existingP['sizes'], true) : [];
+
+                    $pThreshBySize = (isset($p['thresholdBySize']) && (is_array($p['thresholdBySize']) || is_object($p['thresholdBySize']))) ? (array)$p['thresholdBySize'] : [];
+                    $exThreshBySize = (!empty($existingP['threshold_by_size']) && is_array(json_decode($existingP['threshold_by_size'], true))) ? json_decode($existingP['threshold_by_size'], true) : [];
+
                     $hasPendingEdits = !empty($p['pendingEdit']) || !empty($p['pendingSizes']) || !empty($existingP['pending_edit']) || !empty($existingP['pending_sizes']);
+                    $hasSizesData = !empty($p['sizesData']) && is_array($p['sizesData']);
 
                     if (
                         !$hasPendingEdits &&
+                        !$hasSizesData &&
                         (float)$existingP['price'] === $pPrice &&
                         (float)$existingP['stock'] === $pStock &&
                         (string)$existingP['status'] === $pStatus &&
                         (float)$existingP['threshold'] === $pThresh &&
                         (string)$existingP['name'] === $pName &&
                         (string)$existingP['brand'] === $pBrand &&
+                        (string)$existingP['type'] === $pType &&
+                        (string)($existingP['category'] ?? '') === $pCategory &&
+                        (string)($existingP['tax_classification'] ?? 'vatable') === $pTaxClass &&
                         (string)$existingP['color'] === $pColor &&
+                        (string)($existingP['color_hex'] ?? '') === $pColorHex &&
+                        (string)($existingP['supplier_id'] ?? '') === $pSupplierId &&
+                        (string)($existingP['deactivation_reason'] ?? '') === $pDeactReason &&
+                        (string)($existingP['discontinue_reason'] ?? '') === $pDiscReason &&
                         $pRecent === $exRecent &&
                         $pPending === $exPending &&
                         (float)($existingP['opened_stock'] ?? 0) === (float)($p['openedStock'] ?? 0) &&
                         (int)($existingP['opened_can_size'] ?? 0) === (int)($p['openedCanSize'] ?? 0) &&
                         $pCanStock == $exCanStock &&
-                        $pOpenedBySize == $exOpenedBySize
+                        $pOpenedBySize == $exOpenedBySize &&
+                        $pSizesArr == $exSizesArr &&
+                        $pThreshBySize == $exThreshBySize
                     ) {
                         continue; // UNCHANGED PRODUCT: Skip SQL updates
                     }
                 }
 
                 $productId = (string)($p['productId'] ?? ($p['product_id'] ?? $id));
-                $name = (string)$p['name'];
+                $name = (string)($p['name'] ?? ($p['productName'] ?? ($p['product_name'] ?? '')));
                 $productName = (string)($p['productName'] ?? ($p['product_name'] ?? $name));
                 $brand = (string)($p['brand'] ?? '');
                 $type = (string)($p['type'] ?? '');
@@ -1223,9 +1472,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $pendingPrice = (isset($p['pendingPrice']) && $p['pendingPrice'] !== null && $p['pendingPrice'] !== '') ? (float)$p['pendingPrice'] : null;
                 $priceHistoryJson = json_encode(!empty($p['priceHistory']) && is_array($p['priceHistory']) ? $p['priceHistory'] : []);
                 $stock = (float)($p['stock'] ?? 0);
+                if ($stock < 0) {
+                    throw new Exception("Negative stock is not allowed for product '$name' ($id).");
+                }
                 $canStockObj = isset($p['canStock']) && (is_array($p['canStock']) || is_object($p['canStock'])) ? (array)$p['canStock'] : [];
                 $canStock = json_encode(!empty($canStockObj) ? $canStockObj : new stdClass());
                 $openedStock = (float)($p['openedStock'] ?? 0);
+                if ($openedStock < 0) {
+                    throw new Exception("Negative opened stock is not allowed for product '$name' ($id).");
+                }
                 $openedCanSize = (int)($p['openedCanSize'] ?? 0);
                 $openedBySizeObj = isset($p['openedBySize']) && (is_array($p['openedBySize']) || is_object($p['openedBySize'])) ? (array)$p['openedBySize'] : [];
                 $openedBySize = json_encode(!empty($openedBySizeObj) ? $openedBySizeObj : new stdClass());
@@ -1244,12 +1499,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     }
                 }
                 $deactReason = !empty($p['deactivationReason']) ? (string)$p['deactivationReason'] : null;
-                $deactAt = !empty($p['deactivatedAt']) ? date('Y-m-d H:i:s', strtotime($p['deactivatedAt'])) : null;
+                $deactAt = safeDateSql($p['deactivatedAt'] ?? null, 'Y-m-d H:i:s', null);
                 $deactBy = !empty($p['deactivatedBy']) ? (string)$p['deactivatedBy'] : null;
                 $updatedBy = !empty($p['updatedBy']) ? (string)$p['updatedBy'] : null;
                 $discReason = !empty($p['discontinueReason']) ? (string)$p['discontinueReason'] : null;
+                $taxClassification = (string)($p['taxClassification'] ?? ($p['tax_classification'] ?? 'vatable'));
 
-                $stmt->bind_param("ssssssssssdddsdsdissssdsssssss", $id, $productId, $productName, $name, $brand, $type, $category, $color, $colorHex, $supplierId, $price, $recentPrice, $pendingPrice, $priceHistoryJson, $stock, $canStock, $openedStock, $openedCanSize, $openedBySize, $sizesJson, $pendingSizesJson, $pendingEditJson, $threshold, $thresholdBySize, $status, $deactReason, $deactAt, $deactBy, $updatedBy, $discReason);
+                $stmt->bind_param("sssssssssssdddsdsdissssdsssssss", $id, $productId, $productName, $name, $brand, $type, $category, $taxClassification, $color, $colorHex, $supplierId, $price, $recentPrice, $pendingPrice, $priceHistoryJson, $stock, $canStock, $openedStock, $openedCanSize, $openedBySize, $sizesJson, $pendingSizesJson, $pendingEditJson, $threshold, $thresholdBySize, $status, $deactReason, $deactAt, $deactBy, $updatedBy, $discReason);
                 $stmt->execute();
 
                 // Sync sizes to product_sizes and inventory
@@ -1299,6 +1555,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $cSzStr = (string)$cSz;
                     $sealedQty = isset($v['sealedQuantity']) ? (int)$v['sealedQuantity'] : (isset($canStockObj[$cSzStr]) ? (int)$canStockObj[$cSzStr] : 0);
                     $remVol = isset($v['remainingVolume']) ? (float)$v['remainingVolume'] : (isset($openedBySizeObj[$cSzStr]) ? (float)$openedBySizeObj[$cSzStr] : 0);
+                    if ($sealedQty < 0 || $remVol < 0) {
+                        throw new Exception("Negative container inventory is not allowed for product '$name' ({$cSz}L).");
+                    }
                     $openedQty = $remVol > 0 ? 1 : 0;
 
                     $stmtInvUpsert->bind_param("ssiid", $invId, $sizeId, $sealedQty, $openedQty, $remVol);
@@ -1310,8 +1569,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $stmtInvUpsert->close();
         }
 
-        // 1b. Remove products deleted client-side (enforce backend safety checks)
-        if (!empty($dbData['deletedProductIds']) && is_array($dbData['deletedProductIds'])) {
+        // 1b. Remove products deleted client-side (Admin Only, enforce backend safety checks)
+        if ($actingRole === 'admin' && !empty($dbData['deletedProductIds']) && is_array($dbData['deletedProductIds'])) {
             foreach ($dbData['deletedProductIds'] as $delId) {
                 $delId = (string)$delId;
                 $chkStmt = $conn->prepare("SELECT product_id FROM products WHERE id = ?");
@@ -1331,7 +1590,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     throw new Exception("Deletion blocked for product $delId: " . implode('; ', $deps) . ". Deactivate or discontinue instead.");
                 }
 
-                // Delete child sizes & inventory if clean
+                // Delete child batches, inventory, product_suppliers, & sizes if clean
+                $delBatches = $conn->prepare("DELETE FROM inventory_batches WHERE product_id IN (?, ?)");
+                if ($delBatches) {
+                    $delBatches->bind_param("ss", $delId, $altPid);
+                    $delBatches->execute();
+                    $delBatches->close();
+                }
+                $delInv = $conn->prepare("DELETE FROM inventory WHERE size_id IN (SELECT size_id FROM product_sizes WHERE product_id IN (?, ?))");
+                if ($delInv) {
+                    $delInv->bind_param("ss", $delId, $altPid);
+                    $delInv->execute();
+                    $delInv->close();
+                }
+                $delPsup = $conn->prepare("DELETE FROM product_suppliers WHERE product_id IN (?, ?)");
+                if ($delPsup) {
+                    $delPsup->bind_param("ss", $delId, $altPid);
+                    $delPsup->execute();
+                    $delPsup->close();
+                }
                 $delSizes = $conn->prepare("DELETE FROM product_sizes WHERE product_id IN (?, ?)");
                 if ($delSizes) {
                     $delSizes->bind_param("ss", $delId, $altPid);
@@ -1390,6 +1667,45 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $stmt->close();
         }
 
+        // 2b. Sync Product-Supplier Relationships (Multi-supplier per product/container size)
+        if (in_array($actingRole, ['admin', 'staff'], true) && !empty($dbData['productSuppliers']) && is_array($dbData['productSuppliers'])) {
+            $stmtPs = $conn->prepare("INSERT INTO product_suppliers (id, product_id, supplier_id, container_size, purchase_cost, min_order_qty, availability, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    purchase_cost = VALUES(purchase_cost),
+                    min_order_qty = VALUES(min_order_qty),
+                    availability = VALUES(availability),
+                    notes = VALUES(notes),
+                    updated_at = CURRENT_TIMESTAMP");
+            if ($stmtPs) {
+                foreach ($dbData['productSuppliers'] as $ps) {
+                    $psId = (string)($ps['id'] ?? ('ps_' . uniqid()));
+                    $prodId = (string)($ps['productId'] ?? $ps['product_id'] ?? '');
+                    $suppId = (string)($ps['supplierId'] ?? $ps['supplier_id'] ?? '');
+                    $cSize = (float)($ps['containerSize'] ?? $ps['container_size'] ?? 0);
+                    $pCost = (float)($ps['purchaseCost'] ?? $ps['purchase_cost'] ?? 0);
+                    $moq = (int)($ps['minOrderQty'] ?? $ps['min_order_qty'] ?? 10);
+                    $avail = (string)($ps['availability'] ?? 'available');
+                    $notes = (string)($ps['notes'] ?? '');
+                    if ($prodId !== '' && $suppId !== '') {
+                        $stmtPs->bind_param("sssddiss", $psId, $prodId, $suppId, $cSize, $pCost, $moq, $avail, $notes);
+                        $stmtPs->execute();
+                    }
+                }
+                $stmtPs->close();
+            }
+        }
+        if (in_array($actingRole, ['admin', 'staff'], true) && !empty($dbData['deletedProductSupplierIds']) && is_array($dbData['deletedProductSupplierIds'])) {
+            $stmtDelPs = $conn->prepare("DELETE FROM product_suppliers WHERE id = ?");
+            if ($stmtDelPs) {
+                foreach ($dbData['deletedProductSupplierIds'] as $dpsId) {
+                    $stmtDelPs->bind_param("s", $dpsId);
+                    $stmtDelPs->execute();
+                }
+                $stmtDelPs->close();
+            }
+        }
+
         // 3. Sync Users (Admin Only RBAC)
         if ($actingRole === 'admin' && !empty($dbData['users']) && is_array($dbData['users'])) {
             $existingUserPass = [];
@@ -1411,10 +1727,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
             foreach ($dbData['users'] as $u) {
                 $id = (string)$u['id'];
-                $username = (string)$u['username'];
-                $name = (string)$u['name'];
+                $username = trim((string)$u['username']);
+                $name = trim((string)$u['name']);
                 $role = (string)($u['role'] ?? 'cashier');
                 $status = (string)($u['status'] ?? 'active');
+
+                if ($username === '' || $name === '') {
+                    throw new Exception("User username and name cannot be empty.");
+                }
+                // Pre-check duplicate username (case-insensitive) for a different user ID
+                $dupU = $conn->prepare("SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ? LIMIT 1");
+                if ($dupU) {
+                    $dupU->bind_param("ss", $username, $id);
+                    $dupU->execute();
+                    $dupURow = $dupU->get_result()->fetch_assoc();
+                    $dupU->close();
+                    if ($dupURow) {
+                        throw new Exception("Username '{$username}' is already taken.");
+                    }
+                }
 
                 // Secure password handling: hash new plaintext passwords, keep existing bcrypt hashes
                 $passInput = (string)($u['password'] ?? ($u['newPassword'] ?? ''));
@@ -1437,14 +1768,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $stmt->close();
         }
 
-        // 4. Sync Sales (Optimized: skips unchanged historical sales)
-        if (!empty($dbData['sales']) && is_array($dbData['sales'])) {
+        // 4. Sync Sales (Optimized: skips unchanged historical sales; Staff cannot create/modify sales)
+        if ($actingRole !== 'staff' && !empty($dbData['sales']) && is_array($dbData['sales'])) {
             $existingSalesMap = [];
             $existingSalesOwner = [];
-            $esRes = $conn->query("SELECT id, status, total, refund_total, discount_amount, customer_name, cashier_id, cashier_name, void_request_id, voided_at, void_rejected_at FROM sales");
+            $esRes = $conn->query("SELECT id, status, total, refund_total, discount_amount, customer_name, void_request_id, voided_at, void_rejected_at, returns_json, void_reason, void_admin_remarks FROM sales");
             if ($esRes) {
                 while ($esRow = $esRes->fetch_assoc()) {
-                    $existingSalesMap[$esRow['id']] = $esRow['status'] . '_' . (float)$esRow['total'] . '_' . (float)$esRow['refund_total'] . '_' . (float)($esRow['discount_amount'] ?? 0) . '_' . ($esRow['customer_name'] ?? '') . '_' . ($esRow['void_request_id'] ?? '') . '_' . ($esRow['voided_at'] ?? '') . '_' . ($esRow['void_rejected_at'] ?? '');
+                    $existingSalesMap[$esRow['id']] = $esRow['status'] . '_' . (float)$esRow['total'] . '_' . (float)$esRow['refund_total'] . '_' . (float)($esRow['discount_amount'] ?? 0) . '_' . ($esRow['customer_name'] ?? '') . '_' . ($esRow['void_request_id'] ?? '') . '_' . ($esRow['voided_at'] ?? '') . '_' . ($esRow['void_rejected_at'] ?? '') . '_' . ($esRow['returns_json'] ?? '[]') . '_' . ($esRow['void_reason'] ?? '') . '_' . ($esRow['void_admin_remarks'] ?? '');
                     $existingSalesOwner[$esRow['id']] = [
                         'cashier_id' => (string)($esRow['cashier_id'] ?? ''),
                         'cashier_name' => (string)($esRow['cashier_name'] ?? ''),
@@ -1453,8 +1784,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 }
             }
 
-            $stmt = $conn->prepare("INSERT INTO sales (id, receipt_no, customer_name, date, cashier_id, cashier_name, payment_method, cash_tendered, change_amount, void_reason, voided_at, voided_by, subtotal, discount_pct, discount_amount, total, status, refund_total, returns_json, items_json, void_request_id, void_explanation, void_requested_at, void_requested_by, void_admin_remarks, void_rejected_at, void_rejected_by, void_inventory_restored)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            $stmt = $conn->prepare("INSERT INTO sales (id, receipt_no, customer_name, date, cashier_id, cashier_name, payment_method, cash_tendered, change_amount, void_reason, voided_at, voided_by, subtotal, discount_pct, discount_amount, total, status, refund_total, returns_json, items_json, void_request_id, void_explanation, void_requested_at, void_requested_by, void_admin_remarks, void_rejected_at, void_rejected_by, void_inventory_restored, vat_rate, vatable_sales, vat_amount, vat_exempt_sales, zero_rated_sales, tax_status, pricing_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     receipt_no = VALUES(receipt_no),
                     customer_name = VALUES(customer_name),
@@ -1482,7 +1813,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     void_admin_remarks = VALUES(void_admin_remarks),
                     void_rejected_at = VALUES(void_rejected_at),
                     void_rejected_by = VALUES(void_rejected_by),
-                    void_inventory_restored = VALUES(void_inventory_restored)");
+                    void_inventory_restored = VALUES(void_inventory_restored),
+                    vat_rate = VALUES(vat_rate),
+                    vatable_sales = VALUES(vatable_sales),
+                    vat_amount = VALUES(vat_amount),
+                    vat_exempt_sales = VALUES(vat_exempt_sales),
+                    zero_rated_sales = VALUES(zero_rated_sales),
+                    tax_status = VALUES(tax_status),
+                    pricing_type = VALUES(pricing_type)");
 
             foreach ($dbData['sales'] as $sale) {
                 $id = (string)$sale['id'];
@@ -1526,12 +1864,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $voidRequestId = !empty($sale['voidRequestId']) ? (string)$sale['voidRequestId'] : null;
                 $voidReason = !empty($sale['voidReason']) ? (string)$sale['voidReason'] : null;
                 $voidExplanation = !empty($sale['voidExplanation']) ? (string)$sale['voidExplanation'] : null;
-                $voidedAt = !empty($sale['voidedAt']) ? date('Y-m-d H:i:s', strtotime($sale['voidedAt'])) : null;
+                $voidedAt = safeDateSql($sale['voidedAt'] ?? null, 'Y-m-d H:i:s', null);
                 $voidedBy = !empty($sale['voidedBy']) ? (string)$sale['voidedBy'] : null;
-                $voidRequestedAt = !empty($sale['voidRequestedAt']) ? date('Y-m-d H:i:s', strtotime($sale['voidRequestedAt'])) : null;
+                $voidRequestedAt = safeDateSql($sale['voidRequestedAt'] ?? null, 'Y-m-d H:i:s', null);
                 $voidRequestedBy = !empty($sale['voidRequestedBy']) ? (string)$sale['voidRequestedBy'] : null;
                 $voidAdminRemarks = !empty($sale['voidAdminRemarks']) ? (string)$sale['voidAdminRemarks'] : null;
-                $voidRejectedAt = !empty($sale['voidRejectedAt']) ? date('Y-m-d H:i:s', strtotime($sale['voidRejectedAt'])) : null;
+                $voidRejectedAt = safeDateSql($sale['voidRejectedAt'] ?? null, 'Y-m-d H:i:s', null);
                 $voidRejectedBy = !empty($sale['voidRejectedBy']) ? (string)$sale['voidRejectedBy'] : null;
                 $voidInventoryRestored = !empty($sale['voidInventoryRestored']) ? 1 : 0;
 
@@ -1557,27 +1895,35 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     }
                 }
 
-                $saleSig = $status . '_' . $total . '_' . $refundTotal . '_' . $discountAmount . '_' . ($customerName ?? '') . '_' . ($voidRequestId ?? '') . '_' . ($voidedAt ?? '') . '_' . ($voidRejectedAt ?? '');
+                $returnsJson = json_encode($sale['returns'] ?? []);
+                $saleSig = $status . '_' . $total . '_' . $refundTotal . '_' . $discountAmount . '_' . ($customerName ?? '') . '_' . ($voidRequestId ?? '') . '_' . ($voidedAt ?? '') . '_' . ($voidRejectedAt ?? '') . '_' . $returnsJson . '_' . ($voidReason ?? '') . '_' . ($voidAdminRemarks ?? '');
                 if (isset($existingSalesMap[$id]) && $existingSalesMap[$id] === $saleSig) {
                     continue; // Skip unchanged sale record
                 }
 
                 $receiptNo = (string)($sale['receiptNo'] ?? '');
-                $date = date('Y-m-d H:i:s', strtotime($sale['date']));
+                $date = safeDateSql($sale['date'] ?? null, 'Y-m-d H:i:s', date('Y-m-d H:i:s'));
                 $paymentMethod = !empty($sale['paymentMethod']) ? (string)$sale['paymentMethod'] : 'Cash';
                 $cashTendered = isset($sale['cashTendered']) ? (float)$sale['cashTendered'] : (float)$total;
                 $changeAmount = isset($sale['changeAmount']) ? (float)$sale['changeAmount'] : 0.0;
-                $returnsJson = json_encode($sale['returns'] ?? []);
                 $itemsJson = json_encode($sale['items'] ?? []);
+                $vatRate = isset($sale['vatRate']) ? (float)$sale['vatRate'] : (isset($sale['vat_rate']) ? (float)$sale['vat_rate'] : 12.00);
+                $vatableSales = isset($sale['vatableSales']) ? (float)$sale['vatableSales'] : (isset($sale['vatable_sales']) ? (float)$sale['vatable_sales'] : 0.0);
+                $vatAmount = isset($sale['vatAmount']) ? (float)$sale['vatAmount'] : (isset($sale['vat_amount']) ? (float)$sale['vat_amount'] : 0.0);
+                $vatExemptSales = isset($sale['vatExemptSales']) ? (float)$sale['vatExemptSales'] : (isset($sale['vat_exempt_sales']) ? (float)$sale['vat_exempt_sales'] : 0.0);
+                $zeroRatedSales = isset($sale['zeroRatedSales']) ? (float)$sale['zeroRatedSales'] : (isset($sale['zero_rated_sales']) ? (float)$sale['zero_rated_sales'] : 0.0);
+                $taxStatus = (string)($sale['taxStatus'] ?? ($sale['tax_status'] ?? 'vat_registered'));
+                $pricingType = (string)($sale['pricingType'] ?? ($sale['pricing_type'] ?? 'inclusive'));
 
                 $stmt->bind_param(
-                    "sssssssddsssddddsdsssssssssi",
+                    "sssssssddsssddddsdsssssssssidddddss",
                     $id, $receiptNo, $customerName, $date, $cashierId, $cashierName,
                     $paymentMethod, $cashTendered, $changeAmount, $voidReason, $voidedAt, $voidedBy,
                     $subtotal, $discountPct, $discountAmount, $total, $status, $refundTotal,
                     $returnsJson, $itemsJson,
                     $voidRequestId, $voidExplanation, $voidRequestedAt, $voidRequestedBy,
-                    $voidAdminRemarks, $voidRejectedAt, $voidRejectedBy, $voidInventoryRestored
+                    $voidAdminRemarks, $voidRejectedAt, $voidRejectedBy, $voidInventoryRestored,
+                    $vatRate, $vatableSales, $vatAmount, $vatExemptSales, $zeroRatedSales, $taxStatus, $pricingType
                 );
                 $stmt->execute();
             }
@@ -1585,6 +1931,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         }
 
         // 5. Sync Movements (Optimized: movements are immutable ledger entries, skip existing)
+        $mvNewRows = []; // newly inserted movements -> routed into the Expiration Tracking batch ledger below
         if (!empty($dbData['movements']) && is_array($dbData['movements'])) {
             $existingMovementsMap = [];
             $emRes = $conn->query("SELECT id FROM movements");
@@ -1635,18 +1982,27 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 }
 
                 $stmt->bind_param("sssssdssdsss", $id, $date, $type, $productId, $sizeId, $containerSize, $productName, $colorHex, $qtyChange, $staffName, $note, $formulaJson);
+                $mvNewRows[] = ['m' => $m, 'type' => $type, 'sizeId' => $sizeId, 'productId' => $productId, 'containerSize' => (float)$containerSize, 'qtyChange' => $qtyChange, 'staff' => $staffName, 'note' => $note, 'date' => $date];
                 $stmt->execute();
             }
             $stmt->close();
         }
 
-        // 6. Sync Purchase Orders (Optimized: skips unchanged POs)
-        if (!empty($dbData['purchaseOrders']) && is_array($dbData['purchaseOrders'])) {
+        // 5b. Expiration Tracking: route new movements into batch ledger (FIFO / receiving batches),
+        //     then reconcile so batch totals always equal the centralized inventory.
+        //     If batch processing fails (e.g. attempting to sell expired stock), abort transaction.
+        foreach ($mvNewRows as $nm) {
+            batchProcessMovement($conn, $nm['m'], $nm['type'], $nm['sizeId'], $nm['productId'], $nm['containerSize'], $nm['qtyChange'], $nm['staff'], $nm['note'], $nm['date']);
+        }
+        batchReconcile($conn, !empty($actingUser['name']) ? (string)$actingUser['name'] : 'System');
+
+        // 6. Sync Purchase Orders (Admin & Staff only; skips unchanged POs)
+        if (in_array($actingRole, ['admin', 'staff'], true) && !empty($dbData['purchaseOrders']) && is_array($dbData['purchaseOrders'])) {
             $existingPOMap = [];
-            $epoRes = $conn->query("SELECT id, status, total_amount, received_at FROM purchase_orders");
+            $epoRes = $conn->query("SELECT id, status, total_amount, received_at, expected_date, notes, items_json FROM purchase_orders");
             if ($epoRes) {
                 while ($epoRow = $epoRes->fetch_assoc()) {
-                    $existingPOMap[$epoRow['id']] = $epoRow['status'] . '_' . (float)$epoRow['total_amount'] . '_' . (string)$epoRow['received_at'];
+                    $existingPOMap[$epoRow['id']] = $epoRow['status'] . '_' . (float)$epoRow['total_amount'] . '_' . (string)$epoRow['received_at'] . '_' . (string)$epoRow['expected_date'] . '_' . (string)$epoRow['notes'] . '_' . (string)$epoRow['items_json'];
                 }
             }
 
@@ -1669,9 +2025,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $id = (string)$po['id'];
                 $status = (string)($po['status'] ?? 'ordered');
                 $totalAmount = (float)($po['totalAmount'] ?? 0);
-                $receivedAt = !empty($po['receivedAt']) ? date('Y-m-d H:i:s', strtotime($po['receivedAt'])) : null;
+                $receivedAt = safeDateSql($po['receivedAt'] ?? null, 'Y-m-d H:i:s', null);
+                $expectedDate = safeDateSql($po['expectedDate'] ?? null, 'Y-m-d', null);
+                $notes = (string)($po['notes'] ?? '');
+                $itemsJson = json_encode($po['items'] ?? []);
 
-                $poSig = $status . '_' . $totalAmount . '_' . (string)$receivedAt;
+                $poSig = $status . '_' . $totalAmount . '_' . (string)$receivedAt . '_' . (string)$expectedDate . '_' . $notes . '_' . $itemsJson;
                 if (isset($existingPOMap[$id]) && $existingPOMap[$id] === $poSig) {
                     continue; // Skip unchanged PO
                 }
@@ -1679,14 +2038,43 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $poNumber = (string)($po['poNumber'] ?? '');
                 $supplierId = (string)($po['supplierId'] ?? '');
                 $supplierName = (string)($po['supplierName'] ?? '');
-                $orderDate = date('Y-m-d H:i:s', strtotime($po['orderDate'] ?? 'now'));
-                $expectedDate = !empty($po['expectedDate']) ? date('Y-m-d', strtotime($po['expectedDate'])) : null;
-                $itemsJson = json_encode($po['items'] ?? []);
-                $notes = (string)($po['notes'] ?? '');
+                $orderDate = safeDateSql($po['orderDate'] ?? null, 'Y-m-d H:i:s', date('Y-m-d H:i:s'));
                 $createdBy = (string)($po['createdBy'] ?? '');
 
                 $stmt->bind_param("sssssssdssss", $id, $poNumber, $supplierId, $supplierName, $orderDate, $expectedDate, $status, $totalAmount, $itemsJson, $notes, $createdBy, $receivedAt);
                 $stmt->execute();
+
+                // Sync items to purchase_order_items table only when items array is provided
+                if (isset($po['items']) && is_array($po['items'])) {
+                    $delPoi = $conn->prepare("DELETE FROM purchase_order_items WHERE po_id = ?");
+                    if ($delPoi) {
+                        $delPoi->bind_param("s", $id);
+                        $delPoi->execute();
+                        $delPoi->close();
+                    }
+                    if (!empty($po['items'])) {
+                        $stmtPoi = $conn->prepare("INSERT INTO purchase_order_items (id, po_id, product_id, product_name, brand, color, size_id, container_size, quantity, received_quantity, unit_cost, total_cost, supplier_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                        if ($stmtPoi) {
+                            foreach ($po['items'] as $idx => $it) {
+                                $poiId = !empty($it['id']) ? (string)$it['id'] : ('poi_' . md5($id . '_' . ($it['productId'] ?? '') . '_' . ($it['size'] ?? '') . '_' . $idx));
+                                $pId = (string)($it['productId'] ?? $it['product_id'] ?? '');
+                                $pName = (string)($it['productName'] ?? $it['product_name'] ?? '');
+                                $pBrand = (string)($it['brand'] ?? '');
+                                $pColor = (string)($it['color'] ?? '');
+                                $pSizeId = (string)($it['sizeId'] ?? $it['size_id'] ?? '');
+                                $pSize = (float)($it['size'] ?? $it['containerSize'] ?? $it['container_size'] ?? 0);
+                                $pQty = (int)($it['qty'] ?? $it['quantity'] ?? 0);
+                                $pRecQty = (int)($it['receivedQty'] ?? $it['received_quantity'] ?? 0);
+                                $pCost = (float)($it['unitCost'] ?? $it['purchaseCostPerUnit'] ?? 0);
+                                $pTotal = (float)($it['lineTotal'] ?? ($pQty * $pCost));
+                                $stmtPoi->bind_param("sssssssdiidds", $poiId, $id, $pId, $pName, $pBrand, $pColor, $pSizeId, $pSize, $pQty, $pRecQty, $pCost, $pTotal, $supplierId);
+                                $stmtPoi->execute();
+                            }
+                            $stmtPoi->close();
+                        }
+                    }
+                }
             }
             $stmt->close();
         }
@@ -1718,7 +2106,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             foreach ($dbData['adjustmentRequests'] as $ar) {
                 $id = (string)$ar['id'];
                 $status = (string)($ar['status'] ?? 'pending');
-                $reviewedAt = !empty($ar['reviewedAt']) ? date('Y-m-d H:i:s', strtotime($ar['reviewedAt'])) : null;
+                $reviewedAt = safeDateSql($ar['reviewedAt'] ?? null, 'Y-m-d H:i:s', null);
 
                 $arSig = $status . '_' . (string)$reviewedAt;
                 if (isset($existingARMap[$id]) && $existingARMap[$id] === $arSig) {
@@ -1726,7 +2114,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 }
 
                 $reqNumber = (string)($ar['reqNumber'] ?? '');
-                $date = date('Y-m-d H:i:s', strtotime($ar['date'] ?? 'now'));
+                $date = safeDateSql($ar['date'] ?? null, 'Y-m-d H:i:s', date('Y-m-d H:i:s'));
                 $requestedBy = (string)($ar['requestedBy'] ?? 'staff');
                 $role = (string)($ar['role'] ?? 'staff');
                 $rowsJson = json_encode($ar['rows'] ?? []);
@@ -1786,7 +2174,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             foreach ($dbData['voidRequests'] as $vr) {
                 $id = (string)$vr['id'];
                 $status = (string)($vr['status'] ?? 'pending');
-                $reviewedAt = !empty($vr['reviewedAt']) ? date('Y-m-d H:i:s', strtotime($vr['reviewedAt'])) : null;
+                $reviewedAt = safeDateSql($vr['reviewedAt'] ?? null, 'Y-m-d H:i:s', null);
 
                 $vrSig = $status . '_' . (string)$reviewedAt;
                 if (isset($existingVRMap[$id]) && $existingVRMap[$id] === $vrSig) {
@@ -1795,7 +2183,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
                 $saleId = (string)($vr['saleId'] ?? '');
                 $receiptNo = (string)($vr['receiptNo'] ?? '');
-                $date = date('Y-m-d H:i:s', strtotime($vr['date'] ?? $vr['requestDate'] ?? 'now'));
+                $date = safeDateSql($vr['date'] ?? ($vr['requestDate'] ?? null), 'Y-m-d H:i:s', date('Y-m-d H:i:s'));
                 $cashierId = (string)($vr['cashierId'] ?? ($actingUserId ?: 'cashier'));
                 $cashierName = (string)($vr['cashierName'] ?? ($actingUser['name'] ?? 'Cashier'));
                 $reason = (string)($vr['reason'] ?? '');

@@ -7,6 +7,7 @@ function navItemsFor(role) {
     { id: 'approvals', label: 'Pending Approvals', icon: '⏳' },
     { id: 'inventory', label: 'Inventory', icon: '📦' },
     { id: 'alerts', label: 'Low-Stock Alerts', icon: '⚠️' },
+    { id: 'expiration', label: 'Expiration Tracking', icon: '🗓️' },
     { id: 'purchaseOrders', label: 'Purchase Orders', icon: '📋' },
     { id: 'suppliers', label: 'Suppliers', icon: '👥' },
     { id: 'reports', label: 'Reports', icon: '📈' },
@@ -22,6 +23,7 @@ function navItemsFor(role) {
     { id: 'staffDashboard', label: 'Dashboard', icon: '📊' },
     { id: 'inventory', label: 'Inventory', icon: '📦' },
     { id: 'alerts', label: 'Low-Stock Alerts', icon: '⚠️' },
+    { id: 'expiration', label: 'Expiration Tracking', icon: '🗓️' },
     { id: 'purchaseOrders', label: 'Purchase Orders', icon: '📋' },
     { id: 'receiving', label: 'Stock Receiving / Adjust', icon: '📥' },
     { id: 'suppliers', label: 'Supplier Directory', icon: '👥' },
@@ -93,6 +95,12 @@ function getModuleNotificationCount(moduleId, role) {
       return openPOCount + pendingAdjCount;
     }
 
+    case 'expiration': {
+      // Batches that are expired or critical (needs action) — from cached server summary
+      if (typeof expBadgeCount === 'function') return expBadgeCount();
+      return 0;
+    }
+
     case 'purchaseOrders': {
       // Count of Purchase Orders awaiting Admin review / authorization
       const pendingPOs = (db.purchaseOrders || []).filter(o => o.status === 'pending');
@@ -144,8 +152,14 @@ function getModuleNotificationCount(moduleId, role) {
 
     case 'sales': {
       // For cashiers, show badge if there are unviewed/undismissed void decision notifications
-      if (currentRole === 'cashier' && typeof getPendingCashierVoidNotifs === 'function') {
-        return getPendingCashierVoidNotifs().length;
+      if (currentRole === 'cashier') {
+        if (typeof getPendingCashierVoidNotifs === 'function') {
+          return getPendingCashierVoidNotifs().length;
+        }
+        if (typeof getDismissedCashierVoidNotifs === 'function' && typeof isCurrentUserSale === 'function' && typeof normalizeSaleStatus === 'function') {
+          const dismissed = getDismissedCashierVoidNotifs();
+          return (db.sales || []).filter(s => isCurrentUserSale(s) && (normalizeSaleStatus(s.status) === 'voided' || normalizeSaleStatus(s.status) === 'void_rejected') && !dismissed.has(s.id)).length;
+        }
       }
       return 0;
     }
@@ -170,6 +184,7 @@ function getModuleBadgeHtml(moduleId, role) {
 
 function updateNavBadges() {
   if (typeof currentUser === 'undefined' || !currentUser) return;
+  if (typeof expRefreshSummary === 'function') expRefreshSummary();
   const items = navItemsFor(currentUser.role);
   items.forEach(it => {
     const el = document.getElementById(`nav-badge-${it.id}`);
@@ -311,8 +326,9 @@ function shell() {
 </button>`;
   }).join('');
 
-  const roleLabel = { admin: 'Administrator', cashier: 'Cashier', staff: 'Inventory Staff' }[currentUser.role];
-  const userInitial = (currentUser.name || 'U').charAt(0).toUpperCase();
+  const roleLabel = { admin: 'Administrator', cashier: 'Cashier', staff: 'Inventory Staff' }[currentUser.role] || 'User';
+  const displayName = currentUser.name || currentUser.username || 'User';
+  const userInitial = displayName.charAt(0).toUpperCase();
   const greeting = getGreeting();
   const now = new Date();
 
@@ -347,7 +363,7 @@ function shell() {
       <div class="user-badge-wrap">
         <div class="user-avatar">${userInitial}</div>
         <div class="user-badge-info">
-          <div class="who">${escapeHtml(currentUser.name)}</div>
+          <div class="who">${escapeHtml(displayName)}</div>
           <div class="role">${roleLabel}</div>
         </div>
       </div>
@@ -363,13 +379,13 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard', approvals: 'Pending Approvals Hub', pos: 'Point of Sale', products: 'Inventory', inventory: 'Inventory',
   sales: 'Sales History', reports: 'Reports', suppliers: 'Suppliers', users: 'User Management', auditLog: 'Audit Log',
   staffDashboard: 'Dashboard', receiving: 'Stock Receiving / Adjustments', suppliersView: 'Supplier Directory', alerts: 'Low-Stock Alerts',
-  purchaseOrders: 'Purchase Orders',
+  purchaseOrders: 'Purchase Orders', expiration: 'Expiration Tracking',
 };
 
 const ROLE_ALLOWED_PAGES = {
-  admin: ['dashboard', 'approvals', 'inventory', 'alerts', 'purchaseOrders', 'suppliers', 'reports', 'auditLog', 'users', 'pos', 'sales'],
-  cashier: ['pos', 'inventory', 'sales'],
-  staff: ['staffDashboard', 'inventory', 'alerts', 'purchaseOrders', 'receiving', 'suppliers', 'reports']
+  admin: ['dashboard', 'approvals', 'inventory', 'alerts', 'expiration', 'discounts', 'purchaseOrders', 'suppliers', 'reports', 'auditLog', 'users', 'pos', 'sales'],
+  cashier: ['pos', 'inventory', 'discounts', 'sales'],
+  staff: ['staffDashboard', 'inventory', 'alerts', 'expiration', 'discounts', 'purchaseOrders', 'receiving', 'suppliers', 'reports']
 };
 
 const PAGE_ALIASES = {
@@ -410,6 +426,15 @@ const PAGE_ALIASES = {
   'low-stock': 'alerts',
   'low_stock': 'alerts',
   'low-stock-alerts': 'alerts',
+  'expiration': 'expiration',
+  'expiration-tracking': 'expiration',
+  'expiration_tracking': 'expiration',
+  'expirationtracking': 'expiration',
+  'expiry': 'expiration',
+  'batches': 'expiration',
+  'discounts': 'discounts',
+  'near-expiry-discounts': 'discounts',
+  'near_expiry_discounts': 'discounts',
   'purchaseorders': 'purchaseOrders',
   'purchase-orders': 'purchaseOrders',
   'purchase_orders': 'purchaseOrders',
@@ -474,6 +499,8 @@ function syncActiveDomInputsToState() {
       if (s && typeof invSearchQuery !== 'undefined') invSearchQuery = s.value;
       const t = document.getElementById('inv-type-filter');
       if (t && typeof invTypeFilter !== 'undefined') invTypeFilter = t.value;
+      const sz = document.getElementById('inv-size-filter');
+      if (sz && typeof invSizeFilter !== 'undefined') invSizeFilter = sz.value;
       const st = document.getElementById('inv-status-filter');
       if (st && typeof invStatusFilter !== 'undefined') invStatusFilter = st.value;
     } else if (currentPage === 'sales') {
@@ -529,6 +556,7 @@ function captureAppNavigationState() {
     inventory: {
       q: typeof invSearchQuery !== 'undefined' ? invSearchQuery : '',
       type: typeof invTypeFilter !== 'undefined' ? invTypeFilter : '',
+      size: typeof invSizeFilter !== 'undefined' ? invSizeFilter : '',
       status: typeof invStatusFilter !== 'undefined' ? invStatusFilter : '',
       sortField: typeof invSortField !== 'undefined' ? invSortField : 'name',
       sortAsc: typeof invSortAsc !== 'undefined' ? Boolean(invSortAsc) : true,
@@ -653,6 +681,7 @@ function restoreAppNavigationState(snapshot) {
       const inv = snapshot.inventory;
       if (typeof invSearchQuery !== 'undefined') invSearchQuery = inv.q || '';
       if (typeof invTypeFilter !== 'undefined') invTypeFilter = inv.type || '';
+      if (typeof invSizeFilter !== 'undefined') invSizeFilter = inv.size || '';
       if (typeof invStatusFilter !== 'undefined') invStatusFilter = inv.status || '';
       if (typeof invSortField !== 'undefined') invSortField = inv.sortField || 'name';
       if (typeof invSortAsc !== 'undefined') invSortAsc = inv.sortAsc !== undefined ? Boolean(inv.sortAsc) : true;
@@ -801,6 +830,7 @@ function resetAllModuleNavigationStates() {
   try {
     if (typeof invSearchQuery !== 'undefined') invSearchQuery = '';
     if (typeof invTypeFilter !== 'undefined') invTypeFilter = '';
+    if (typeof invSizeFilter !== 'undefined') invSizeFilter = '';
     if (typeof invStatusFilter !== 'undefined') invStatusFilter = '';
     if (typeof invSortField !== 'undefined') invSortField = 'name';
     if (typeof invSortAsc !== 'undefined') invSortAsc = true;
@@ -946,6 +976,7 @@ function buildRouteQueryString(page) {
   if (targetPage === 'inventory') {
     if (typeof invSearchQuery !== 'undefined' && invSearchQuery) params.set('q', invSearchQuery);
     if (typeof invTypeFilter !== 'undefined' && invTypeFilter) params.set('type', invTypeFilter);
+    if (typeof invSizeFilter !== 'undefined' && invSizeFilter) params.set('size', invSizeFilter);
     if (typeof invStatusFilter !== 'undefined' && invStatusFilter) params.set('status', invStatusFilter);
     if (typeof invSortField !== 'undefined') {
       const sortVal = `${invSortField}_${invSortAsc ? 'asc' : 'desc'}`;
@@ -1100,6 +1131,8 @@ function buildRouteQueryString(page) {
     if (auditFilters.from !== currentYearStartISO()) params.set('from', auditFilters.from || '');
     if (auditFilters.to !== currentYearEndISO()) params.set('to', auditFilters.to || '');
     addPaginationParams('audit_log', 'p', 'ps');
+  } else if (targetPage === 'expiration' && typeof expRouteParams === 'function') {
+    expRouteParams(params);
   } else if (targetPage === 'pos') {
     if (typeof posSearchQuery !== 'undefined' && posSearchQuery) params.set('q', posSearchQuery);
     if (typeof posCategoryFilter !== 'undefined' && posCategoryFilter) params.set('cat', posCategoryFilter);
@@ -1182,6 +1215,7 @@ function applyURLParamsToModuleState(page, params) {
   if (page === 'inventory') {
     if (typeof invSearchQuery !== 'undefined') invSearchQuery = params.get('q') || '';
     if (typeof invTypeFilter !== 'undefined') invTypeFilter = params.get('type') || '';
+    if (typeof invSizeFilter !== 'undefined') invSizeFilter = params.get('size') || '';
     if (typeof invStatusFilter !== 'undefined') invStatusFilter = params.get('status') || '';
     if (typeof invSortField !== 'undefined') {
       const sortParam = params.get('sort') || 'name_asc';
@@ -1304,6 +1338,8 @@ function applyURLParamsToModuleState(page, params) {
     auditFilters.from = params.has('from') ? params.get('from') : (auditYearFilter === 'all' ? '' : currentYearStartISO());
     auditFilters.to = params.has('to') ? params.get('to') : (auditYearFilter === 'all' ? '' : currentYearEndISO());
     applyPaginationFromParams('audit_log', 'p', 'ps');
+  } else if (page === 'expiration' && typeof expApplyRouteParams === 'function') {
+    expApplyRouteParams(params);
   } else if (page === 'pos') {
     if (typeof posSearchQuery !== 'undefined') posSearchQuery = params.get('q') || '';
     if (typeof posCategoryFilter !== 'undefined') posCategoryFilter = params.get('cat') || '';
@@ -1629,12 +1665,17 @@ function renderPage() {
     suppliersView: typeof suppliersPage === 'function' ? suppliersPage : () => '',
     alerts: typeof alertsPage === 'function' ? alertsPage : () => '',
     purchaseOrders: typeof purchaseOrdersPage === 'function' ? purchaseOrdersPage : () => '',
+    expiration: typeof expirationPage === 'function' ? expirationPage : () => '',
+    discounts: typeof discountsPage === 'function' ? discountsPage : () => '',
   };
-  const fn = renderers[currentPage] || ((currentUser && currentUser.role === 'staff') ? staffDashboard : adminDashboard);
+  const fallbackFn = (currentUser && currentUser.role === 'cashier') ? (typeof posPage === 'function' ? posPage : () => '') : ((currentUser && currentUser.role === 'staff') ? staffDashboard : adminDashboard);
+  const fn = renderers[currentPage] || fallbackFn;
   try {
     target.innerHTML = fn();
     if (currentPage === 'pos') renderPosProductList();
     if (currentPage === 'purchaseOrders') initPOPage();
+    if (currentPage === 'expiration' && typeof initExpirationPage === 'function') initExpirationPage();
+    if (currentPage === 'discounts' && typeof initDiscountsPage === 'function') initDiscountsPage();
     if (currentPage === 'dashboard' || currentPage === 'staffDashboard' || currentPage === 'alerts') LowStockService.syncUI();
     if (typeof updateNavBadges === 'function') updateNavBadges();
     if (!_isHandlingPopState && !_isBootingRoute && typeof syncRouteState === 'function') {
@@ -1858,8 +1899,16 @@ async function logout() {
     const cleanPath = getCleanBasePath();
     window.history.replaceState(null, document.title, cleanPath);
   } catch (e) { }
-  if (db && Array.isArray(db.sales)) {
+  if (db) {
     db.sales = [];
+    db.users = [];
+    db.purchaseOrders = [];
+    db.adjustmentRequests = [];
+    db.voidRequests = [];
+    db.movements = [];
+    db.suppliers = [];
+    db.products = [];
+    db.productSuppliers = [];
   }
   renderApp();
 }
@@ -1915,13 +1964,179 @@ function containerSizeStatusBadge(st) {
   return `<span class="badge ok" style="background:#DEF7EC; color:#03543F; border:1px solid #BCF0DA; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#0E9F6E;"></span>Good</span>`;
 }
 
-/* Returns the list of sizes for product `p` that are low or out of stock */
+/* Returns the list of sizes for product `p` that are low or out of stock (legacy / dashboard watchlist) */
 function productLowSizes(p) {
   if (!p) return [];
   return productSizes(p).filter(s => {
     const st = productSizeStatus(p, s);
     return st === 'low' || st === 'out';
   });
+}
+
+/**
+ * Returns container sizes of product p that are strictly Low Stock (available > 0 and <= threshold).
+ * Mutually exclusive with Out of Stock (0 units).
+ */
+function productLowStockOnlySizes(p) {
+  if (!p) return [];
+  return productSizes(p).filter(s => {
+    const count = productCanCount(p, s);
+    const thresh = productSizeThreshold(p, s);
+    return count > 0 && count <= thresh;
+  });
+}
+
+/**
+ * Returns container sizes of product p that are Out of Stock (available = 0).
+ */
+function productOutOfStockSizes(p) {
+  if (!p) return [];
+  return productSizes(p).filter(s => productCanCount(p, s) <= 0);
+}
+
+/**
+ * Returns container sizes of product p that are In Stock (available > threshold).
+ */
+function productInStockSizes(p) {
+  if (!p) return [];
+  return productSizes(p).filter(s => productCanCount(p, s) > productSizeThreshold(p, s));
+}
+
+/**
+ * A product is Out of Stock if all its container sizes have zero available quantity
+ * AND its total stock is 0.
+ * "Do not classify an entire product as Out of Stock simply because one of its container sizes has zero stock."
+ */
+function isProductOutOfStock(p) {
+  if (!p) return false;
+  const sizes = productSizes(p);
+  if (sizes.length > 0) {
+    const totalCans = sizes.reduce((sum, s) => sum + productCanCount(p, s), 0);
+    if (totalCans > 0) return false;
+  }
+  return (Number(p.stock) || 0) <= 0;
+}
+
+/**
+ * A product is Low Stock if it has available stock > 0 AND at least one container size has positive quantity
+ * at or below its configured threshold.
+ * Mutually exclusive with Out of Stock. Zero available stock must never appear in Low Stock.
+ */
+function isProductLowStock(p) {
+  if (!p) return false;
+  if (isProductOutOfStock(p)) return false;
+  const sizes = productSizes(p);
+  if (sizes.length > 0) {
+    return sizes.some(s => {
+      const count = productCanCount(p, s);
+      const thresh = productSizeThreshold(p, s);
+      return count > 0 && count <= thresh;
+    });
+  }
+  const stock = Number(p.stock) || 0;
+  const thresh = Number(p.threshold) || 0;
+  return stock > 0 && stock <= thresh;
+}
+
+/**
+ * A product is In Stock if it is not Out of Stock, not Low Stock, and has available stock above threshold.
+ */
+function isProductInStock(p) {
+  if (!p) return false;
+  if (isProductOutOfStock(p)) return false;
+  if (isProductLowStock(p)) return false;
+  const sizes = productSizes(p);
+  if (sizes.length > 0) {
+    if (sizes.some(s => productCanCount(p, s) <= 0)) return false;
+    return sizes.every(s => productCanCount(p, s) > productSizeThreshold(p, s));
+  }
+  return (Number(p.stock) || 0) > (Number(p.threshold) || 0);
+}
+
+/**
+ * A product is On Order if it has active pending or open purchase orders.
+ */
+function isProductOnOrder(p) {
+  if (!p) return false;
+  return openPOsForProduct(p.id).length > 0;
+}
+
+/**
+ * Unified stock filter matcher for products across the entire system.
+ * Standardizes:
+ * - All Products: Active products regardless of stock status.
+ * - In Stock: Available stock above low-stock threshold.
+ * - Low Stock: Available stock > 0 AND <= threshold (at least one container size > 0 and <= threshold).
+ * - Out of Stock: Zero available stock across relevant/all container sizes.
+ * - On Order: Pending purchase orders, evaluated separately from stock status.
+ */
+function isProductMatchingStockFilter(p, statusFilter, sizeFilter = null) {
+  if (!p) return false;
+  const targetSz = sizeFilter ? normalizeCanSize(sizeFilter) : 0;
+
+  if (targetSz && !productSizes(p).some(s => normalizeCanSize(s) === targetSz)) {
+    return false;
+  }
+
+  const sf = String(statusFilter || '').trim().toLowerCase();
+
+  if (sf === 'inactive') {
+    return p.status === 'inactive';
+  }
+  if (sf === 'discontinued') {
+    return p.status === 'discontinued';
+  }
+  if (sf === 'pending') {
+    return p.status === 'pending_approval' || Boolean(p.pendingEdit) || (p.pendingSizes && p.pendingSizes.length > 0) || (p.pendingPrice != null && Number(p.pendingPrice) > 0);
+  }
+
+  // Active or stock status filters require active product
+  const isActive = p.status === 'active' || !p.status;
+  if (!isActive && sf !== '' && sf !== 'all') {
+    return false;
+  }
+
+  if (!sf || sf === 'all' || sf === 'active') {
+    return isActive;
+  }
+
+  if (targetSz) {
+    const count = productCanCount(p, targetSz);
+    const thresh = productSizeThreshold(p, targetSz);
+    const st = productSizeStatus(p, targetSz);
+
+    if (sf === 'out') {
+      return st === 'out' || count <= 0;
+    }
+    if (sf === 'low') {
+      return st === 'low' || (count > 0 && count <= thresh);
+    }
+    if (sf === 'in' || sf === 'ok') {
+      return st === 'ok' || count > thresh;
+    }
+    if (sf === 'on_order') {
+      return productSizeHasOpenPO(p.id, targetSz);
+    }
+  } else {
+    if (sf === 'out') {
+      const sizes = productSizes(p);
+      if (sizes.length > 0) {
+        return sizes.some(s => productCanCount(p, s) <= 0) || (Number(p.stock) || 0) <= 0;
+      }
+      return (Number(p.stock) || 0) <= 0;
+    }
+    if (sf === 'low') {
+      return isProductLowStock(p);
+    }
+    if (sf === 'in' || sf === 'ok') {
+      return isProductInStock(p);
+    }
+    if (sf === 'on_order') {
+      return isProductOnOrder(p);
+    }
+  }
+
+  return true;
 }
 
 /* Compact string describing low/out sizes, e.g. "1L: 0/5 cans (Out) · 4L: 1/2 cans (Low)" */
@@ -2643,7 +2858,211 @@ function movementProductLabel(movement) {
   if (product) return productOptionLabel(product);
   return movement.productName || (movement.type === 'colormix' ? 'Color Mix' : 'Unknown product');
 }
-function supplierById(id) { return db.suppliers.find(s => s.id === id); }
+function supplierById(id) { return (db.suppliers || []).find(s => s.id === id); }
+
+function getSupplierProductIds(supplierOrId) {
+  const s = typeof supplierOrId === 'string' ? supplierById(supplierOrId) : supplierOrId;
+  if (!s) return [];
+  const sId = String(s.id);
+  const pIdSet = new Set(Array.isArray(s.productIds) ? s.productIds.map(String) : []);
+
+  if (typeof db !== 'undefined' && db && Array.isArray(db.productSuppliers)) {
+    db.productSuppliers.forEach(ps => {
+      const matchSup = String(ps.supplierId || ps.supplier_id) === sId;
+      const pId = String(ps.productId || ps.product_id || '');
+      if (matchSup && pId) {
+        pIdSet.add(pId);
+      }
+    });
+  }
+
+  return Array.from(pIdSet).filter(id => Boolean(productById(id)));
+}
+
+/* ============================================================
+   PRODUCT-SUPPLIER RELATIONSHIPS (MULTI-SUPPLIER ARCHITECTURE)
+   ============================================================ */
+function getProductSuppliers(productId, containerSize = null) {
+  if (!productId || typeof db === 'undefined' || !db) return [];
+  const pId = String(productId);
+  const targetSize = (containerSize !== null && containerSize !== undefined && containerSize !== '') ? Number(containerSize) : null;
+
+  const list = (db.productSuppliers || []).filter(ps => {
+    if (String(ps.productId || ps.product_id) !== pId) return false;
+    if (targetSize !== null && Number(ps.containerSize || ps.container_size) !== 0 && Number(ps.containerSize || ps.container_size) !== targetSize) return false;
+    return true;
+  });
+
+  const p = productById(pId);
+  const activeSizes = p ? productSizes(p) : [1, 4, 16];
+
+  const results = [];
+  const seenSupplierKeys = new Set();
+
+  list.forEach(rel => {
+    const sId = String(rel.supplierId || rel.supplier_id || '');
+    const s = supplierById(sId);
+    if (!s) return;
+    const cSize = Number(rel.containerSize || rel.container_size) || (targetSize || 0);
+    const key = sId + '_' + cSize;
+    if (seenSupplierKeys.has(key)) return;
+    seenSupplierKeys.add(key);
+
+    const allSizesForSupplier = (db.productSuppliers || [])
+      .filter(ps => String(ps.productId || ps.product_id) === pId && String(ps.supplierId || ps.supplier_id) === sId)
+      .map(ps => Number(ps.containerSize || ps.container_size))
+      .filter(sz => sz > 0);
+
+    const availableSizes = allSizesForSupplier.length > 0 ? [...new Set(allSizesForSupplier)].sort((a,b) => a - b) : activeSizes;
+
+    results.push({
+      id: rel.id,
+      relId: rel.id,
+      supplierId: s.id,
+      supplier_id: s.id,
+      supplierName: s.name,
+      supplier: s,
+      containerSize: cSize,
+      purchaseCost: Number(rel.purchaseCost || rel.purchase_cost) || 0,
+      minOrderQty: Number(rel.minOrderQty || rel.min_order_qty) || 10,
+      availability: rel.availability || 'available',
+      notes: rel.notes || '',
+      availableSizes: availableSizes,
+      status: s.status || 'active'
+    });
+  });
+
+  // Check Supplier Directory links (reflect newly added or updated supplier product links)
+  (db.suppliers || []).forEach(s => {
+    const isLinked = (Array.isArray(s.productIds) && s.productIds.includes(pId)) || (p && (p.supplierId === s.id || p.supplier_id === s.id));
+    if (isLinked) {
+      const cSize = targetSize || 0;
+      const key = s.id + '_' + cSize;
+      if (!seenSupplierKeys.has(key)) {
+        seenSupplierKeys.add(key);
+        const cost = p ? (typeof poPurchaseCostPerUnit === 'function' ? poPurchaseCostPerUnit(p, targetSize || 1) : Math.round(Number(p.price || 0) * (targetSize || 1) * 0.85)) : 0;
+        results.push({
+          id: 'ps_supplier_' + s.id + '_' + pId + '_' + cSize,
+          relId: null,
+          supplierId: s.id,
+          supplier_id: s.id,
+          supplierName: s.name,
+          supplier: s,
+          containerSize: cSize,
+          purchaseCost: cost,
+          minOrderQty: (targetSize && targetSize >= 16) ? 2 : ((targetSize && targetSize >= 4) ? 5 : 10),
+          availability: 'available',
+          notes: 'Supplier Directory catalog link',
+          availableSizes: activeSizes,
+          status: s.status || 'active'
+        });
+      }
+    }
+  });
+
+  return results;
+}
+
+function getSuppliersForProductAndSize(productId, containerSize) {
+  const all = getProductSuppliers(productId, containerSize);
+  const targetSize = Number(containerSize) || 0;
+  return all.filter(item => {
+    // Only active suppliers from Supplier Directory can be selected
+    if (item.status && item.status !== 'active') return false;
+    if (item.supplier && item.supplier.status && item.supplier.status !== 'active') return false;
+    if (item.containerSize === targetSize) return true;
+    if (item.containerSize === 0) return true;
+    if (Array.isArray(item.availableSizes) && item.availableSizes.includes(targetSize)) return true;
+    return false;
+  });
+}
+
+function suppliersForProduct(productId, containerSize = null) {
+  const rels = getProductSuppliers(productId, containerSize);
+  const seen = new Set();
+  const list = [];
+  rels.forEach(r => {
+    if (r.supplier && r.supplier.status === 'active' && !seen.has(r.supplierId)) {
+      seen.add(r.supplierId);
+      list.push(r.supplier);
+    }
+  });
+  return list;
+}
+
+function updateProductSupplierRelationship({ id, productId, supplierId, containerSize, purchaseCost, minOrderQty, availability, notes }) {
+  if (!db.productSuppliers) db.productSuppliers = [];
+  const cSize = Number(containerSize) || 0;
+  const pCost = Number(purchaseCost) || 0;
+  const moq = Math.max(1, Number(minOrderQty) || 10);
+  const avail = availability || 'available';
+
+  let existing = null;
+  if (id) {
+    existing = db.productSuppliers.find(ps => ps.id === id);
+  }
+  if (!existing) {
+    existing = db.productSuppliers.find(ps =>
+      String(ps.productId || ps.product_id) === String(productId) &&
+      String(ps.supplierId || ps.supplier_id) === String(supplierId) &&
+      Number(ps.containerSize || ps.container_size) === cSize
+    );
+  }
+
+  if (existing) {
+    existing.purchaseCost = pCost;
+    existing.purchase_cost = pCost;
+    existing.minOrderQty = moq;
+    existing.min_order_qty = moq;
+    existing.availability = avail;
+    if (notes !== undefined) existing.notes = notes;
+  } else {
+    const newId = id || ('ps_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36));
+    db.productSuppliers.push({
+      id: newId,
+      productId: String(productId),
+      product_id: String(productId),
+      supplierId: String(supplierId),
+      supplier_id: String(supplierId),
+      containerSize: cSize,
+      container_size: cSize,
+      purchaseCost: pCost,
+      purchase_cost: pCost,
+      minOrderQty: moq,
+      min_order_qty: moq,
+      availability: avail,
+      notes: notes || ''
+    });
+  }
+
+  const s = supplierById(supplierId);
+  if (s) {
+    if (!Array.isArray(s.productIds)) s.productIds = [];
+    if (!s.productIds.includes(String(productId))) s.productIds.push(String(productId));
+  }
+}
+
+function deleteProductSupplierRelationship(id) {
+  if (!db.productSuppliers) return;
+  const idx = db.productSuppliers.findIndex(ps => ps.id === id);
+  if (idx !== -1) {
+    const item = db.productSuppliers[idx];
+    db.productSuppliers.splice(idx, 1);
+    if (!db.deletedProductSupplierIds) db.deletedProductSupplierIds = [];
+    db.deletedProductSupplierIds.push(id);
+
+    const stillSupplied = db.productSuppliers.some(ps =>
+      String(ps.productId || ps.product_id) === String(item.productId || item.product_id) &&
+      String(ps.supplierId || ps.supplier_id) === String(item.supplierId || item.supplier_id)
+    );
+    if (!stillSupplied) {
+      const s = supplierById(item.supplierId || item.supplier_id);
+      if (s && Array.isArray(s.productIds)) {
+        s.productIds = s.productIds.filter(pid => pid !== String(item.productId || item.product_id));
+      }
+    }
+  }
+}
 function salesOn(iso) { return db.sales.filter(s => s.date.slice(0, 10) === iso); }
 function salesBetween(fromISO, toISO) {
   return db.sales.filter(s => {
@@ -3256,6 +3675,26 @@ const LowStockService = {
     return 'ok'; // In Stock
   },
 
+  isProductLowStock(p) {
+    return isProductLowStock(p);
+  },
+
+  isProductOutOfStock(p) {
+    return isProductOutOfStock(p);
+  },
+
+  isProductInStock(p) {
+    return isProductInStock(p);
+  },
+
+  isProductOnOrder(p) {
+    return isProductOnOrder(p);
+  },
+
+  isProductMatchingStockFilter(p, statusFilter, sizeFilter = null) {
+    return isProductMatchingStockFilter(p, statusFilter, sizeFilter);
+  },
+
   getVariantPOStatus(p, size, sizeId = null) {
     const s = normalizeCanSize(size);
     const openOrders = openPOsForProductSize(p.id, s, sizeId);
@@ -3691,11 +4130,11 @@ const LowStockService = {
         return;
       }
 
-      // Resolve supplier
+      // Resolve supplier (only linked/assigned active suppliers; do not silently pick an unrelated supplier)
       const suppliers = suppliersForProduct(p.id).filter(sup => sup.status === 'active');
-      const supplier = suppliers[0] || (db.suppliers || []).find(sup => sup.status === 'active' && (sup.productIds || []).includes(p.id)) || (db.suppliers || []).find(sup => sup.status === 'active');
+      const supplier = suppliers[0] || (db.suppliers || []).find(sup => sup.status === 'active' && (sup.productIds || []).includes(p.id));
       if (!supplier) {
-        skippedItems.push(`No active supplier found for "${escapeHtml(p.name)}".`);
+        skippedItems.push(`No linked active supplier found for "${escapeHtml(p.name)}". Link a supplier first.`);
         return;
       }
 
@@ -4051,7 +4490,10 @@ const LowStockService = {
 
     try {
       // Physical stock is NOT increased here. Physical stock increases only upon receiving.
-      await saveDB();
+      const savedOk = await saveDB();
+      if (!savedOk) {
+        throw new Error('Could not save purchase order to database.');
+      }
 
       // Clear completed selections
       this.clear();
@@ -4074,11 +4516,16 @@ const LowStockService = {
 
       return { success: true, count: createdPOs.length, createdPOs };
     } catch (err) {
+      // Rollback in-memory POs if saveDB() failed
+      if (Array.isArray(db.purchaseOrders) && createdPOs.length) {
+        const createdIds = new Set(createdPOs.map(o => o.id));
+        db.purchaseOrders = db.purchaseOrders.filter(o => !createdIds.has(o.id));
+      }
       console.error('PO Creation failed:', err);
       showToast('Could not save purchase order to database.', 'error');
       if (btn) {
         btn.disabled = false;
-        btn.textContent = 'Confirm & Create Purchase Order';
+        btn.textContent = `✓ Confirm & Create Purchase Order${groups.length > 1 ? 's' : ''} →`;
       }
       return { success: false, error: err.message };
     }
@@ -4147,12 +4594,16 @@ function getMovementsTodaySummary() {
   let receiving = 0;
   let sale = 0;
   let adjustment = 0;
+  let colormix = 0;
+  let ret = 0;
   let other = 0;
   todayMoves.forEach(m => {
     const t = String(m.type || '').toLowerCase();
     if (t === 'receiving') receiving++;
     else if (t === 'sale') sale++;
     else if (t === 'adjustment') adjustment++;
+    else if (t === 'colormix' || t === 'color_mix' || t === 'mixing') colormix++;
+    else if (t === 'return' || t === 'refund') ret++;
     else other++;
   });
   return {
@@ -4160,6 +4611,8 @@ function getMovementsTodaySummary() {
     receiving,
     sale,
     adjustment,
+    colormix,
+    return: ret,
     other,
     movements: todayMoves
   };

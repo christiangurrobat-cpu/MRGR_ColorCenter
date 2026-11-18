@@ -181,17 +181,35 @@ function setApprovalsDatePreset(preset) {
   else renderPage();
 }
 
+function parseReqRows(r) {
+  if (!r) return [];
+  if (Array.isArray(r.rows)) return r.rows;
+  if (!r.rowsJson) return [];
+  try {
+    const parsed = JSON.parse(r.rowsJson);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function onApprovalsDateChange() {
   const fromEl = document.getElementById('appr-date-from');
   const toEl = document.getElementById('appr-date-to');
-  let f = fromEl ? fromEl.value : '';
-  let t = toEl ? toEl.value : '';
+  const toIso = (v) => {
+    if (!v) return '';
+    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
+    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
+  };
+  let f = toIso(fromEl ? fromEl.value : '');
+  let t = toIso(toEl ? toEl.value : '');
   if (f && t && f > t) {
     const tmp = f;
     f = t;
     t = tmp;
-    if (fromEl) fromEl.value = f;
-    if (toEl) toEl.value = t;
+    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
+    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
   }
   approvalsDateFrom = f;
   approvalsDateTo = t;
@@ -753,7 +771,7 @@ function renderAdjustmentsTab() {
         (r.batchNote || '').toLowerCase().includes(q) ||
         (r.status || '').toLowerCase().includes(q);
       if (basicMatch) return true;
-      const rows = Array.isArray(r.rows) ? r.rows : (r.rowsJson ? JSON.parse(r.rowsJson) : []);
+      const rows = parseReqRows(r);
       return rows.some(row => {
         const p = productById(row.productId);
         const pName = p ? p.name.toLowerCase() : '';
@@ -828,7 +846,7 @@ function renderAdjustmentsTab() {
           </thead>
           <tbody>
             ${pagedList.map(r => {
-    const rows = Array.isArray(r.rows) ? r.rows : (r.rowsJson ? JSON.parse(r.rowsJson) : []);
+    const rows = parseReqRows(r);
     const totalItems = rows.length;
     let totalCans = 0;
     rows.forEach(row => { totalCans += Math.abs(Number(row.qty) || 0); });
@@ -1139,6 +1157,10 @@ async function approveAllPendingProductsBatch() {
   });
   if (!confirmed) return;
 
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Permission denied: Only Administrators can approve products.', 'error');
+    return;
+  }
   for (const it of list) {
     if (it.type === 'new_product') {
       const p = productById(it.id);
@@ -1146,6 +1168,7 @@ async function approveAllPendingProductsBatch() {
         p.status = 'active';
         p.reviewedBy = (currentUser && currentUser.name) || 'Administrator';
         p.reviewedAt = nowISO();
+        if (typeof syncProductVariants === 'function') syncProductVariants(p);
       }
     } else if (it.type === 'price_change') {
       const p = productById(it.id);
@@ -1153,6 +1176,15 @@ async function approveAllPendingProductsBatch() {
         p.recentPrice = Number(p.price);
         p.price = Number(p.pendingPrice);
         p.pendingPrice = null;
+        if (Array.isArray(p.sizesData)) {
+          p.sizesData.forEach(sz => {
+            sz.pricePerLiter = p.price;
+            sz.pricePerCan = Number((p.price * (Number(sz.containerSize) || 1)).toFixed(2));
+          });
+        }
+        p.reviewedBy = (currentUser && currentUser.name) || 'Administrator';
+        p.reviewedAt = nowISO();
+        if (typeof syncProductVariants === 'function') syncProductVariants(p);
       }
     } else if (it.type === 'sizes_add') {
       const p = productById(it.id);
@@ -1215,6 +1247,10 @@ async function approveAllPendingProductsBatch() {
 }
 
 async function approveAllPendingAdjustmentsBatch() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Permission denied: Only Administrators can approve stock adjustments.', 'error');
+    return;
+  }
   const list = getPendingAdjustmentRequests();
   if (!list.length) return;
 
@@ -1228,7 +1264,7 @@ async function approveAllPendingAdjustmentsBatch() {
   if (!confirmed) return;
 
   for (const req of list) {
-    const rows = Array.isArray(req.rows) ? req.rows : (req.rowsJson ? JSON.parse(req.rowsJson) : []);
+    const rows = parseReqRows(req);
     await executeStockAdjustment(rows, req.requestedBy, { skipSave: true, skipReset: true, skipToast: true, skipRender: true });
     req.status = 'approved';
     req.reviewedBy = (currentUser && currentUser.name) || 'Administrator';
@@ -1376,6 +1412,10 @@ function renderPurchaseOrdersTab() {
 }
 
 async function authorizeAllPendingPOsBatch() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Permission denied: Only Administrators can authorize Purchase Orders.', 'error');
+    return;
+  }
   const list = getPendingPurchaseOrders();
   if (!list.length) return;
 
@@ -1774,18 +1814,35 @@ function renderHistoryTab() {
     }
   });
 
-  // 3. Past Product Approvals from Audit Log
-  (db.auditLog || []).forEach(a => {
+  // 3. Past Product Approvals from Products & Audit Log
+  (db.products || []).forEach(p => {
+    if (p.reviewedBy && p.reviewedAt) {
+      const isRej = p.status === 'rejected' || p.status === 'inactive';
+      events.push({
+        id: p.id,
+        date: p.reviewedAt,
+        type: 'Product Catalog',
+        category: 'product',
+        ref: `${p.name || 'Product'} (${p.brand || '—'})`,
+        requester: p.updatedBy || 'Staff',
+        reviewedBy: p.reviewedBy,
+        decision: isRej ? 'rejected' : 'approved',
+        remarks: p.deactivationReason || `Product catalog review (${p.status})`
+      });
+    }
+  });
+  const auditList = (typeof auditRows !== 'undefined' && Array.isArray(auditRows)) ? auditRows : (db.auditLog || []);
+  auditList.forEach(a => {
     const act = a.action || '';
     if (act.includes('PRODUCT_APPROVE') || act.includes('PRODUCT_REJECT') || act.includes('PRODUCT_PRICE_APPROVE') || act.includes('PRODUCT_PRICE_REJECT')) {
       events.push({
         id: null,
-        date: a.timestamp || a.date,
+        date: a.created_at || a.timestamp || a.date,
         type: 'Product Catalog',
         category: 'product',
         ref: a.details || 'Product Update',
         requester: 'Staff',
-        reviewedBy: a.userName || 'Administrator',
+        reviewedBy: a.user_name || a.userName || 'Administrator',
         decision: act.includes('REJECT') ? 'rejected' : 'approved',
         remarks: a.details || ''
       });

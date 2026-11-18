@@ -517,6 +517,339 @@ function initColorMixStudioState() {
   updateColorMixCalculation(true);
 }
 
+function isBasePaintComponent(c, idx, components = []) {
+  if (!c) return false;
+  const name = `${c.name || ''} ${c.colorName || ''} ${c.color || ''} ${c.brand || ''}`.toLowerCase();
+  const isPigmentKeyword = /pigment|colorant|tinter|tinting|dye/i.test(name);
+  const isBaseKeyword = /base\s*paint|\bbase\b/i.test(name);
+  if (isPigmentKeyword) return false;
+  if (isBaseKeyword) return true;
+  // If no explicit base keyword, slot 0 is the primary base paint slot
+  return idx === 0;
+}
+
+function calculateColorMixPriceBreakdown(s = colorMixStudioState) {
+  const state = s || {};
+  const totalLiters = Number(state.totalLiters) || 1;
+  const components = Array.isArray(state.components) ? state.components : [];
+
+  let basePaint = null;
+  let basePaintCost = 0;
+  let basePaintLiters = 0;
+  let basePaintMl = 0;
+  let basePct = 0;
+
+  const ingredients = [];
+  let totalColorantCost = 0;
+  let totalColorantLiters = 0;
+  let totalColorantMl = 0;
+  let totalColorantPct = 0;
+  let pigmentIncluded = false;
+
+  components.forEach((c, idx) => {
+    const pct = Number(c.pct) || 0;
+    const price = Number(c.price) || 0;
+    const liters = Number((totalLiters * (pct / 100)).toFixed(4));
+    const ml = Math.round(liters * 1000);
+    const cost = Number((liters * price).toFixed(2));
+
+    const p = c.productId ? (typeof productById === 'function' ? productById(c.productId) : null) : null;
+    const prodName = c.name || (p ? p.name : `Component ${String.fromCharCode(65 + idx)}`);
+    const brand = c.brand || (p ? p.brand : '');
+    const colorName = c.colorName || c.color || (p && typeof getProductColorName === 'function' ? getProductColorName(p) : 'Color');
+    const hex = c.hex || (p && typeof getProductDefaultColor === 'function' ? getProductDefaultColor(p) : '#FFFFFF');
+    const type = p ? (p.type || p.category || state.baseType || 'Base Paint') : (state.baseType || 'Base Paint');
+
+    const isBase = isBasePaintComponent(c, idx, components);
+
+    if (isBase && !basePaint) {
+      basePaintCost = cost;
+      basePaintLiters = liters;
+      basePaintMl = ml;
+      basePct = pct;
+      basePaint = {
+        productId: c.productId,
+        name: prodName,
+        brand,
+        type,
+        colorName,
+        hex,
+        liters,
+        ml,
+        pct,
+        unitPrice: price,
+        cost
+      };
+    } else {
+      if (price === 0 || c.isIncluded) {
+        pigmentIncluded = true;
+      }
+      totalColorantCost += cost;
+      totalColorantLiters += liters;
+      totalColorantMl += ml;
+      totalColorantPct += pct;
+
+      ingredients.push({
+        id: c.id,
+        productId: c.productId,
+        name: prodName,
+        brand,
+        type,
+        colorName,
+        hex,
+        liters,
+        ml,
+        pct,
+        unitPrice: price,
+        cost,
+        isIncluded: (price === 0 || Boolean(c.isIncluded))
+      });
+    }
+  });
+
+  basePaintCost = Number(basePaintCost.toFixed(2));
+  basePaintLiters = Number(basePaintLiters.toFixed(2));
+  basePct = Math.round(basePct * 10) / 10;
+
+  totalColorantCost = Number(totalColorantCost.toFixed(2));
+  totalColorantLiters = Number(totalColorantLiters.toFixed(2));
+  totalColorantPct = Math.round(totalColorantPct * 10) / 10;
+
+  const serviceFee = 50.00;
+  const materialCost = Number((basePaintCost + totalColorantCost).toFixed(2));
+  const standardTotal = Number((materialCost + serviceFee).toFixed(2));
+
+  let otherCharges = 0.00;
+  let grandTotal = standardTotal;
+
+  if (state.userCustomizedPrice && state.pricePerLiter != null) {
+    const customTargetTotal = Number((totalLiters * Number(state.pricePerLiter)).toFixed(2));
+    const diff = Number((customTargetTotal - standardTotal).toFixed(2));
+    otherCharges = diff;
+    grandTotal = customTargetTotal;
+  }
+
+  // Ensure mathematical balance: sum of breakdown items strictly matches grandTotal
+  grandTotal = Number((materialCost + serviceFee + otherCharges).toFixed(2));
+
+  return {
+    basePaint,
+    basePaintCost,
+    basePaintLiters,
+    basePaintMl,
+    basePct,
+    ingredients,
+    totalColorantCost,
+    pigmentCost: totalColorantCost, // backwards-compatible alias
+    totalColorantLiters,
+    pigmentLiters: totalColorantLiters, // backwards-compatible alias
+    totalColorantMl,
+    pigmentMl: totalColorantMl,
+    totalColorantPct,
+    pigmentPct: totalColorantPct, // backwards-compatible alias
+    pigmentIncluded,
+    materialCost,
+    serviceFee,
+    otherCharges,
+    grandTotal,
+    totalLiters
+  };
+}
+
+/**
+ * Render detailed ingredient-level price breakdown HTML.
+ * Separates Base Paint, Individual Colorants/Ingredients, and Additional Charges.
+ */
+function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
+  const isPctBalanced = Math.abs((s.components || []).reduce((sum, c) => sum + (Number(c.pct) || 0), 0) - 100) <= 0.5;
+  const validComponents = (s.components || []).filter(c => c.productId && Number(c.pct) > 0);
+  const hasMinTwoIngredients = validComponents.length >= 2;
+  const seenIds = new Set();
+  const hasDuplicateProducts = validComponents.some(c => {
+    const pid = String(c.productId);
+    if (seenIds.has(pid)) return true;
+    seenIds.add(pid);
+    return false;
+  });
+  const isReadyToDispense = isPctBalanced && hasMinTwoIngredients && !hasDuplicateProducts;
+  const grandTotal = breakdown.grandTotal;
+
+  return `
+    <!-- Card Header: Title, Volume & Ready Badge -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #E8DFD0;">
+      <div style="display:flex; align-items:center; gap:6px;">
+        <span style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:var(--teal-dark);">💰 Price Breakdown</span>
+        <span id="cm-grand-volume-label" class="muted" style="font-size:11px; font-weight:600;">(${s.totalLiters} Liter${s.totalLiters === 1 ? '' : 's'})</span>
+      </div>
+      <span id="cm-ready-badge" class="badge ${isReadyToDispense ? 'ok' : (hasDuplicateProducts ? 'low' : 'mid')}" style="font-size:10.5px; padding:2px 8px; font-weight:700;">
+        ${hasDuplicateProducts ? '⚠️ Duplicate Products Selected' : (!hasMinTwoIngredients ? '⚠️ Need At Least 2 Ingredients' : (isPctBalanced ? '✓ Ready to Dispense' : '⚠️ Adjust to 100%'))}
+      </span>
+    </div>
+
+    <!-- 1. BASE PAINT DETAILS SECTION -->
+    <div class="cm-breakdown-section" style="margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed #E0D6C5;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+        <div style="display:flex; align-items:center; gap:5px;">
+          <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--teal); flex-shrink:0;"></span>
+          <span style="font-weight:700; font-size:11px; color:var(--teal-dark); text-transform:uppercase; letter-spacing:0.04em;">Base Paint</span>
+          ${breakdown.basePaint ? `
+            <span class="badge" style="background:#EDF5F4; color:#1F6F6B; border:1px solid #C4DFDC; font-size:9.5px; padding:1px 5px; font-weight:600;">
+              ${escapeHtml(breakdown.basePaint.type || s.baseType || 'Base Paint')}
+            </span>
+          ` : ''}
+        </div>
+        <strong id="cm-breakdown-base-cost" class="cm-breakdown-value" style="font-family:'Space Grotesk',monospace; font-size:12.5px; font-weight:700; color:var(--ink);">
+          ${peso(breakdown.basePaintCost)}
+        </strong>
+      </div>
+      ${breakdown.basePaint ? `
+        <div style="padding-left:12px; font-size:10.5px; color:#5D5348; line-height:1.35;">
+          <div style="font-weight:600; color:var(--ink);">
+            ${escapeHtml(breakdown.basePaint.name)}
+            ${breakdown.basePaint.brand ? `<span class="muted" style="font-weight:400;">(${escapeHtml(breakdown.basePaint.brand)})</span>` : ''}
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px; margin-top:2px;">
+            <span class="muted">
+              Base Color: <b>${escapeHtml(breakdown.basePaint.colorName)}</b>
+              ${breakdown.basePaint.hex ? `<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${breakdown.basePaint.hex}; border:1px solid rgba(0,0,0,0.15); vertical-align:middle; margin-left:3px;"></span>` : ''}
+              · Rate: ${peso(breakdown.basePaint.unitPrice)}/L
+            </span>
+            <span id="cm-breakdown-base-qty" style="font-weight:700; font-family:'Space Grotesk',monospace; color:#3E2723;">
+              ${formatStock(breakdown.basePaint.liters)} L (${breakdown.basePaint.ml} mL) · ${breakdown.basePaint.pct}%
+            </span>
+          </div>
+        </div>
+      ` : `
+        <div style="padding-left:12px; font-size:10.5px; color:#8A8070; font-style:italic;">No base paint component in formula.</div>
+      `}
+    </div>
+
+    <!-- 2. INDIVIDUAL COLORANTS / INGREDIENTS SECTION -->
+    <div class="cm-breakdown-section" style="margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed #E0D6C5;">
+      <details ${wasOpen ? 'open' : ''} id="cm-ingredients-details" class="cm-ingredients-details">
+        <summary style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+          <div style="display:flex; align-items:center; gap:5px;">
+            <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#8E24AA; flex-shrink:0;"></span>
+            <span style="font-weight:700; font-size:11px; color:#6A1B9A; text-transform:uppercase; letter-spacing:0.04em;">Colorants / Ingredients</span>
+            <span class="badge" style="background:#F3E5F5; color:#7B1FA2; border:1px solid #E1BEE7; font-size:9.5px; padding:1px 5px; font-weight:600;">
+              ${breakdown.ingredients.length} item${breakdown.ingredients.length === 1 ? '' : 's'}
+            </span>
+            <span class="muted" style="font-size:9.5px; opacity:0.75;">▾</span>
+          </div>
+          <strong id="cm-breakdown-pigment-cost" class="cm-breakdown-value" style="font-family:'Space Grotesk',monospace; font-size:12.5px; font-weight:700; color:var(--ink);">
+            ${peso(breakdown.totalColorantCost)}
+          </strong>
+        </summary>
+
+        ${breakdown.ingredients.length > 0 ? `
+          <div id="cm-ingredients-list" style="padding-left:12px; display:flex; flex-direction:column; gap:4px; margin-top:5px;">
+            ${breakdown.ingredients.map(ing => `
+              <div class="cm-ingredient-item" style="background:#FAF8F5; border:1px solid #ECE4D8; border-radius:5px; padding:4px 7px; font-size:10.5px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
+                  <div style="display:flex; align-items:center; gap:5px; min-width:0; overflow:hidden;">
+                    <span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${ing.hex || '#8E24AA'}; border:1px solid rgba(0,0,0,0.15); flex-shrink:0;"></span>
+                    <span style="font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(ing.name)}</span>
+                    ${ing.brand ? `<span class="muted" style="font-size:9.5px;">(${escapeHtml(ing.brand)})</span>` : ''}
+                  </div>
+                  <strong style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--ink); flex-shrink:0;">
+                    ${peso(ing.cost)}
+                  </strong>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; color:#6B6259; font-size:10px; margin-top:1.5px;">
+                  <span>Type: <b>${escapeHtml(ing.colorName || 'Pigment')}</b> · Rate: ${peso(ing.unitPrice)}/L</span>
+                  <span style="font-family:'Space Grotesk',monospace; font-weight:600; color:#4E342E;">
+                    ${formatStock(ing.liters)} L (${ing.ml} mL) · ${ing.pct}%
+                  </span>
+                </div>
+              </div>
+            `).join('')}
+
+            <!-- Total Colorant Quantity & Cost Summary -->
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:#6A1B9A; font-weight:600; padding:2px 6px; background:#F8EEF8; border-radius:4px; margin-top:2px;">
+              <span>Total Colorants: <b id="cm-breakdown-pigment-qty">${formatStock(breakdown.totalColorantLiters)} L (${breakdown.totalColorantMl} mL) · ${breakdown.totalColorantPct}%</b></span>
+              <span>Total Cost: <b>${peso(breakdown.totalColorantCost)}</b></span>
+            </div>
+          </div>
+        ` : `
+          <div style="padding-left:12px; font-size:10.5px; color:#8A8070; font-style:italic; margin-top:4px;">No additional colorants used in this formula.</div>
+        `}
+      </details>
+    </div>
+
+    <!-- 3. MATERIAL TOTAL & ADDITIONAL CHARGES -->
+    <div class="cm-breakdown-section" style="margin-bottom:6px; font-size:11px;">
+      <div class="cm-breakdown-line" style="display:flex; justify-content:space-between; align-items:center; padding:1.5px 0;">
+        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:#4E342E;">
+          <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#2E7D32;"></span>
+          <span style="font-weight:600;">Total Material Cost:</span>
+          <span class="muted" style="font-size:9.5px;">(Base + Colorants)</span>
+        </span>
+        <strong id="cm-breakdown-material-cost" style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--ink);">${peso(breakdown.materialCost)}</strong>
+      </div>
+
+      <div class="cm-breakdown-line" style="display:flex; justify-content:space-between; align-items:center; padding:1.5px 0;">
+        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:#4E342E;">
+          <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#E65100;"></span>
+          <span>Mixing Service Fee:</span>
+          <span class="muted" style="font-size:9.5px;">(Standard Fee)</span>
+        </span>
+        <strong id="cm-breakdown-service-fee" class="cm-breakdown-value" style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--ink);">${peso(breakdown.serviceFee)}</strong>
+      </div>
+
+      <div id="cm-breakdown-other-row" class="cm-breakdown-line" style="display:flex; justify-content:space-between; align-items:center; padding:1.5px 0;">
+        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:#4E342E;">
+          <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#78909C;"></span>
+          <span>Other Charges:</span>
+          <span id="cm-breakdown-other-hint" class="muted" style="font-size:9.5px;">
+            ${breakdown.otherCharges > 0 ? '(Custom Adjustment)' : (breakdown.otherCharges < 0 ? '(Custom Discount)' : '')}
+          </span>
+        </span>
+        <strong id="cm-breakdown-other-charges" class="cm-breakdown-value" style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--ink);">${peso(breakdown.otherCharges)}</strong>
+      </div>
+    </div>
+
+    <!-- 4. GRAND TOTAL -->
+    <div style="border-top:1.5px dashed #D5C9B8; padding-top:6px; display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-size:11.5px; font-weight:800; color:var(--teal-dark); text-transform:uppercase; letter-spacing:0.04em;">Grand Total</div>
+        <div id="cm-breakdown-mat-service-hint" class="muted small" style="font-size:9.5px;">
+          Materials: ${peso(breakdown.materialCost)} + Service: ${peso(breakdown.serviceFee)}${breakdown.otherCharges !== 0 ? ` + Other: ${peso(breakdown.otherCharges)}` : ''}
+        </div>
+      </div>
+      <div id="cm-grand-total" style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:800; color:var(--teal); letter-spacing:-0.02em;">
+        ${peso(grandTotal)}
+      </div>
+    </div>
+  `;
+}
+
+function onColorMixPriceLive(val) {
+  const num = Number(val);
+  if (!isNaN(num) && num >= 0) {
+    colorMixStudioState.pricePerLiter = num;
+    colorMixStudioState.userCustomizedPrice = true;
+    syncColorMixVisuals();
+  }
+}
+
+function onColorMixPriceChange(val) {
+  const num = Number(Number(val).toFixed(2)) || 0;
+  colorMixStudioState.pricePerLiter = num;
+  colorMixStudioState.userCustomizedPrice = true;
+  const input = document.getElementById('cm-price');
+  if (input) input.value = num;
+  syncColorMixVisuals();
+}
+
+function resetColorMixPriceToAuto() {
+  colorMixStudioState.userCustomizedPrice = false;
+  updateColorMixCalculation(false);
+  const priceInput = document.getElementById('cm-price');
+  if (priceInput) priceInput.value = colorMixStudioState.pricePerLiter;
+  syncColorMixVisuals();
+  showToast('Reset mixing price to auto-calculated rate.', 'info');
+}
+
 function updateColorMixCalculation(autoUpdateName = false) {
   const mixed = subtractivePaintMix(colorMixStudioState.components);
   const detected = detectMixedColorName(mixed.r, mixed.g, mixed.b);
@@ -525,17 +858,12 @@ function updateColorMixCalculation(autoUpdateName = false) {
     colorMixStudioState.colorName = detected.name;
   }
 
-  // Calculate weighted price per liter + ₱50 mixing service fee
-  const valid = colorMixStudioState.components.filter(c => Number(c.pct) > 0);
-  const totalPct = valid.reduce((sum, c) => sum + Number(c.pct), 0) || 100;
-  let weightedPrice = 0;
-  valid.forEach(c => {
-    weightedPrice += (Number(c.price) || 350) * (Number(c.pct) / totalPct);
-  });
-  const recommendedPrice = Math.max(250, Math.round(weightedPrice + 50));
+  // Calculate price breakdown & grand total
+  const breakdown = calculateColorMixPriceBreakdown(colorMixStudioState);
+  const totalLiters = Number(colorMixStudioState.totalLiters) || 1;
 
   if (!colorMixStudioState.userCustomizedPrice) {
-    colorMixStudioState.pricePerLiter = recommendedPrice;
+    colorMixStudioState.pricePerLiter = Number((breakdown.grandTotal / totalLiters).toFixed(2));
   }
 }
 
@@ -543,7 +871,8 @@ function openColorMixModal(isPos = true) {
   initColorMixStudioState();
   colorMixStudioState.isPosMode = (isPos !== false);
   const totalLiters = colorMixStudioState.totalLiters || 1;
-  const grandTotal = totalLiters * (colorMixStudioState.pricePerLiter || 0);
+  const breakdown = calculateColorMixPriceBreakdown(colorMixStudioState);
+  const grandTotal = breakdown.grandTotal;
   logAudit(
     'MIXING_START',
     'Paint Color Mixing Studio',
@@ -562,7 +891,7 @@ function openColorMixModal(isPos = true) {
     `
   <button class="btn secondary" onclick="cancelColorMixModal()">Cancel</button>
   <button id="cm-submit-btn" class="btn" style="background:linear-gradient(135deg, #1F6F6B 0%, #2A8C87 100%); font-weight:700;" onclick="submitColorMix()">
-    ${isPos ? `+ Add ${totalLiters}L Mixed Color (${peso(grandTotal)}) to Sale` : `✓ Confirm & Log ${totalLiters}L Movement`}
+    ${isPos ? `+ Add ${totalLiters}L Mixed Color (${peso(grandTotal)}) to Sale` : `✓ Confirm & Log ${totalLiters}L Movement (${peso(grandTotal)})`}
   </button>
 `,
     'xl'
@@ -598,7 +927,8 @@ function renderColorMixStudio() {
   if (btn) {
     const s = colorMixStudioState;
     const totalLiters = s.totalLiters || 1;
-    const grandTotal = totalLiters * (s.pricePerLiter || 0);
+    const breakdown = calculateColorMixPriceBreakdown(s);
+    const grandTotal = breakdown.grandTotal;
     const isPos = s.isPosMode !== false;
     btn.innerHTML = isPos
       ? `+ Add ${totalLiters}L Mixed Color (${peso(grandTotal)}) to Sale`
@@ -1226,7 +1556,8 @@ function colorMixStudioHtml() {
   const hasDuplicateProducts = new Set(compProductIds).size < compProductIds.length;
   const duplicateSlots = getColorMixDuplicateSlots();
   const isReadyToDispense = isPctBalanced && hasMinTwoIngredients && !hasDuplicateProducts;
-  const grandTotal = (s.totalLiters || 1) * (s.pricePerLiter || 0);
+  const breakdown = calculateColorMixPriceBreakdown(s);
+  const grandTotal = breakdown.grandTotal;
 
   return `
   <!-- Single Clean Top Toolbar: Quick Presets + Balance Status -->
@@ -1280,6 +1611,7 @@ function colorMixStudioHtml() {
     const fillPct = Math.max(0, Math.min(100, c.pct));
     const isPickerOpen = s.openPickerIdx === idx;
     const isDup = duplicateSlots.has(idx + 1);
+    const isBase = isBasePaintComponent(c, idx, s.components);
     return `
         <div class="cm-ingredient-item" id="cm-ing-item-${idx}" style="padding:10px 12px; margin-bottom:9px; ${isDup ? 'border:1.5px solid #FCA5A5; background:#FFFBFB;' : ''}">
           <div class="cm-ing-grid">
@@ -1293,7 +1625,7 @@ function colorMixStudioHtml() {
               <button type="button" class="cm-pigment-card-btn ${isPickerOpen ? 'open' : ''}" onclick="openColorMixPigmentDrawer(${idx})" title="Click to choose paint using visual color cards, smart avatar search, or categories">
                 <div style="min-width:0; flex:1;">
                   <div class="row" style="gap:6px; align-items:center; flex-wrap:wrap;">
-                    <span class="badge" style="background:var(--teal-dark); color:#fff; font-size:9.5px; padding:1px 5px;">#${idx + 1}</span>
+                    <span class="badge" style="background:${isBase ? 'var(--teal-dark)' : '#7B1FA2'}; color:#fff; font-size:9.5px; padding:1px 6px;">#${idx + 1} ${isBase ? 'Base' : 'Pigment'}</span>
                     <strong style="font-size:13px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(prodObj ? prodObj.name : (c.name || 'Select Paint Product'))}</strong>
                     <span class="badge" style="background:#EFECE6; color:var(--ink-soft); font-size:10px; padding:1px 6px;">${escapeHtml(prodObj && prodObj.type ? prodObj.type : 'Paint')}</span>
                     ${isDup ? `<span class="badge already-selected-badge" style="font-size:9.5px; padding:1px 6px;">⚠️ Duplicate Selection</span>` : ''}
@@ -1471,8 +1803,8 @@ function colorMixStudioHtml() {
 
       <div class="field">
         <label for="cm-price" style="font-size:12px; font-weight:700;">Price per Liter (₱)</label>
-        <input id="cm-price" type="number" min="0" step="1" value="${s.pricePerLiter}" onchange="this.value=Math.round(Number(this.value)||0); colorMixStudioState.pricePerLiter=Number(this.value); colorMixStudioState.userCustomizedPrice=true; syncColorMixVisuals();" required>
-        <small class="muted" style="display:block; margin-top:2px; font-size:10.5px;">Auto-calculated base + ₱50 service fee</small>
+        <input id="cm-price" type="number" min="0" step="any" value="${s.pricePerLiter}" oninput="onColorMixPriceLive(this.value)" onchange="onColorMixPriceChange(this.value)" required>
+        <small id="cm-price-helper" class="muted" style="display:block; margin-top:2px; font-size:10.5px;">${s.userCustomizedPrice ? `Custom price applied · <a href="javascript:void(0)" onclick="resetColorMixPriceToAuto()" style="color:var(--teal); font-weight:600; text-decoration:underline;">Reset to auto</a>` : 'Auto-calculated base materials + ₱50 service fee'}</small>
       </div>
 
       <div class="field">
@@ -1509,13 +1841,9 @@ function colorMixStudioHtml() {
       </div>
     </div>
 
-    <!-- Grand Total Banner -->
-    <div class="cm-grand-banner">
-      <div>
-        <div id="cm-grand-volume-label" class="muted small" style="font-size:11.5px; font-weight:600;">Estimated Total (${s.totalLiters} Liter${s.totalLiters === 1 ? '' : 's'})</div>
-        <div id="cm-grand-total" style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; color:var(--teal); letter-spacing:-0.02em;">${peso(grandTotal)}</div>
-      </div>
-      <span id="cm-ready-badge" class="badge ${isReadyToDispense ? 'ok' : (hasDuplicateProducts ? 'low' : 'mid')}" style="font-size:11.5px; padding:5px 12px; font-weight:700;">${hasDuplicateProducts ? '⚠️ Duplicate Products Selected' : (!hasMinTwoIngredients ? '⚠️ Need At Least 2 Ingredients' : (isPctBalanced ? '✓ Ready to Dispense' : '⚠️ Adjust to 100%'))}</span>
+    <!-- Detailed Price Breakdown & Estimated Total Card -->
+    <div id="cm-price-breakdown-card" class="cm-price-breakdown-card">
+      ${renderColorMixPriceBreakdownHtml(s, breakdown, true)}
     </div>
   </div>
 </div>
@@ -1541,7 +1869,8 @@ function syncColorMixVisuals(activeIdx = -1) {
   const compProductIds = s.components.map(c => c.productId).filter(Boolean);
   const hasDuplicateProducts = new Set(compProductIds).size < compProductIds.length;
   const isReadyToDispense = isPctBalanced && hasMinTwoIngredients && !hasDuplicateProducts;
-  const grandTotal = (s.totalLiters || 1) * (s.pricePerLiter || 0);
+  const breakdown = calculateColorMixPriceBreakdown(s);
+  const grandTotal = breakdown.grandTotal;
 
   // 1. Swatch Hero & active agitation animation
   const hero = document.getElementById('cm-swatch-hero');
@@ -1579,16 +1908,19 @@ function syncColorMixVisuals(activeIdx = -1) {
     const priceInput = document.getElementById('cm-price');
     if (priceInput && document.activeElement !== priceInput) priceInput.value = s.pricePerLiter;
   }
+  const priceHelper = document.getElementById('cm-price-helper');
+  if (priceHelper) {
+    priceHelper.innerHTML = s.userCustomizedPrice
+      ? `Custom price applied · <a href="javascript:void(0)" onclick="resetColorMixPriceToAuto()" style="color:var(--teal); font-weight:600; text-decoration:underline;">Reset to auto</a>`
+      : 'Auto-calculated base materials + ₱50 service fee';
+  }
 
-  // 5. Grand total & action button
-  const grandTotalEl = document.getElementById('cm-grand-total');
-  if (grandTotalEl) grandTotalEl.textContent = peso(grandTotal);
-  const readyBadge = document.getElementById('cm-ready-badge');
-  if (readyBadge) {
-    readyBadge.className = `badge ${isReadyToDispense ? 'ok' : (hasDuplicateProducts ? 'low' : 'mid')}`;
-    readyBadge.textContent = hasDuplicateProducts
-      ? '⚠️ Duplicate Products Selected'
-      : (!hasMinTwoIngredients ? '⚠️ Need At Least 2 Ingredients' : (isPctBalanced ? '✓ Ready to Dispense' : '⚠️ Adjust to 100%'));
+  // 5. Detailed price breakdown & Grand total updates
+  const cardEl = document.getElementById('cm-price-breakdown-card');
+  if (cardEl) {
+    const prevDetails = document.getElementById('cm-ingredients-details');
+    const wasOpen = prevDetails ? prevDetails.open : true;
+    cardEl.innerHTML = renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen);
   }
   const submitBtn = document.getElementById('cm-submit-btn');
   if (submitBtn) {
@@ -1623,7 +1955,9 @@ function syncColorMixVisuals(activeIdx = -1) {
   s.components.forEach((c, i) => {
     const pct = Number(c.pct) || 0;
     const reqLiters = Number(((s.totalLiters * (pct / 100)) || 0).toFixed(2));
-    const hasStock = c.stock >= reqLiters;
+    const prodObj = c.productId ? productById(c.productId) : null;
+    const availStock = prodObj && typeof productMixAvailableStock === 'function' ? productMixAvailableStock(prodObj) : (Number(c.stock) || 0);
+    const hasStock = availStock + 1e-6 >= reqLiters;
     const fillPct = Math.max(0, Math.min(100, pct));
 
     // Range slider value and gradient track
@@ -1690,7 +2024,7 @@ function syncColorMixVisuals(activeIdx = -1) {
     const stockBadge = document.getElementById(`cm-stock-badge-${i}`);
     if (stockBadge) {
       stockBadge.style.color = hasStock ? 'var(--teal-dark)' : 'var(--danger)';
-      stockBadge.innerHTML = hasStock ? `🥫 ${formatStock(c.stock)}L sealed` : `⚠️ Low: ${formatStock(c.stock)}L`;
+      stockBadge.innerHTML = hasStock ? `🥫 ${formatStock(availStock)}L avail` : `⚠️ Low: ${formatStock(availStock)}L`;
     }
   });
 
@@ -2461,7 +2795,7 @@ function onColorMixTotalLitersChange(val, clampInput = true) {
     customInput.value = val;
   }
   const volLabel = document.getElementById('cm-grand-volume-label');
-  if (volLabel) volLabel.textContent = `Estimated Total (${val} Liter${val === 1 ? '' : 's'})`;
+  if (volLabel) volLabel.textContent = `(${val} Liter${val === 1 ? '' : 's'})`;
   const beakerVol = document.getElementById('cm-beaker-volume');
   if (beakerVol) beakerVol.textContent = `${val} Liter${val === 1 ? '' : 's'}`;
   syncColorMixVisuals();
@@ -2527,13 +2861,28 @@ function equalizeColorMixPcts() {
 }
 
 function balanceColorMixTo100() {
-  const len = colorMixStudioState.components.length;
+  const comps = colorMixStudioState.components;
+  const len = comps.length;
   if (len === 0) return;
   let sumOthers = 0;
   for (let i = 0; i < len - 1; i++) {
-    sumOthers += Number(colorMixStudioState.components[i].pct) || 0;
+    sumOthers += Number(comps[i].pct) || 0;
   }
-  colorMixStudioState.components[len - 1].pct = Math.max(0, Math.round((100 - sumOthers) * 10) / 10);
+  if (sumOthers <= 100) {
+    comps[len - 1].pct = Math.max(0, Math.round((100 - sumOthers) * 10) / 10);
+  } else {
+    // Prior components exceed 100%: scale all components proportionally to sum to 100%
+    const totalAll = comps.reduce((s, c) => s + (Number(c.pct) || 0), 0);
+    if (totalAll > 0) {
+      let running = 0;
+      for (let i = 0; i < len - 1; i++) {
+        const scaled = Math.round(((Number(comps[i].pct) || 0) / totalAll) * 1000) / 10;
+        comps[i].pct = scaled;
+        running += scaled;
+      }
+      comps[len - 1].pct = Math.max(0, Math.round((100 - running) * 10) / 10);
+    }
+  }
   syncColorMixVisuals(len - 1);
 }
 
@@ -2613,6 +2962,8 @@ async function submitColorMix() {
     reqLitersByProd[pid] = Number(((reqLitersByProd[pid] || 0) + compLiters).toFixed(2));
   }
 
+  const isPos = s.isPosMode !== false;
+
   for (const pid of Object.keys(reqLitersByProd)) {
     const p = productById(pid);
     if (!p) {
@@ -2620,10 +2971,14 @@ async function submitColorMix() {
       return false;
     }
     const totalReq = reqLitersByProd[pid];
-    const mixAvail = productMixAvailableStock(p);
-    if (mixAvail < totalReq) {
+    const rawMixAvail = productMixAvailableStock(p);
+    const reservedInCart = (isPos && typeof getCartReservedLitersForProduct === 'function')
+      ? getCartReservedLitersForProduct(p).total
+      : 0;
+    const mixAvail = Math.max(0, Number((rawMixAvail - reservedInCart).toFixed(2)));
+    if (mixAvail + 1e-6 < totalReq) {
       const shortage = Number((totalReq - mixAvail).toFixed(2));
-      showToast(`Not enough stock for "${p.name}". Required: ${formatStock(totalReq)} L, Available: ${formatStock(mixAvail)} L (${formatStock(p.stock)} L sealed + ${formatStock(productOpenedStock(p))} L opened). Shortage: ${formatStock(shortage)} L.`, 'error');
+      showToast(`Not enough stock for "${p.name}". Required: ${formatStock(totalReq)} L, Available: ${formatStock(mixAvail)} L${reservedInCart > 0 ? ` (${formatStock(reservedInCart)} L reserved in cart)` : ''}. Shortage: ${formatStock(shortage)} L.`, 'error');
       return false;
     }
   }
@@ -2631,7 +2986,9 @@ async function submitColorMix() {
   const mixed = subtractivePaintMix(validComponents);
   const detected = detectMixedColorName(mixed.r, mixed.g, mixed.b);
   const liters = Number(s.totalLiters) || 1;
-  const price = Number(s.pricePerLiter) || 400;
+  const breakdown = calculateColorMixPriceBreakdown(s);
+  const grandTotal = breakdown.grandTotal;
+  const price = Number((grandTotal / liters).toFixed(2));
   const baseType = (document.getElementById('cm-base-type') ? document.getElementById('cm-base-type').value.trim() : s.baseType) || 'Automotive Paint';
   const note = (document.getElementById('cm-note') ? document.getElementById('cm-note').value.trim() : s.note) || '';
 
@@ -2665,7 +3022,6 @@ async function submitColorMix() {
     components: componentsData
   });
 
-  const isPos = s.isPosMode !== false;
   const formulaSummary = componentsData.map(cp => `${cp.percentage}% ${cp.name} (${cp.liters}L)`).join(' + ');
   if (isPos) {
     cart.push({
@@ -2676,9 +3032,24 @@ async function submitColorMix() {
       hexColor: mixed.hex,
       baseType: baseType,
       liters: liters,
+      baseLiters: liters,
       qty: liters,
       unitPrice: price,
-      lineTotal: liters * price,
+      baseGrandTotal: grandTotal,
+      lineTotal: grandTotal,
+      priceBreakdown: {
+        basePaint: breakdown.basePaint,
+        basePaintCost: breakdown.basePaintCost,
+        ingredients: breakdown.ingredients,
+        totalColorantCost: breakdown.totalColorantCost,
+        pigmentCost: breakdown.pigmentCost,
+        totalColorantLiters: breakdown.totalColorantLiters,
+        totalColorantMl: breakdown.totalColorantMl,
+        materialCost: breakdown.materialCost,
+        serviceFee: breakdown.serviceFee,
+        otherCharges: breakdown.otherCharges,
+        grandTotal: breakdown.grandTotal
+      },
       note: note,
       components: componentsData
     });
@@ -2686,12 +3057,12 @@ async function submitColorMix() {
     logAudit(
       'MIXING_COMPLETE',
       colorName,
-      `Composed ${liters}L "${colorName}" [${detected.name} · ${mixed.hex}] (${baseType}) and queued to POS Cart — Formula: ${formulaSummary} · Total: ${peso(liters * price)}`,
+      `Composed ${liters}L "${colorName}" [${detected.name} · ${mixed.hex}] (${baseType}) and queued to POS Cart — Formula: ${formulaSummary} · Total: ${peso(grandTotal)}`,
       {
         entityName: colorName,
         fieldChanged: 'Paint Color Mix Formula',
         oldValue: formulaSummary,
-        newValue: `${liters}L ${colorName} [${detected.name} · ${mixed.hex}] (${peso(liters * price)})`,
+        newValue: `${liters}L ${colorName} [${detected.name} · ${mixed.hex}] (${peso(grandTotal)})`,
         reason: note || `${baseType} (Added to POS Cart)`
       }
     );
@@ -2720,7 +3091,8 @@ async function submitColorMix() {
           id: uid('mv'),
           date,
           type: 'colormix',
-          productId: p.id,
+          productId: p.productId || p.id,
+          product_id: p.productId || p.id,
           productName: `${p.name} (for ${colorName} mix)`,
           colorName,
           qtyChange: -comp.liters,
@@ -2751,12 +3123,12 @@ async function submitColorMix() {
     logAudit(
       'MIXING_COMPLETE',
       colorName,
-      `Completed ${liters}L "${colorName}" [${detected.name} · ${mixed.hex}] (${baseType}) mixing service — Formula: ${formulaSummary} · Value: ${peso(liters * price)}`,
+      `Completed ${liters}L "${colorName}" [${detected.name} · ${mixed.hex}] (${baseType}) mixing service — Formula: ${formulaSummary} · Value: ${peso(grandTotal)}`,
       {
         entityName: colorName,
         fieldChanged: 'Paint Color Mix & Ingredient Stock',
         oldValue: formulaSummary,
-        newValue: `${liters}L ${colorName} [${detected.name} · ${mixed.hex}] (${peso(liters * price)})`,
+        newValue: `${liters}L ${colorName} [${detected.name} · ${mixed.hex}] (${peso(grandTotal)})`,
         reason: note || `${baseType} (Direct Inventory Mix)`,
         meta: { changes: ingredientChanges }
       }

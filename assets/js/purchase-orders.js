@@ -7,6 +7,13 @@ let poItemRows = [];
 let poSupplierId = '';
 let poFilterStatus = '';
 let poCreateStockFilter = 'low_out'; // 'low_out' | 'all' | 'low_only' | 'out_only' | 'good_only'
+let poWizardStep = 1; // 1: Select Products, 2: Select Supplier, 3: Review Order
+let poSelectedKeys = new Set(); // Set of "productId__containerSize" strings
+let poCatalogSearch = '';
+let poCatalogCategory = 'all';
+let poCatalogStockFilter = 'all';
+let poReviewRows = [];
+let poNotes = '';
 
 function generatePONumber(offset = 0) {
   const now = new Date();
@@ -687,7 +694,7 @@ function poListPage() {
     <div class="po-list-search">
       <span style="font-size:15px; color:var(--ink-soft);">🔍</span>
       <input id="po-search-input" type="text" placeholder="Search by PO number, supplier, or notes…" value="${escapeHtml(poSearch)}" oninput="poSearch=this.value; renderPOListRows()" autocomplete="off">
-      ${poSearch ? `<button class="btn ghost small" onclick="poSearch=''; document.getElementById('po-search-input').value=''; renderPOListRows()" title="Clear search">✕</button>` : ''}
+      <button id="po-search-clear-btn" class="btn ghost small" onclick="poSearch=''; document.getElementById('po-search-input').value=''; renderPOListRows()" title="Clear search" style="display:${poSearch ? 'inline-flex' : 'none'};">✕</button>
       <div style="display:flex; gap:6px; margin-left:8px; flex-wrap:wrap;">
         ${['all', 'pending', 'ordered', 'partial', 'received', 'cancelled'].map(s => {
     const isActive = (s === 'all' && !poFilterStatus) || poFilterStatus === s;
@@ -742,6 +749,8 @@ function renderPOListRows(keepPage = false) {
   if (!keepPage) {
     resetPaginationPage('purchase_orders');
   }
+  const clrBtn = document.getElementById('po-search-clear-btn');
+  if (clrBtn) clrBtn.style.display = poSearch ? 'inline-flex' : 'none';
   const el = document.getElementById('po-list-rows');
   if (el) el.innerHTML = renderPOListRowsHTML();
   if (typeof syncRouteState === 'function') syncRouteState({ push: false });
@@ -983,7 +992,7 @@ function showPOConfirm({ icon, title, message, confirmLabel, confirmClass, onCon
 }
 
 /* Adds a PO's ordered/partial quantities to stock, logs movements and updates PO status (partial vs received). */
-async function completePOReceiving(po, refNote = '', batchQtys = null) {
+async function completePOReceiving(po, refNote = '', batchQtys = null, batchMeta = null) {
   const items = getPOItems(po);
   const date = nowISO();
   const prevPOStatus = po.status === 'partial' ? 'Partial Delivery' : 'Approved / Ordered';
@@ -1028,6 +1037,8 @@ async function completePOReceiving(po, refNote = '', batchQtys = null) {
         receivedDetailsList.push(`${p.name} (${qtyToReceive} × ${size}L = +${formatStock(liters)}L)`);
         beforeSummaryList.push(`${p.name} (${size}L): ${beforeCans} units (${formatStock(beforeStock)}L total)`);
         afterSummaryList.push(`${p.name} (${size}L): ${afterCans} units (${formatStock(p.stock)}L total)`);
+        const bm = (batchMeta && (batchMeta[idx] || batchMeta[item.productId])) || {};
+        const unitCostVal = item.unitCost !== undefined ? Number(item.unitCost) : (item.purchaseCostPerUnit !== undefined ? Number(item.purchaseCostPerUnit) : null);
         db.movements.push({
           id: uid('mv'),
           date,
@@ -1039,7 +1050,17 @@ async function completePOReceiving(po, refNote = '', batchQtys = null) {
           container_size: size,
           productName: p.name,
           qtyChange: liters,
-          note: `PO Delivery: ${po.poNumber} (${po.supplierName}) [Received ${qtyToReceive} × ${size}L (+${formatStock(liters)}L) · ${size}L Units: ${beforeCans}→${afterCans}, Stock: ${formatStock(beforeStock)}L→${formatStock(p.stock)}L, PO: ${newReceivedTotal}/${ordered}]${refNote ? ' — ' + refNote : ''}`,
+          batch: {
+            batchNumber: bm.batchNumber || '',
+            expirationDate: bm.expirationDate || null,
+            notes: bm.notes || refNote || null,
+            unitCost: unitCostVal,
+            supplierId: po.supplierId || null,
+            supplierName: po.supplierName || null,
+            poId: po.id || null,
+            poNumber: po.poNumber || null
+          },
+          note: `PO Delivery: ${po.poNumber} (${po.supplierName}) [Received ${qtyToReceive} × ${size}L (+${formatStock(liters)}L) · ${size}L Units: ${beforeCans}→${afterCans}, Stock: ${formatStock(beforeStock)}L→${formatStock(p.stock)}L, PO: ${newReceivedTotal}/${ordered}]${(bm.notes || refNote) ? ' — ' + (bm.notes || refNote) : ''}`,
           staffName: (currentUser && currentUser.name) || 'Staff'
         });
       }
@@ -1171,9 +1192,16 @@ function getProductsForSupplier(supplierId) {
   if (!supplierId || typeof db === 'undefined' || !db || !Array.isArray(db.products)) return [];
   const supplier = (db.suppliers || []).find(s => s.id === supplierId);
   const sProductIds = supplier && Array.isArray(supplier.productIds) ? supplier.productIds : [];
+  const psProductIds = (db.productSuppliers || [])
+    .filter(ps => (ps.supplierId === supplierId || ps.supplier_id === supplierId))
+    .map(ps => ps.productId || ps.product_id);
+
   return activeProducts().filter(p => {
     if (!p || p.status !== 'active') return false;
-    return sProductIds.includes(p.id) || p.supplierId === supplierId || p.supplier_id === supplierId;
+    return sProductIds.includes(p.id) ||
+      psProductIds.includes(p.id) ||
+      p.supplierId === supplierId ||
+      p.supplier_id === supplierId;
   });
 }
 
@@ -1185,563 +1213,1661 @@ function onPOStockFilterChange(val) {
 function isSizeVisibleInPO(product, size, row, filter) {
   if (filter === 'all') return true;
   if (row && row.expanded) return true;
-
   const st = productSizeStatus(product, size);
-  if (filter === 'low_out') {
-    return st === 'low' || st === 'out';
-  }
-  if (filter === 'low_only') {
-    return st === 'low';
-  }
-  if (filter === 'out_only') {
-    return st === 'out';
-  }
-  if (filter === 'good_only') {
-    return st === 'ok';
-  }
+  if (filter === 'low_out') return st === 'low' || st === 'out';
+  if (filter === 'low_only') return st === 'low';
+  if (filter === 'out_only') return st === 'out';
+  if (filter === 'good_only') return st === 'ok';
   return true;
 }
 
 function togglePOProductExpand(index) {
-  const row = poItemRows[index];
-  if (!row) return;
-  row.expanded = !row.expanded;
-  // If collapsing back to default, clear any order quantities entered for Good Stock sizes
-  // so hidden sizes have zero order quantity by default and do not affect the grand total
-  if (!row.expanded && row.productId) {
-    const product = productById(row.productId);
-    if (product) {
-      poSizesFor(product).forEach(s => {
-        if (productSizeStatus(product, s) === 'ok') {
-          if (row.qtys && row.qtys[s] !== undefined) {
-            delete row.qtys[s];
-          }
-          if (row.touchedSizes && row.touchedSizes[s]) {
-            delete row.touchedSizes[s];
-          }
-          if (row.invalidSizes && row.invalidSizes[s]) {
-            delete row.invalidSizes[s];
-          }
-          if (row.rawInputs && row.rawInputs[s] !== undefined) {
-            delete row.rawInputs[s];
-          }
-        }
-      });
-    }
+  if (poItemRows[index]) {
+    poItemRows[index].expanded = !poItemRows[index].expanded;
+    renderPOItemRows();
   }
-  renderPOItemRows();
 }
+
+// ============================================================
+// REDESIGNED PURCHASE ORDER WORKFLOW: 4-STEP WIZARD
+// 1. SELECT MULTIPLE PRODUCTS -> 2. SELECT ONE COMMON SUPPLIER
+// -> 3. REVIEW ORDER -> 4. SUBMIT PURCHASE ORDER
+// ============================================================
+
+poWizardStep = 1;
+poSelectedKeys = new Set();
+poCatalogSearch = '';
+poCatalogCategory = 'all';
+poCatalogStockFilter = 'all';
+poSupplierId = '';
+poReviewRows = [];
+poNotes = '';
 
 function startCreatePO() {
   closePOCalendar();
   closeAllPOActionsMenus();
   closePOProductPicker();
+  currentPage = 'purchaseOrders';
   poViewMode = 'create';
+  poWizardStep = 1;
+  poSelectedKeys = new Set();
   poSupplierId = '';
-  poCreateStockFilter = 'low_out';
-  poItemRows = [newPORow('')];
+  poReviewRows = [];
+  poCatalogSearch = '';
+  poCatalogCategory = 'all';
+  poCatalogStockFilter = 'all';
+  poNotes = window._poInitialNotes || '';
+  window._poInitialNotes = '';
   if (typeof syncRouteState === 'function') syncRouteState({ push: true });
   renderPage();
 }
 
 function poCreatePage() {
-  if (!Array.isArray(poItemRows) || poItemRows.length === 0) {
-    poItemRows = [newPORow('')];
+  const step = poWizardStep || 1;
+
+  let stepBodyHtml = '';
+  if (step === 1) {
+    stepBodyHtml = renderPOWizardStep1Html();
+  } else if (step === 2) {
+    stepBodyHtml = renderPOWizardStep2Html();
+  } else if (step === 3) {
+    stepBodyHtml = renderPOWizardStep3Html();
   }
-  const supplierOptions = db.suppliers
-    .filter(s => s.status === 'active')
-    .map(s => {
-      const linkedCount = getProductsForSupplier(s.id).length;
-      return `<option value="${s.id}" ${s.id === poSupplierId ? 'selected' : ''}>${escapeHtml(s.name)} (${linkedCount} products)</option>`;
-    })
-    .join('');
 
-  const htmlContent = `
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;">
-<button class="btn secondary small" onclick="backToPOList()">← Purchase Orders</button>
-<span style="color:var(--ink-soft); font-size:13px;">›</span>
-<span style="font-size:13px; font-weight:600;">New Order</span>
-  </div>
+  const selectedCount = poSelectedKeys.size;
+  const uniqueSelectedProducts = new Set();
+  poSelectedKeys.forEach(k => uniqueSelectedProducts.add(k.split('__')[0]));
+  const activeSupplier = poSupplierId ? supplierById(poSupplierId) : null;
 
-  <div class="panel">
-<div class="panel-head row">
-  <h3>📋 Create Purchase Order</h3>
-  <div class="spacer"></div>
-  <span class="muted small">Fields marked <span style="color:var(--danger);">*</span> are required</span>
-</div>
-<div class="panel-body">
-  ${poItemRows.some(r => r.productId) ? `
-    <div class="alert-banner warning" style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
-      <span style="font-size:18px;">🔍</span>
-      <div>
-        <b>Check Low-Stock Order Before Submitting:</b> Low-stock &amp; out-of-stock sizes have been loaded with recommended quantities (minimum ${PO_MIN_QTY} units per container size). Staff can verify container sizes, change quantities, add notes, and submit for approval.
-      </div>
-    </div>
-  ` : ''}
-  <form id="po-create-form" novalidate onsubmit="return submitPO(event)">
-    <div class="form-grid">
-      <div class="field">
-        <label>Supplier <span style="color:var(--danger);">*</span></label>
-        <select id="po-supplier" onchange="onPOSupplierChange()" required>
-          <option value="">-- Select a Supplier --</option>
-          ${supplierOptions || '<option value="" disabled>No active suppliers on file</option>'}
-        </select>
-      </div>
-      <div class="field">
-        <label>Notes (optional)</label>
-        <input id="po-notes" type="text" placeholder="e.g. Urgent restock, monthly order" value="${escapeHtml(window._poInitialNotes || '')}">
-      </div>
+  return `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+      <button class="btn secondary small" onclick="backToPOList()">← Purchase Orders</button>
+      <span style="color:var(--ink-soft); font-size:13px;">›</span>
+      <span style="font-size:13px; font-weight:600; color:var(--ink);">Create Purchase Order</span>
     </div>
 
-    <div style="margin-top:22px;">
-      <div class="po-items-toolbar">
-        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-          <h4 style="margin:0;">Order Items</h4>
-          <span class="badge ghost small po-min-order-rule-badge" title="Each ordered product and container size requires at least 10 units">
-            📦 Min. Order Quantity: <b>${PO_MIN_QTY} units</b> per container size
-          </span>
-          <span class="badge ghost small po-cost-rule-badge" title="Purchase Cost Per Liter = Selling Price Per Liter × 0.85 (15% supplier cost deduction)">
-            🏷️ Purchase Cost: <b>15% off</b> Selling Price/L
-          </span>
-          <div class="po-stock-filter-wrapper">
-            <label for="po-stock-filter" style="font-size:12px; font-weight:600; color:var(--ink-soft); margin:0;">Filter Sizes:</label>
-            <select id="po-stock-filter" class="po-filter-select" onchange="onPOStockFilterChange(this.value)">
-              <option value="low_out" ${poCreateStockFilter === 'low_out' ? 'selected' : ''}>Low Stock &amp; Out of Stock (Default)</option>
-              <option value="all" ${poCreateStockFilter === 'all' ? 'selected' : ''}>All Container Sizes</option>
-              <option value="low_only" ${poCreateStockFilter === 'low_only' ? 'selected' : ''}>Low Stock Only</option>
-              <option value="out_only" ${poCreateStockFilter === 'out_only' ? 'selected' : ''}>Out of Stock Only</option>
-              <option value="good_only" ${poCreateStockFilter === 'good_only' ? 'selected' : ''}>Good Stock Only</option>
+    <div class="panel" style="border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-sm); background:#fff;">
+      <div class="panel-head row" style="border-bottom:1px solid var(--line-light); padding:16px 20px;">
+        <div>
+          <h3 style="margin:0; font-size:18px; color:var(--ink); font-weight:700;">📋 Create Purchase Order</h3>
+          <div class="muted small" style="margin-top:3px;">
+            Product-First Procurement Workflow: Select Products → Select One Common Supplier → Review &amp; Submit Order
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          ${currentUser && currentUser.role === 'admin' ? `
+            <button type="button" class="btn secondary small" onclick="openManageProductSuppliersModal()" title="Configure accredited suppliers, costs, and MOQs">⚙️ Manage Product Suppliers</button>
+          ` : ''}
+          <button type="button" class="btn secondary small" onclick="backToPOList()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="panel-body" style="padding:18px 20px;">
+        <!-- Clean Step-by-Step Progress Bar -->
+        <div class="po-wizard-progress">
+          
+          <!-- Step 1 Indicator -->
+          <div class="po-wizard-step ${step === 1 ? 'active' : 'completed'} clickable" onclick="poWizardGoToStep(1)" title="Click to view/edit product selection">
+            <span class="po-wizard-step-circle">
+              ${step > 1 ? '✓' : '1'}
+            </span>
+            <div class="po-wizard-step-info">
+              <div class="po-wizard-step-title">1. Select Products</div>
+              <div class="po-wizard-step-sub">
+                ${selectedCount > 0 ? `<b>${selectedCount}</b> size${selectedCount === 1 ? '' : 's'} (${uniqueSelectedProducts.size} prod${uniqueSelectedProducts.size === 1 ? '' : 's'})` : 'Choose items &amp; sizes'}
+              </div>
+            </div>
+          </div>
+
+          <span class="po-wizard-arrow">›</span>
+
+          <!-- Step 2 Indicator -->
+          <div class="po-wizard-step ${step === 2 ? 'active' : (step > 2 ? 'completed' : '')} ${selectedCount > 0 ? 'clickable' : ''}" ${selectedCount > 0 ? 'onclick="poWizardGoToStep(2)"' : ''} title="${selectedCount > 0 ? 'Click to select supplier' : 'Select products first'}">
+            <span class="po-wizard-step-circle">
+              ${step > 2 ? '✓' : '2'}
+            </span>
+            <div class="po-wizard-step-info">
+              <div class="po-wizard-step-title">2. Select Supplier</div>
+              <div class="po-wizard-step-sub">
+                ${activeSupplier ? escapeHtml(activeSupplier.name) : '1 common supplier'}
+              </div>
+            </div>
+          </div>
+
+          <span class="po-wizard-arrow">›</span>
+
+          <!-- Step 3 Indicator -->
+          <div class="po-wizard-step ${step === 3 ? 'active' : ''} ${activeSupplier && selectedCount > 0 ? 'clickable' : ''}" ${activeSupplier && selectedCount > 0 ? 'onclick="poWizardGoToStep(3)"' : ''} title="${activeSupplier && selectedCount > 0 ? 'Click to review order' : 'Select supplier first'}">
+            <span class="po-wizard-step-circle">
+              3
+            </span>
+            <div class="po-wizard-step-info">
+              <div class="po-wizard-step-title">3. Review &amp; Submit</div>
+              <div class="po-wizard-step-sub">Costs, MOQs &amp; approval</div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Step Body Container -->
+        <div id="po-wizard-step-container">
+          ${stepBodyHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ------------------------------------------------------------
+// STEP 1: SELECT MULTIPLE PRODUCTS (GROUPED BY PRODUCT)
+// ------------------------------------------------------------
+
+function renderPOWizardStep1Html() {
+  const allProds = activeProducts();
+  const search = (poCatalogSearch || '').trim().toLowerCase();
+  const cat = poCatalogCategory || 'all';
+  const stockFilter = poCatalogStockFilter || 'all';
+
+  // Extract distinct categories
+  const categories = Array.from(new Set(allProds.map(p => p.category || p.type).filter(Boolean))).sort();
+
+  // Group container sizes under their respective products
+  const groupedProducts = [];
+  let totalAvailableMatchingSizes = 0;
+
+  allProds.forEach(p => {
+    // Check product-level category
+    const catMatch = (cat === 'all') || (p.category === cat) || (p.type === cat);
+    if (!catMatch) return;
+
+    const sizes = poSizesFor(p);
+    const matchingSizes = [];
+
+    sizes.forEach(s => {
+      const sizeVal = Number(s) || 1;
+      const count = productCanCount(p, sizeVal);
+      const thresh = productSizeThreshold(p, sizeVal);
+      const isLowOrOut = count <= thresh;
+
+      // Stock filter
+      if (stockFilter === 'low_out' && !isLowOrOut) return;
+      if (stockFilter === 'in_stock' && isLowOrOut) return;
+
+      // Search match
+      if (search) {
+        const textToMatch = `${p.name} ${p.brand || ''} ${p.category || ''} ${p.type || ''} ${p.color || ''} ${p.id || ''} ${fmtSize(sizeVal)}`.toLowerCase();
+        if (!textToMatch.includes(search)) return;
+      }
+
+      const key = `${p.id}__${sizeVal}`;
+      const suppliers = getSuppliersForProductAndSize(p.id, sizeVal);
+
+      matchingSizes.push({
+        key,
+        size: sizeVal,
+        count,
+        thresh,
+        isLowOrOut,
+        suppliers
+      });
+      totalAvailableMatchingSizes++;
+    });
+
+    if (matchingSizes.length > 0) {
+      groupedProducts.push({
+        product: p,
+        sizes: matchingSizes
+      });
+    }
+  });
+
+  const selectedCount = poSelectedKeys.size;
+  const uniqueSelectedProducts = new Set();
+  poSelectedKeys.forEach(k => uniqueSelectedProducts.add(k.split('__')[0]));
+
+  // Check if all visible matching sizes are selected
+  const allVisibleKeys = [];
+  groupedProducts.forEach(grp => grp.sizes.forEach(sz => allVisibleKeys.push(sz.key)));
+  const allVisibleSelected = allVisibleKeys.length > 0 && allVisibleKeys.every(k => poSelectedKeys.has(k));
+
+  return `
+    <div class="po-catalog-panel">
+      <!-- Toolbar: Search, Filters, Selection Count & Continue -->
+      <div class="po-catalog-toolbar" style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+          <div>
+            <h4 style="margin:0; font-size:15px; color:var(--ink); font-weight:700;">📦 Step 1: Select Products &amp; Container Sizes</h4>
+            <div class="muted small" style="margin-top:2px;">
+              Container sizes are grouped under each product. Select the sizes you want to order using the checkboxes.
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="badge ${selectedCount > 0 ? 'ok' : 'ghost'}" style="font-size:12.5px; padding:6px 12px; border-radius:var(--radius-sm);">
+              <b>${selectedCount}</b> size${selectedCount === 1 ? '' : 's'} selected across <b>${uniqueSelectedProducts.size}</b> product${uniqueSelectedProducts.size === 1 ? '' : 's'}
+            </span>
+            <button type="button" class="btn" id="btn-po-continue-step2" onclick="poWizardGoToStep(2)" ${selectedCount === 0 ? 'disabled' : ''} style="box-shadow:var(--shadow-sm); font-weight:700; padding:8px 18px;">
+              Continue to Supplier Selection → (${selectedCount} selected)
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <!-- Search box -->
+          <div style="flex:1; min-width:220px; position:relative;">
+            <input type="text" id="po-catalog-search-input" placeholder="🔍 Search by product name, brand, color, SKU..." value="${escapeHtml(poCatalogSearch)}" oninput="onPOCatalogSearchChange(this.value)" style="width:100%; padding:7px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+            ${poCatalogSearch ? `<button type="button" onclick="onPOCatalogSearchChange('')" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:14px;">✕</button>` : ''}
+          </div>
+
+          <!-- Category filter -->
+          <div style="min-width:160px;">
+            <select id="po-catalog-cat-select" onchange="onPOCatalogCategoryChange(this.value)" style="width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+              <option value="all" ${cat === 'all' ? 'selected' : ''}>All Categories</option>
+              ${categories.map(c => `<option value="${escapeHtml(c)}" ${cat === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
             </select>
+          </div>
+
+          <!-- Stock level filter -->
+          <div style="min-width:160px;">
+            <select id="po-catalog-stock-select" onchange="onPOCatalogStockChange(this.value)" style="width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+              <option value="all" ${stockFilter === 'all' ? 'selected' : ''}>All Stock Levels</option>
+              <option value="low_out" ${stockFilter === 'low_out' ? 'selected' : ''}>⚠️ Low / Out of Stock</option>
+              <option value="in_stock" ${stockFilter === 'in_stock' ? 'selected' : ''}>🟢 In Stock Only</option>
+            </select>
+          </div>
+
+          <!-- Bulk select actions -->
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="btn secondary small" onclick="poToggleSelectAllVisible(${!allVisibleSelected})">
+              ${allVisibleSelected ? 'Deselect Visible' : 'Select All Visible'}
+            </button>
+            ${selectedCount > 0 ? `
+              <button type="button" class="btn secondary small" onclick="poClearProductSelection()" style="color:var(--danger);">Clear Selection</button>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Grouped Product Catalog Table -->
+      ${groupedProducts.length === 0 ? `
+        <div style="text-align:center; padding:40px 20px; background:#FAF8F5; border:1px dashed var(--line); border-radius:var(--radius);">
+          <div style="font-size:32px; margin-bottom:8px;">🔍</div>
+          <div style="font-weight:700; color:var(--ink); font-size:15px;">No products match your search or filter</div>
+          <div class="muted small" style="margin-top:4px;">Try clearing search keywords or selecting "All Categories" and "All Stock Levels".</div>
+          <div style="margin-top:14px;">
+            <button type="button" class="btn secondary small" onclick="poResetCatalogFilters()">Reset Filters</button>
+          </div>
+        </div>
+      ` : `
+        <div style="border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:#fff; margin-bottom:16px;">
+          <table class="table" style="margin:0; width:100%; border-collapse:collapse;">
+            <thead>
+              <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+                <th style="width:36%; padding:10px 14px; font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase;">
+                  Product Information
+                </th>
+                <th style="width:64%; padding:10px 14px; font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase;">
+                  Grouped Container Sizes &amp; Available Stock
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              ${groupedProducts.map(grp => {
+                const p = grp.product;
+                const pSizes = grp.sizes;
+                const allThisProdSelected = pSizes.every(sz => poSelectedKeys.has(sz.key));
+                const someThisProdSelected = pSizes.some(sz => poSelectedKeys.has(sz.key));
+
+                return `
+                  <tr class="po-product-row" style="border-bottom:1px solid var(--line);">
+                    <!-- Left Column: Product Info & Select All Sizes button -->
+                    <td style="vertical-align:top; padding:14px; background:#FCFAF7; border-right:1px solid var(--line-light);">
+                      <div style="font-weight:700; color:var(--ink); font-size:14px; line-height:1.3;">
+                        ${escapeHtml(p.name)}
+                      </div>
+                      
+                      <div style="display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap;">
+                        <span class="badge ghost small" style="background:#fff; font-weight:600;">${escapeHtml(p.brand || '—')}</span>
+                        <span class="badge ghost small" style="background:#fff;">${escapeHtml(p.category || p.type || 'General')}</span>
+                        ${p.color ? `
+                          <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--ink-soft); background:#fff; border:1px solid var(--line); border-radius:10px; padding:2px 7px;">
+                            ${p.colorHex ? `<span style="width:9px; height:9px; border-radius:50%; background:${escapeHtml(p.colorHex)}; border:1px solid rgba(0,0,0,0.15); display:inline-block;"></span>` : ''}
+                            ${escapeHtml(p.color)}
+                          </span>
+                        ` : ''}
+                      </div>
+
+                      <div class="muted small" style="margin-top:6px; font-size:11px;">
+                        ID: <b>${escapeHtml(p.id)}</b> · ${pSizes.length} size${pSizes.length === 1 ? '' : 's'} available
+                      </div>
+
+                      <div style="margin-top:10px;">
+                        <button type="button" class="btn secondary micro" onclick="poToggleAllProductSizes('${p.id}')" style="font-size:11.5px; padding:3px 8px;">
+                          ${allThisProdSelected ? '✕ Deselect All Sizes' : '✓ Select All Sizes'}
+                        </button>
+                      </div>
+                    </td>
+
+                    <!-- Right Column: Container sizes grouped under this product -->
+                    <td style="vertical-align:top; padding:8px 10px;">
+                      <div class="po-grouped-sizes-list" style="display:flex; flex-direction:column; gap:6px;">
+                        ${pSizes.map(sz => {
+                          const isChecked = poSelectedKeys.has(sz.key);
+                          const suppCount = sz.suppliers.length;
+                          const supplierNames = sz.suppliers.map(s => s.supplier ? s.supplier.name : s.supplierId).join(', ');
+
+                          return `
+                            <div class="po-size-item-row po-catalog-row ${isChecked ? 'selected' : ''}" style="display:flex; align-items:center; gap:12px; padding:8px 12px; border-radius:var(--radius-sm); border:1px solid ${isChecked ? 'var(--teal)' : 'var(--line-light)'}; background:${isChecked ? '#F0F9F8' : '#FAF8F5'}; cursor:pointer; transition:all 0.12s ease;" onclick="poToggleProductSize('${p.id}', ${sz.size})">
+                              <!-- Checkbox -->
+                              <div onclick="event.stopPropagation()" style="display:flex; align-items:center;">
+                                <input type="checkbox" id="chk_${p.id}_${sz.size}" ${isChecked ? 'checked' : ''} onchange="poToggleProductSize('${p.id}', ${sz.size})" style="cursor:pointer; width:16px; height:16px;">
+                              </div>
+
+                              <!-- Size Badge -->
+                              <div style="min-width:85px;">
+                                <span class="badge ghost small" style="background:#FFF; border:1px solid var(--line); font-weight:700; font-size:12px; color:var(--ink);">
+                                  ${fmtSize(sz.size)}
+                                </span>
+                              </div>
+
+                              <!-- Available Store Stock -->
+                              <div style="min-width:160px; display:flex; align-items:center; gap:8px;">
+                                <span style="font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:${sz.isLowOrOut ? 'var(--danger)' : 'var(--ink)'};">
+                                  ${sz.count} unit${sz.count === 1 ? '' : 's'}
+                                </span>
+                                ${sz.count === 0 ? `
+                                  <span class="badge danger small">Out of Stock</span>
+                                ` : (sz.count <= sz.thresh ? `
+                                  <span class="badge warning small" title="Threshold: ${sz.thresh}">Low Stock</span>
+                                ` : `
+                                  <span class="badge ok small">In Stock</span>
+                                `)}
+                              </div>
+
+                              <!-- Linked Suppliers Details -->
+                              <div style="flex:1; display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
+                                ${suppCount === 0 ? `
+                                  <span class="badge small" style="background:#FEE2E2; color:#991B1B; border:1px solid #FCA5A5;">
+                                    ⚠️ No supplier linked
+                                  </span>
+                                ` : `
+                                  <span class="badge small" style="background:#E6F4F1; color:#0F766E; border:1px solid #B2DFDB;" title="${escapeHtml(supplierNames)}">
+                                    ✓ ${suppCount} supplier${suppCount === 1 ? '' : 's'}
+                                  </span>
+                                  <span class="muted small" style="font-size:11px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(supplierNames)}">
+                                    ${escapeHtml(supplierNames)}
+                                  </span>
+                                `}
+                              </div>
+                            </div>
+                          `;
+                        }).join('')}
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Sticky / Bottom Continue Action Bar -->
+        <div style="padding:14px 18px; background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div>
+            <span style="font-size:13.5px; font-weight:700; color:var(--ink);">
+              ${selectedCount > 0 ? `Selected <b>${selectedCount}</b> size${selectedCount === 1 ? '' : 's'} across <b>${uniqueSelectedProducts.size}</b> product${uniqueSelectedProducts.size === 1 ? '' : 's'}` : 'No products selected yet'}
+            </span>
+            <div class="muted small">All selected products will be verified for common supplier eligibility in Step 2.</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button type="button" class="btn secondary" onclick="backToPOList()">Cancel</button>
+            <button type="button" class="btn" onclick="poWizardGoToStep(2)" ${selectedCount === 0 ? 'disabled' : ''} style="box-shadow:var(--shadow-sm); font-weight:700; padding:8px 18px;">
+              Continue to Supplier Selection → (${selectedCount} selected)
+            </button>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function poToggleAllProductSizes(productId) {
+  const p = productById(productId);
+  if (!p) return;
+  const sizes = poSizesFor(p);
+  const keys = sizes.map(s => `${p.id}__${Number(s) || 1}`);
+
+  const allSelected = keys.every(k => poSelectedKeys.has(k));
+  if (allSelected) {
+    keys.forEach(k => {
+      poSelectedKeys.delete(k);
+      const [pid, sz] = k.split('__');
+      poReviewRows = poReviewRows.filter(r => !(r.productId === pid && Number(r.containerSize) === Number(sz)));
+    });
+  } else {
+    keys.forEach(k => poSelectedKeys.add(k));
+  }
+
+  // If supplier was previously locked, check if still valid
+  if (poSupplierId) {
+    const { commonSuppliers } = findCommonSuppliersForSelectedItems(poSelectedKeys);
+    if (!commonSuppliers.some(s => s.id === poSupplierId)) {
+      poSupplierId = '';
+    }
+  }
+
+  renderPage();
+}
+
+function onPOCatalogSearchChange(val) {
+  poCatalogSearch = val;
+  const container = document.getElementById('po-wizard-step-container');
+  if (container && poWizardStep === 1) {
+    container.innerHTML = renderPOWizardStep1Html();
+    const input = document.getElementById('po-catalog-search-input');
+    if (input) {
+      input.focus();
+      input.selectionStart = input.selectionEnd = input.value.length;
+    }
+  }
+}
+
+function onPOCatalogCategoryChange(val) {
+  poCatalogCategory = val;
+  renderPage();
+}
+
+function onPOCatalogStockChange(val) {
+  poCatalogStockFilter = val;
+  renderPage();
+}
+
+function poResetCatalogFilters() {
+  poCatalogSearch = '';
+  poCatalogCategory = 'all';
+  poCatalogStockFilter = 'all';
+  renderPage();
+}
+
+function poToggleProductSize(productId, containerSize) {
+  const sizeVal = Number(containerSize) || 1;
+  const key = `${productId}__${sizeVal}`;
+
+  if (poSelectedKeys.has(key)) {
+    poSelectedKeys.delete(key);
+    poReviewRows = poReviewRows.filter(r => !(r.productId === productId && Number(r.containerSize) === sizeVal));
+  } else {
+    poSelectedKeys.add(key);
+  }
+
+  // If supplier was previously locked, check if still valid
+  if (poSupplierId) {
+    const { commonSuppliers } = findCommonSuppliersForSelectedItems(poSelectedKeys);
+    if (!commonSuppliers.some(s => s.id === poSupplierId)) {
+      poSupplierId = '';
+    }
+  }
+
+  renderPage();
+}
+
+function poToggleSelectAllVisible(checked) {
+  const allProds = activeProducts();
+  const search = (poCatalogSearch || '').trim().toLowerCase();
+  const cat = poCatalogCategory || 'all';
+  const stockFilter = poCatalogStockFilter || 'all';
+
+  allProds.forEach(p => {
+    const catMatch = (cat === 'all') || (p.category === cat) || (p.type === cat);
+    if (!catMatch) return;
+
+    const sizes = poSizesFor(p);
+    sizes.forEach(s => {
+      const sizeVal = Number(s) || 1;
+      const count = productCanCount(p, sizeVal);
+      const thresh = productSizeThreshold(p, sizeVal);
+      const isLowOrOut = count <= thresh;
+
+      if (stockFilter === 'low_out' && !isLowOrOut) return;
+      if (stockFilter === 'in_stock' && isLowOrOut) return;
+
+      if (search) {
+        const textToMatch = `${p.name} ${p.brand || ''} ${p.category || ''} ${p.type || ''} ${p.color || ''} ${p.id || ''} ${fmtSize(sizeVal)}`.toLowerCase();
+        if (!textToMatch.includes(search)) return;
+      }
+
+      const key = `${p.id}__${sizeVal}`;
+      if (checked) {
+        poSelectedKeys.add(key);
+      } else {
+        poSelectedKeys.delete(key);
+        poReviewRows = poReviewRows.filter(r => !(r.productId === p.id && Number(r.containerSize) === sizeVal));
+      }
+    });
+  });
+
+  if (poSupplierId) {
+    const { commonSuppliers } = findCommonSuppliersForSelectedItems(poSelectedKeys);
+    if (!commonSuppliers.some(s => s.id === poSupplierId)) {
+      poSupplierId = '';
+    }
+  }
+
+  renderPage();
+}
+
+function poClearProductSelection() {
+  poSelectedKeys.clear();
+  poReviewRows = [];
+  poSupplierId = '';
+  renderPage();
+}
+
+// ------------------------------------------------------------
+// STEP 2: SELECT ONE COMMON SUPPLIER
+// ------------------------------------------------------------
+
+function findCommonSuppliersForSelectedItems(selectedKeys) {
+  if (!selectedKeys || selectedKeys.size === 0) {
+    return { commonSuppliers: [], itemSupplierMap: new Map() };
+  }
+
+  const itemSupplierMap = new Map();
+  const allActiveSuppliers = (db.suppliers || []).filter(s => s.status === 'active');
+
+  selectedKeys.forEach(key => {
+    const [productId, sizeStr] = key.split('__');
+    const size = Number(sizeStr) || 1;
+    const rels = getSuppliersForProductAndSize(productId, size).filter(r => r.availability !== 'unavailable');
+    itemSupplierMap.set(key, rels);
+  });
+
+  // A supplier is eligible if and only if they supply EVERY item in selectedKeys
+  const commonSuppliers = allActiveSuppliers.filter(supplier => {
+    for (const [key, rels] of itemSupplierMap.entries()) {
+      const suppliesThisItem = rels.some(r => r.supplierId === supplier.id);
+      if (!suppliesThisItem) return false;
+    }
+    return true;
+  });
+
+  return { commonSuppliers, itemSupplierMap };
+}
+
+function renderPOWizardStep2Html() {
+  const { commonSuppliers, itemSupplierMap } = findCommonSuppliersForSelectedItems(poSelectedKeys);
+  const selectedCount = poSelectedKeys.size;
+
+  // Build items preview list
+  const selectedItemsList = Array.from(poSelectedKeys).map(k => {
+    const [pid, sz] = k.split('__');
+    const p = productById(pid);
+    return {
+      key: k,
+      productId: pid,
+      size: Number(sz),
+      productName: p ? p.name : pid,
+      brand: p ? p.brand : '',
+      category: p ? (p.category || p.type) : '',
+      color: p ? p.color : '',
+      suppliers: itemSupplierMap.get(k) || []
+    };
+  });
+
+  const uniqueProductsCount = new Set(selectedItemsList.map(it => it.productId)).size;
+
+  return `
+    <div class="po-supplier-selection-view">
+      <!-- Top Selected Items Summary Bar -->
+      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div style="flex:1;">
+          <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:6px;">
+            Selected Products &amp; Sizes (${selectedCount} item${selectedCount === 1 ? '' : 's'} across ${uniqueProductsCount} product${uniqueProductsCount === 1 ? '' : 's'}):
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${selectedItemsList.map(it => `
+              <span class="badge small" style="background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 8px; font-size:11.5px;">
+                ${escapeHtml(it.productName)} (<b>${fmtSize(it.size)}</b>)
+              </span>
+            `).join('')}
+          </div>
+        </div>
+        <div>
+          <button type="button" class="btn secondary small" onclick="poWizardGoToStep(1)">← Modify Products (Step 1)</button>
+        </div>
+      </div>
+
+      <!-- Section A: Common Suppliers Exist -->
+      ${commonSuppliers.length > 0 ? `
+        <div style="margin-bottom:18px;">
+          <div style="margin-bottom:14px;">
+            <h4 style="margin:0; font-size:15px; color:var(--ink); font-weight:700;">🏢 Step 2: Choose One Supplier for this Purchase Order</h4>
+            <div class="muted small" style="margin-top:2px;">
+              The following <b>${commonSuppliers.length} supplier${commonSuppliers.length === 1 ? '' : 's'}</b> can supply <b>all ${selectedCount}</b> selected items. Each Purchase Order must be fulfilled by exactly one supplier. Compare costs and choose one:
+            </div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            ${commonSuppliers.map(s => {
+              const isSelected = poSupplierId === s.id;
+              
+              // Calculate procurement breakdown for this supplier
+              let totalMinCost = 0;
+              const itemBreakdown = selectedItemsList.map(it => {
+                const matched = it.suppliers.find(rel => rel.supplierId === s.id);
+                const cost = matched ? matched.purchaseCost : 0;
+                const moq = matched ? matched.minOrderQty : 10;
+                const minLineTotal = cost * moq;
+                totalMinCost += minLineTotal;
+                return {
+                  ...it,
+                  cost,
+                  moq,
+                  availability: matched ? matched.availability : 'available'
+                };
+              });
+
+              return `
+                <div class="po-supplier-card ${isSelected ? 'selected' : ''}" style="border:2px solid ${isSelected ? 'var(--teal)' : 'var(--line)'}; border-radius:var(--radius); background:#fff; padding:18px 20px; transition:border-color 0.15s, box-shadow 0.15s; box-shadow:${isSelected ? 'var(--shadow-md)' : 'var(--shadow-sm)'};">
+                  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; margin-bottom:14px; border-bottom:1px solid var(--line-light); padding-bottom:12px;">
+                    <div>
+                      <div style="display:flex; align-items:center; gap:10px;">
+                        <h4 style="margin:0; font-size:16px; color:var(--ink); font-weight:700;">${escapeHtml(s.name)}</h4>
+                        <span class="badge ghost small" style="background:#FAF8F5;">ID: ${escapeHtml(s.id)}</span>
+                        ${isSelected ? `<span class="badge ok small">✓ Selected Supplier</span>` : ''}
+                      </div>
+                      <div class="muted small" style="margin-top:4px; display:flex; gap:16px; flex-wrap:wrap;">
+                        <span>👤 Contact: <b>${escapeHtml(s.contact || '—')}</b></span>
+                        <span>📞 Phone: <b>${escapeHtml(s.phone || '—')}</b></span>
+                        <span>✉️ Email: <b>${escapeHtml(s.email || '—')}</b></span>
+                        ${s.address ? `<span>📍 ${escapeHtml(s.address)}</span>` : ''}
+                      </div>
+                    </div>
+                    <div>
+                      <button type="button" class="btn ${isSelected ? 'ok' : ''}" onclick="poSelectSupplier('${s.id}')" style="font-weight:700; padding:8px 18px; box-shadow:var(--shadow-sm);">
+                        ${isSelected ? '✓ Supplier Selected → Continue' : `Select ${escapeHtml(s.name)} →`}
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Supplier Procurement Details Table -->
+                  <div style="border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden;">
+                    <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:12.5px;">
+                      <thead>
+                        <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+                          <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px;">Selected Product</th>
+                          <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px;">Size</th>
+                          <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px; text-align:right;">Supplier Purchase Cost</th>
+                          <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px; text-align:center;">Supplier MOQ</th>
+                          <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px; text-align:center;">Availability</th>
+                          <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px; text-align:right;">MOQ Line Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${itemBreakdown.map(it => `
+                          <tr style="border-bottom:1px solid var(--line-light);">
+                            <td style="padding:8px 12px; font-weight:600; color:var(--ink);">${escapeHtml(it.productName)}</td>
+                            <td style="padding:8px 12px;"><span class="badge ghost small">${fmtSize(it.size)}</span></td>
+                            <td style="padding:8px 12px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink);">
+                              ${peso(it.cost)}
+                            </td>
+                            <td style="padding:8px 12px; text-align:center;">
+                              <span class="badge ghost small" style="background:#FAF8F5; font-weight:700;">${it.moq} units</span>
+                            </td>
+                            <td style="padding:8px 12px; text-align:center;">
+                              <span class="badge ok small">🟢 Available</span>
+                            </td>
+                            <td style="padding:8px 12px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink-soft);">
+                              ${peso(it.cost * it.moq)}
+                            </td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12px; color:var(--ink-soft); flex-wrap:wrap; gap:8px;">
+                    <span>Fulfills all ${selectedCount} selected items with supplier-specific purchase costs and MOQs.</span>
+                    <span style="font-weight:600;">Est. Minimum Order Value: <b style="color:var(--teal-dark); font-family:'Space Grotesk',sans-serif; font-size:14px;">${peso(totalMinCost)}</b></span>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : `
+        <!-- Section B: Conflict - No Single Common Supplier Available -->
+        <div class="po-conflict-card" style="border:2px solid #F59E0B; border-radius:var(--radius); background:#FFFBF5; padding:22px; margin-bottom:20px;">
+          <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:16px;">
+            <span style="font-size:28px; line-height:1;">⚠️</span>
+            <div>
+              <h3 style="margin:0 0 4px 0; color:#B45309; font-size:17px; font-weight:700;">
+                No Single Supplier Can Supply All Selected Items
+              </h3>
+              <div style="font-size:13.5px; color:#92400E; line-height:1.45;">
+                MRGR Color Center purchase orders strictly require <b>all items in an order to come from a single supplier</b>. None of your accredited suppliers are linked to every product and container size you selected.
+              </div>
+            </div>
+          </div>
+
+          <!-- Conflict Breakdown Table -->
+          <div style="border:1px solid #FDE68A; border-radius:var(--radius-sm); overflow:hidden; background:#fff; margin-bottom:18px;">
+            <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:12.5px;">
+              <thead>
+                <tr style="background:#FEF3C7; border-bottom:1px solid #FDE68A;">
+                  <th style="padding:10px 12px; font-weight:700; color:#92400E; text-align:left;">Selected Item &amp; Size</th>
+                  <th style="padding:10px 12px; font-weight:700; color:#92400E; text-align:left;">Accredited Supplier(s) Who Can Fulfill This Item</th>
+                  <th style="padding:10px 12px; font-weight:700; color:#92400E; text-align:center;">Fulfillment Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${selectedItemsList.map(it => {
+                  const suppNames = it.suppliers.map(s => s.supplier ? s.supplier.name : s.supplierId);
+                  const hasSuppliers = suppNames.length > 0;
+
+                  return `
+                    <tr style="border-bottom:1px solid var(--line-light);">
+                      <td style="padding:10px 12px;">
+                        <div style="font-weight:700; color:var(--ink);">${escapeHtml(it.productName)}</div>
+                        <div class="muted small">${escapeHtml(it.brand || '')} · Container Size: <b>${fmtSize(it.size)}</b></div>
+                      </td>
+                      <td style="padding:10px 12px;">
+                        ${hasSuppliers ? `
+                          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                            ${it.suppliers.map(s => `
+                              <span class="badge small" style="background:#F0FDF4; border:1px solid #BBF7D0; color:#15803D; font-weight:600;">
+                                ${escapeHtml(s.supplier ? s.supplier.name : s.supplierId)} (${peso(s.purchaseCost)})
+                              </span>
+                            `).join('')}
+                          </div>
+                        ` : `
+                          <span class="badge small" style="background:#FEE2E2; border:1px solid #FCA5A5; color:#991B1B;">
+                            ⚠️ No supplier linked to this product &amp; size
+                          </span>
+                        `}
+                      </td>
+                      <td style="padding:10px 12px; text-align:center;">
+                        ${hasSuppliers ? `
+                          <span class="badge ok small">Fulfillable</span>
+                        ` : `
+                          <span class="badge danger small">Missing Supplier</span>
+                        `}
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Suggested Solutions / Split Options -->
+          <div style="background:#fff; border:1px solid #FDE68A; border-radius:var(--radius-sm); padding:14px 16px;">
+            <div style="font-weight:700; color:#92400E; font-size:13.5px; margin-bottom:8px;">
+              💡 Recommended Solutions:
+            </div>
+            <div style="font-size:13px; color:var(--ink); line-height:1.5; margin-bottom:12px;">
+              You can return to Step 1 to adjust your selected products, or choose one supplier below to immediately generate a Purchase Order for that supplier's available subset:
+            </div>
+            
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+              <button type="button" class="btn" onclick="poWizardGoToStep(1)">
+                ← Return to Step 1 &amp; Modify Selection
+              </button>
+
+              ${(() => {
+                const candidateMap = new Map();
+                selectedItemsList.forEach(it => {
+                  it.suppliers.forEach(rel => {
+                    if (!candidateMap.has(rel.supplierId)) {
+                      candidateMap.set(rel.supplierId, {
+                        supplier: rel.supplier || supplierById(rel.supplierId),
+                        items: []
+                      });
+                    }
+                    candidateMap.get(rel.supplierId).items.push(it);
+                  });
+                });
+
+                return Array.from(candidateMap.values()).map(cand => {
+                  const s = cand.supplier;
+                  if (!s) return '';
+                  return `
+                    <button type="button" class="btn secondary" onclick="poFilterSelectionBySupplier('${s.id}')" style="box-shadow:var(--shadow-sm);" title="Keep only ${cand.items.length} items from ${s.name}">
+                      Create PO with ${escapeHtml(s.name)} (${cand.items.length} of ${selectedCount} items) →
+                    </button>
+                  `;
+                }).join('');
+              })()}
+            </div>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function poSelectSupplier(supplierId) {
+  poSupplierId = supplierId;
+  poSyncReviewRows();
+  poWizardStep = 3;
+  renderPage();
+}
+
+function poFilterSelectionBySupplier(supplierId) {
+  const supplier = supplierById(supplierId);
+  if (!supplier) return;
+
+  const newSelectedKeys = new Set();
+  poSelectedKeys.forEach(key => {
+    const [pid, sz] = key.split('__');
+    const sizeVal = Number(sz) || 1;
+    const rels = getSuppliersForProductAndSize(pid, sizeVal);
+    if (rels.some(r => r.supplierId === supplierId && r.availability !== 'unavailable')) {
+      newSelectedKeys.add(key);
+    }
+  });
+
+  poSelectedKeys = newSelectedKeys;
+  poSupplierId = supplierId;
+  poSyncReviewRows();
+  poWizardStep = 3;
+  renderPage();
+  showToast(`Selection filtered to ${poSelectedKeys.size} item(s) fulfillable by ${supplier.name}.`, 'ok');
+}
+
+// ------------------------------------------------------------
+// STEP 3: REVIEW PURCHASE ORDER (GROUPED SIZES PER PRODUCT)
+// ------------------------------------------------------------
+
+function poSyncReviewRows() {
+  if (!poSupplierId) return;
+
+  const existingMap = new Map();
+  poReviewRows.forEach(r => {
+    existingMap.set(`${r.productId}__${r.containerSize}`, r);
+  });
+
+  const updatedRows = [];
+  poSelectedKeys.forEach(key => {
+    const [productId, sizeStr] = key.split('__');
+    const size = Number(sizeStr) || 1;
+    const p = productById(productId);
+    if (!p) return;
+
+    const supplierRel = getSuppliersForProductAndSize(productId, size).find(s => s.supplierId === poSupplierId);
+    const unitCost = (supplierRel && supplierRel.purchaseCost > 0) ? supplierRel.purchaseCost : poPurchaseCostPerUnit(p, size);
+    const minOrderQty = (supplierRel && supplierRel.minOrderQty > 0) ? supplierRel.minOrderQty : 1;
+
+    const existing = existingMap.get(key);
+    let qty = existing ? Number(existing.qty) : null;
+    if (qty == null || isNaN(qty) || qty <= 0) {
+      qty = Math.max(minOrderQty, poSuggestedQty(p, size) || minOrderQty || 1);
+    }
+
+    const availableStock = productCanCount(p, size);
+    const lineTotal = Number((qty * unitCost).toFixed(2));
+
+    updatedRows.push({
+      productId: p.id,
+      containerSize: size,
+      productName: p.name,
+      brand: p.brand || '',
+      category: p.category || p.type || '',
+      color: p.color || '',
+      colorHex: p.colorHex || '',
+      availableStock,
+      unitCost,
+      minOrderQty,
+      qty,
+      lineTotal
+    });
+  });
+
+  poReviewRows = updatedRows;
+}
+
+function renderPOWizardStep3Html() {
+  const supplier = supplierById(poSupplierId);
+  if (!supplier) {
+    return `
+      <div class="alert-banner warning" style="margin-bottom:16px;">
+        ⚠️ No supplier selected. Please return to Step 2 to select a supplier.
+      </div>
+      <button type="button" class="btn" onclick="poWizardGoToStep(2)">← Go to Supplier Selection</button>
+    `;
+  }
+
+  // Ensure review rows are up to date
+  if (!poReviewRows.length && poSelectedKeys.size > 0) {
+    poSyncReviewRows();
+  }
+
+  let grandTotal = 0;
+  let totalContainers = 0;
+  let hasMoqViolation = false;
+
+  poReviewRows.forEach(r => {
+    const q = Number(r.qty) || 0;
+    const c = Number(r.unitCost) || 0;
+    const lt = Number((q * c).toFixed(2));
+    r.lineTotal = lt;
+    grandTotal += lt;
+    totalContainers += q;
+    if (q < r.minOrderQty) hasMoqViolation = true;
+  });
+
+  // Group review rows by product
+  const productGroups = new Map();
+  poReviewRows.forEach((row, idx) => {
+    if (!productGroups.has(row.productId)) {
+      const p = productById(row.productId);
+      productGroups.set(row.productId, {
+        productId: row.productId,
+        productName: row.productName,
+        brand: row.brand,
+        category: row.category,
+        color: row.color,
+        colorHex: row.colorHex,
+        items: []
+      });
+    }
+    productGroups.get(row.productId).items.push({ row, idx });
+  });
+
+  const isAdmin = currentUser && currentUser.role === 'admin';
+
+  return `
+    <div class="po-review-view">
+      <!-- Active Supplier Information Banner -->
+      <div class="alert-banner ok" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:18px; border-left:4px solid var(--teal,#0D9488); background:#F0FDF4;">
+        <div style="display:flex; align-items:flex-start; gap:12px;">
+          <span style="font-size:24px;">🏢</span>
+          <div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span style="font-weight:700; font-size:15px; color:#0F766E;">Selected Supplier: ${escapeHtml(supplier.name)}</span>
+              <span class="badge ok small">✓ Valid Common Supplier</span>
+              <span class="badge ghost small" style="background:#fff;">1 Supplier per Order</span>
+            </div>
+            <div style="font-size:12px; margin-top:3px; color:#115E59; line-height:1.4;">
+              All items below are priced with ${escapeHtml(supplier.name)}'s actual procurement costs. Contact: ${escapeHtml(supplier.contact || '—')} · Phone: ${escapeHtml(supplier.phone || '—')}
+            </div>
           </div>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button type="button" class="btn secondary small" onclick="addPOItemRow()">+ Add Row</button>
-          <button type="button" class="btn secondary small" onclick="addAllSupplierProductsToPO()">⚡ All Supplier Products</button>
-          <button type="button" class="btn secondary small" onclick="addLowStockToPO()">⚠️ Low-Stock Only</button>
+          <button type="button" class="btn secondary small" onclick="poWizardGoToStep(2)" title="Select a different common supplier">← Change Supplier</button>
+          <button type="button" class="btn secondary small" onclick="poWizardGoToStep(1)" title="Add or remove products">← Add / Modify Products</button>
         </div>
       </div>
-      <div id="po-items-container"></div>
-    </div>
 
-    <div id="po-create-total" class="po-items-summary" style="margin-top:16px;">
-      <div><div class="po-grand-label">Grand Total · 0 items</div></div>
-      <div class="po-grand-total" id="po-grand-total-value">₱0.00</div>
-    </div>
+      <!-- Notes and Purpose Input -->
+      <div style="margin-bottom:18px; background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
+        <label style="font-size:12.5px; font-weight:700; color:var(--ink); display:block; margin-bottom:4px;">
+          Order Notes / Procurement Purpose (optional)
+        </label>
+        <input type="text" id="po-notes" placeholder="e.g. Urgent store replenishment, bulk seasonal order, warehouse stock" value="${escapeHtml(poNotes)}" oninput="poNotes = this.value" style="width:100%; padding:8px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+      </div>
 
-    <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end; align-items:center;">
-      <span class="muted small" style="margin-right:auto;">
-        ${currentUser && currentUser.role === 'admin'
-      ? '✅ As Administrator, this order will be automatically approved and marked as <b>Ordered</b>.'
-      : '⏳ As Inventory Staff, this order will be submitted as <b>Pending Approval</b> for the Administrator to review.'}
-      </span>
-      <button type="button" class="btn secondary" onclick="backToPOList()">Cancel</button>
-      <button type="submit" class="btn" id="btn-submit-po">${currentUser && currentUser.role === 'admin' ? 'Create & Approve Order →' : 'Submit for Approval →'}</button>
+      <!-- Structured Order Review Table (Grouped by Product) -->
+      <div style="margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <h4 style="margin:0; font-size:15px; color:var(--ink); font-weight:700;">
+            Order Line Items (${poReviewRows.length} size${poReviewRows.length === 1 ? '' : 's'} across ${productGroups.size} product${productGroups.size === 1 ? '' : 's'})
+          </h4>
+          <span class="badge ghost small" style="background:#FAF8F5; border:1px solid var(--line);">
+            📦 Supplier MOQ &amp; Actual Unit Costs Applied
+          </span>
+        </div>
+
+        ${poReviewRows.length === 0 ? `
+          <div style="text-align:center; padding:30px; background:#FAF8F5; border:1px dashed var(--line); border-radius:var(--radius);">
+            <div style="color:var(--ink-soft); font-size:14px;">No items in order.</div>
+            <button type="button" class="btn small" onclick="poWizardGoToStep(1)" style="margin-top:10px;">+ Add Products</button>
+          </div>
+        ` : `
+          <div style="border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:#fff;">
+            <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:13px;">
+              <thead>
+                <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+                  <th style="padding:10px 14px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase;">Product / Container Size</th>
+                  <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:center;">Store Stock</th>
+                  <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:right;">Purchase Cost</th>
+                  <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:center;">Supplier MOQ</th>
+                  <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:center; min-width:140px;">Order Qty</th>
+                  <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:right;">Line Total</th>
+                  <th style="width:40px; padding:10px 10px; text-align:center;"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Array.from(productGroups.values()).map(grp => {
+                  return `
+                    <!-- Product Header Row -->
+                    <tr class="po-review-group-header" style="background:#FBF9F6; border-top:2px solid var(--line); border-bottom:1px solid var(--line-light);">
+                      <td colspan="7" style="padding:10px 14px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                          <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="font-size:15px;">📦</span>
+                            <span style="font-weight:700; color:var(--ink); font-size:14px;">${escapeHtml(grp.productName)}</span>
+                            <span class="muted small" style="font-size:11.5px;">(${escapeHtml(grp.brand || '—')} · ${escapeHtml(grp.category || 'General')})</span>
+                            ${grp.color ? `
+                              <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--ink-soft); background:#fff; border:1px solid var(--line); border-radius:10px; padding:2px 7px;">
+                                ${grp.colorHex ? `<span style="width:8px; height:8px; border-radius:50%; background:${escapeHtml(grp.colorHex)}; display:inline-block;"></span>` : ''}
+                                ${escapeHtml(grp.color)}
+                              </span>
+                            ` : ''}
+                          </div>
+                          <span class="badge ghost small" style="background:#fff; border:1px solid var(--line-light); font-size:11px;">
+                            ${grp.items.length} size${grp.items.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+
+                    <!-- Child Container Size Rows -->
+                    ${grp.items.map(({ row, idx }) => {
+                      const isMoqViolated = (Number(row.qty) || 0) < row.minOrderQty;
+
+                      return `
+                        <tr class="po-review-size-row" style="border-bottom:1px solid var(--line-light); background:${isMoqViolated ? '#FFF7F7' : 'transparent'};">
+                          <td style="padding:10px 14px 10px 32px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                              <span style="color:var(--teal); font-size:14px; font-weight:700;">↳</span>
+                              <span class="badge ghost small" style="font-weight:700; font-size:12px; background:#fff; border:1px solid var(--line);">
+                                ${fmtSize(row.containerSize)}
+                              </span>
+                            </div>
+                          </td>
+                          <td style="padding:10px 12px; text-align:center;">
+                            <span style="font-weight:600; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:13px;">
+                              ${row.availableStock}
+                            </span>
+                          </td>
+                          <td style="padding:10px 12px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink);">
+                            ${peso(row.unitCost)}
+                          </td>
+                          <td style="padding:10px 12px; text-align:center;">
+                            <span class="badge ghost small" style="background:#FAF8F5; font-weight:700; color:var(--ink);">
+                              ${row.minOrderQty} units
+                            </span>
+                          </td>
+                          <td style="padding:10px 12px; text-align:center;">
+                            <!-- Quantity Stepper -->
+                            <div class="po-qty-stepper" style="display:inline-flex; align-items:center; border:1px solid ${isMoqViolated ? 'var(--danger)' : 'var(--line)'}; border-radius:var(--radius-sm); background:#fff; overflow:hidden;">
+                              <button type="button" class="po-qty-btn" onclick="poStepReviewQty(${idx}, -1)" style="border:none; background:#FAF8F5; width:28px; height:28px; cursor:pointer; font-weight:700; color:var(--ink);">−</button>
+                              <input type="number" id="po-review-qty-${idx}" min="1" max="${typeof PO_MAX_QTY !== 'undefined' ? PO_MAX_QTY : 999}" class="po-qty-input" value="${row.qty}" onchange="poUpdateReviewQty(${idx}, this.value)" oninput="poUpdateReviewQty(${idx}, this.value)" style="border:none; width:55px; text-align:center; font-weight:700; font-size:13px; padding:4px; outline:none;">
+                              <button type="button" class="po-qty-btn" onclick="poStepReviewQty(${idx}, 1)" style="border:none; background:#FAF8F5; width:28px; height:28px; cursor:pointer; font-weight:700; color:var(--ink);">+</button>
+                            </div>
+                            <div id="po-review-moq-warn-${idx}" style="color:var(--danger); font-size:11px; font-weight:700; margin-top:3px; display:${isMoqViolated ? 'block' : 'none'};">
+                              ⚠️ Min order: ${row.minOrderQty}
+                            </div>
+                          </td>
+                          <td id="po-review-linetotal-${idx}" style="padding:10px 12px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--teal-dark); font-size:14px;">
+                            ${peso(row.lineTotal)}
+                          </td>
+                          <td style="padding:10px 10px; text-align:center;">
+                            <button type="button" class="btn-icon danger" onclick="poRemoveReviewItem(${idx})" title="Remove size from order" style="background:none; border:none; cursor:pointer; font-size:15px; opacity:0.75;">
+                              🗑️
+                            </button>
+                          </td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+
+      <!-- Prominent Grand Total & Order Summary Box -->
+      <div class="po-summary-box" style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); padding:16px 20px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; box-shadow:var(--shadow-sm);">
+        <div style="display:flex; gap:24px; flex-wrap:wrap;">
+          <div>
+            <div class="muted small" style="text-transform:uppercase; font-size:11px; font-weight:700; letter-spacing:0.03em;">Total Products</div>
+            <div style="font-size:18px; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink);">${productGroups.size}</div>
+          </div>
+          <div>
+            <div class="muted small" style="text-transform:uppercase; font-size:11px; font-weight:700; letter-spacing:0.03em;">Total Sizes / Lines</div>
+            <div style="font-size:18px; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink);">${poReviewRows.length}</div>
+          </div>
+          <div>
+            <div class="muted small" style="text-transform:uppercase; font-size:11px; font-weight:700; letter-spacing:0.03em;">Total Units</div>
+            <div id="po-review-total-units" style="font-size:18px; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink);">${totalContainers}</div>
+          </div>
+          <div>
+            <div class="muted small" style="text-transform:uppercase; font-size:11px; font-weight:700; letter-spacing:0.03em;">Selected Supplier</div>
+            <div style="font-size:14px; font-weight:700; color:var(--teal-dark); margin-top:2px;">${escapeHtml(supplier.name)}</div>
+          </div>
+        </div>
+
+        <div style="text-align:right;">
+          <div class="muted small" style="text-transform:uppercase; font-size:11px; font-weight:700; letter-spacing:0.04em;">Grand Total</div>
+          <div style="font-size:28px; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--teal-dark); line-height:1.1;" id="po-review-grand-total">
+            ${peso(grandTotal)}
+          </div>
+          <div id="po-review-moq-status" style="font-size:11.5px; margin-top:4px;">
+            ${hasMoqViolation ? `
+              <span style="color:var(--danger); font-weight:700;">⚠️ Some items are below supplier MOQ</span>
+            ` : `
+              <span style="color:var(--success); font-weight:600;">✓ All MOQ requirements satisfied</span>
+            `}
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons Bar -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:10px;">
+        <div style="font-size:12.5px; color:var(--ink-soft);">
+          ${isAdmin
+            ? '✅ As Administrator, this order will be automatically approved and marked as <b>Ordered</b>.'
+            : '⏳ As Inventory Staff, this order will be submitted as <b>Pending Approval</b> for the Administrator to review.'}
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button type="button" class="btn secondary" onclick="poWizardGoToStep(2)">← Back to Supplier</button>
+          <button type="button" class="btn secondary" onclick="backToPOList()">Cancel</button>
+          <button type="submit" class="btn" id="btn-submit-po" onclick="submitPO(event)" ${poReviewRows.length === 0 || hasMoqViolation ? 'disabled' : ''} style="box-shadow:var(--shadow-sm); font-weight:700; padding:9px 22px;">
+            ${isAdmin ? 'Create &amp; Approve Order →' : 'Submit for Approval →'}
+          </button>
+        </div>
+      </div>
     </div>
-  </form>
-</div>
-  </div>`;
-  window._poInitialNotes = '';
-  return htmlContent;
+  `;
 }
 
-function onPOSupplierChange() {
-  const sel = document.getElementById('po-supplier');
-  if (!sel) return;
-  poSupplierId = sel.value;
-  poCreateStockFilter = 'low_out';
-  closePOProductPicker();
-
-  if (!poSupplierId) {
-    poItemRows = [newPORow('')];
-    renderPOItemRows();
-    return;
+function poUpdateReviewQty(index, rawVal) {
+  if (!poReviewRows[index]) return;
+  if (String(rawVal).trim() === '') return; // Allow user to clear input while typing
+  const maxQty = typeof PO_MAX_QTY !== 'undefined' ? PO_MAX_QTY : 999;
+  let val = parseInt(rawVal, 10);
+  if (isNaN(val) || val < 1) val = 1;
+  if (val > maxQty) {
+    val = maxQty;
+    const inp = document.getElementById(`po-review-qty-${index}`);
+    if (inp) inp.value = val;
+    showToast(`Maximum order quantity per line is ${maxQty} units.`, 'info');
   }
+  poReviewRows[index].qty = val;
+  poReviewRows[index].lineTotal = Number((val * poReviewRows[index].unitCost).toFixed(2));
 
-  const supplierProducts = getProductsForSupplier(poSupplierId);
-  if (supplierProducts.length > 0) {
-    poItemRows = supplierProducts.map(p => {
-      const qtys = {};
-      const lowSizes = productLowSizes(p);
-      lowSizes.forEach(s => {
-        const count = productCanCount(p, s);
-        const thresh = productSizeThreshold(p, s);
-        qtys[s] = Math.min(PO_MAX_QTY, Math.max(PO_MIN_QTY, (thresh * 2) - count));
-      });
-      // Good stock sizes have 0 quantity by default
-      return newPORow(p.id, qtys, false);
-    });
+  // Update DOM in-place so typing never loses focus
+  const lineEl = document.getElementById(`po-review-linetotal-${index}`);
+  if (lineEl) lineEl.textContent = peso(poReviewRows[index].lineTotal);
+
+  const isMoqViolated = val < (poReviewRows[index].minOrderQty || 1);
+  const warnEl = document.getElementById(`po-review-moq-warn-${index}`);
+  if (warnEl) warnEl.style.display = isMoqViolated ? 'block' : 'none';
+
+  const grandTotal = poReviewRows.reduce((sum, r) => sum + (Number(r.lineTotal) || 0), 0);
+  const totalContainers = poReviewRows.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  const anyMoqViolation = poReviewRows.some(r => (Number(r.qty) || 0) < (Number(r.minOrderQty) || 1));
+
+  const grandEl = document.getElementById('po-review-grand-total');
+  if (grandEl) grandEl.textContent = peso(grandTotal);
+  const unitsEl = document.getElementById('po-review-total-units');
+  if (unitsEl) unitsEl.textContent = totalContainers;
+  const moqStatusEl = document.getElementById('po-review-moq-status');
+  if (moqStatusEl) {
+    moqStatusEl.innerHTML = anyMoqViolation
+      ? '<span style="color:var(--danger); font-weight:700;">⚠️ Some items are below supplier MOQ</span>'
+      : '<span style="color:var(--success); font-weight:600;">✓ All MOQ requirements satisfied</span>';
+  }
+  const submitBtn = document.getElementById('btn-submit-po');
+  if (submitBtn) submitBtn.disabled = poReviewRows.length === 0 || anyMoqViolation;
+}
+
+function poStepReviewQty(index, delta) {
+  if (!poReviewRows[index]) return;
+  const maxQty = typeof PO_MAX_QTY !== 'undefined' ? PO_MAX_QTY : 999;
+  const current = Number(poReviewRows[index].qty) || 1;
+  const updated = Math.min(maxQty, Math.max(1, current + delta));
+  const inp = document.getElementById(`po-review-qty-${index}`);
+  if (inp) inp.value = updated;
+  poUpdateReviewQty(index, updated);
+}
+
+function poRemoveReviewItem(index) {
+  if (!poReviewRows[index]) return;
+  const item = poReviewRows[index];
+  const key = `${item.productId}__${item.containerSize}`;
+  poSelectedKeys.delete(key);
+  poReviewRows.splice(index, 1);
+
+  if (poReviewRows.length === 0) {
+    poWizardGoToStep(1);
+    showToast('All items removed. Please select products to continue.', 'ok');
   } else {
-    poItemRows = [newPORow('')];
+    renderPage();
   }
-
-  renderPOItemRows();
 }
 
-function renderPOItemRows() {
-  const container = document.getElementById('po-items-container');
-  const totalEl = document.getElementById('po-create-total');
-  if (!container) return;
+// ------------------------------------------------------------
+// WIZARD NAVIGATION & STEP CONTROLLER
+// ------------------------------------------------------------
 
-  const supplier = poSupplierId ? db.suppliers.find(s => s.id === poSupplierId) : null;
-
-  if (!supplier) {
-    container.innerHTML = `<div class="alert-banner" style="margin-bottom:0;">ℹ️ Please select a supplier above. The item list will show products linked to that supplier.</div>`;
-    if (totalEl) {
-      totalEl.innerHTML = `<div class="po-grand-label">Grand Total · 0 items</div><div class="po-grand-total">₱0.00</div>`;
+function poWizardGoToStep(targetStep) {
+  if (targetStep === 2) {
+    if (poSelectedKeys.size === 0) {
+      showToast('Please select at least one product and container size before continuing.', 'error');
+      return;
     }
-    return;
+  } else if (targetStep === 3) {
+    if (poSelectedKeys.size === 0) {
+      showToast('Please select at least one product first.', 'error');
+      poWizardStep = 1;
+      renderPage();
+      return;
+    }
+    if (!poSupplierId) {
+      showToast('Please select a common supplier for this purchase order.', 'error');
+      poWizardStep = 2;
+      renderPage();
+      return;
+    }
+    poSyncReviewRows();
   }
 
-  const allActive = activeProducts();
-  const suppliedProducts = getProductsForSupplier(supplier.id);
+  poWizardStep = targetStep;
+  renderPage();
+}
 
-  if (allActive.length === 0) {
-    container.innerHTML = `<div class="alert-banner danger" style="margin-bottom:0;">⚠️ No active products found in inventory. <a href="#" onclick="goTo('inventory'); return false;" style="font-weight:600; text-decoration:underline;">Add products in Inventory &rarr;</a></div>`;
-    return;
-  }
+// ------------------------------------------------------------
+// STEP 4: SUBMIT PURCHASE ORDER (DATABASE INTEGRATION)
+// ------------------------------------------------------------
 
-  const unlinkedBanner = suppliedProducts.length === 0
-    ? `<div class="alert-banner" style="margin-bottom:14px; font-size:12.5px;">ℹ️ No products are pre-linked to <b>${escapeHtml(supplier.name)}</b> yet. You can select any paint product below — it will be linked to this supplier automatically.</div>`
-    : '';
+async function submitPO(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  if (window._isSubmittingPO) return false;
+  window._isSubmittingPO = true;
+  const submitBtn = document.getElementById('btn-submit-po');
+  if (submitBtn) submitBtn.disabled = true;
 
-  let grandTotal = 0;
-  let totalCans = 0;
-  let validLineCount = 0;
-
-  const rowsHtml = poItemRows.map((row, index) => {
-    const product = row.productId ? productById(row.productId) : null;
-
-    if (!product || product.status !== 'active') {
-      return `
-        <tr class="po-group-first-row po-product-row-unselected" style="animation:poRowIn .18s ease-out both;">
-          <td class="po-cell-product-group" style="vertical-align:middle;">
-            ${renderPOProductPickerTrigger(index, null)}
-          </td>
-          <td class="center muted">—</td>
-          <td class="center muted">—</td>
-          <td class="center muted">—</td>
-          <td class="right muted">—</td>
-          <td class="right muted">—</td>
-          <td class="right muted">—</td>
-          <td class="po-cell-action-group center" style="vertical-align:middle;">
-            ${poItemRows.length > 1
-          ? `<button type="button" class="btn ghost small po-remove-product-btn" onclick="removePOItemRow(${index})" title="Remove row">✕</button>`
-          : ''}
-          </td>
-        </tr>`;
+  try {
+    if (!poSupplierId) {
+      showToast('Please select a supplier for this purchase order.', 'error');
+      return false;
+    }
+    const supplier = (db.suppliers || []).find(s => s.id === poSupplierId);
+    if (!supplier || supplier.status !== 'active') {
+      showToast('The selected supplier is invalid or no longer active.', 'error');
+      return false;
     }
 
-    const allSizes = poSizesFor(product);
-    const sellingPricePerLiter = poSellingPricePerLiter(product);
-    const purchaseCostPerLiter = poPurchaseCostPerLiter(product);
-    const isExpanded = Boolean(row.expanded);
+    if (!poReviewRows || poReviewRows.length === 0) {
+      showToast('Please add at least one product to the purchase order.', 'error');
+      return false;
+    }
 
-    const totalProductCans = allSizes.reduce((sum, s) => sum + productCanCount(product, s), 0);
-    const lowOrOutSizes = allSizes.filter(s => {
-      const st = productSizeStatus(product, s);
-      return st === 'low' || st === 'out';
-    });
-    const restockCount = lowOrOutSizes.length;
-    const goodSizes = allSizes.filter(s => productSizeStatus(product, s) === 'ok');
-    const hiddenGoodCount = isExpanded ? 0 : goodSizes.length;
-
-    const visibleSizes = allSizes.filter(s => isSizeVisibleInPO(product, s, row, poCreateStockFilter));
-
-    allSizes.forEach(s => {
-      const currentQty = Number(row.qtys && row.qtys[s]) || 0;
-      if (currentQty > 0) {
-        const pricePerCan = poPurchaseCostPerUnit(product, s);
-        grandTotal += Number((currentQty * pricePerCan).toFixed(2));
-        totalCans += currentQty;
-        validLineCount++;
+    // 1. Strict validation: Every product must be supplied by the chosen supplier
+    for (const row of poReviewRows) {
+      const p = productById(row.productId);
+      const matched = getSuppliersForProductAndSize(row.productId, row.containerSize);
+      const isFromActiveSupplier = matched.some(m => m.supplierId === poSupplierId);
+      if (!isFromActiveSupplier) {
+        showToast(`Cannot submit order: "${p ? p.name : row.productId}" is not supplied by ${supplier.name}. Each Purchase Order must only contain products from one supplier.`, 'error');
+        return false;
       }
-    });
+    }
 
-    const expandBtnHtml = isExpanded
-      ? `<button type="button" class="btn ghost small po-expand-toggle-btn" onclick="togglePOProductExpand(${index})" title="Hide Good Stock container sizes">
-           ▴ Hide Good Stock Sizes
-         </button>`
-      : (hiddenGoodCount > 0
-        ? `<button type="button" class="btn secondary small po-expand-toggle-btn" onclick="togglePOProductExpand(${index})" title="Show all ${allSizes.length} container sizes">
-               ▾ Show All Container Sizes (${hiddenGoodCount})
-             </button>`
-        : `<span class="muted small center" style="display:block; font-size:11px; padding:3px 0;">All container sizes visible</span>`
+    // 2. Validate MOQ, Container Size, and Purchase Cost on every row
+    let hasInvalidRow = false;
+    let errorMsg = '';
+    const items = [];
+
+    for (let i = 0; i < poReviewRows.length; i++) {
+      const row = poReviewRows[i];
+      const p = productById(row.productId);
+      const size = Number(row.containerSize) || 1;
+      const qty = Number(row.qty) || 0;
+
+      const supplierInfo = getSuppliersForProductAndSize(row.productId, size).find(m => m.supplierId === poSupplierId);
+      const moq = supplierInfo ? supplierInfo.minOrderQty : (row.minOrderQty || 1);
+      const unitCost = (supplierInfo && supplierInfo.purchaseCost > 0) ? supplierInfo.purchaseCost : (row.unitCost || 0);
+
+      const maxQty = typeof PO_MAX_QTY !== 'undefined' ? PO_MAX_QTY : 999;
+      if (qty <= 0 || qty > maxQty) {
+        hasInvalidRow = true;
+        errorMsg = qty > maxQty
+          ? `Order quantity for "${p ? p.name : row.productId}" (${fmtSize(size)}) cannot exceed ${maxQty} units.`
+          : `Please enter an order quantity for "${p ? p.name : row.productId}" (${fmtSize(size)}).`;
+        break;
+      }
+      if (qty < moq) {
+        hasInvalidRow = true;
+        errorMsg = `Minimum order quantity for "${p ? p.name : row.productId}" (${fmtSize(size)}) from ${supplier.name} is ${moq} units.`;
+        break;
+      }
+      if (unitCost <= 0) {
+        hasInvalidRow = true;
+        errorMsg = `Purchase cost for "${p ? p.name : row.productId}" (${fmtSize(size)}) must be greater than ₱0.00.`;
+        break;
+      }
+
+      const variant = productSizeVariantBySize(p, size);
+      const lineTotal = Number((qty * unitCost).toFixed(2));
+
+      items.push({
+        productId: p.productId || p.id,
+        product_id: p.productId || p.id,
+        sizeId: variant ? variant.sizeId : null,
+        size_id: variant ? variant.sizeId : null,
+        productName: p.name,
+        brand: p.brand || '',
+        color: p.color || '',
+        size: size,
+        containerSize: size,
+        qty: qty,
+        unitCost: unitCost,
+        purchaseCostPerUnit: unitCost,
+        purchaseCostPerLiter: Number((unitCost / size).toFixed(2)),
+        lineTotal: lineTotal,
+        supplierId: supplier.id
+      });
+    }
+
+    if (hasInvalidRow) {
+      showToast(errorMsg, 'error');
+      return false;
+    }
+
+    if (items.length === 0) {
+      showToast('Please add at least one line item with valid quantity.', 'error');
+      return false;
+    }
+
+    const totalAmount = Number(items.reduce((sum, it) => sum + it.lineTotal, 0).toFixed(2));
+    const notesInput = document.getElementById('po-notes');
+    const finalNotes = (notesInput ? notesInput.value : poNotes || '').trim();
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    const status = isAdmin ? 'ordered' : 'pending';
+
+    const po = {
+      id: uid('po'),
+      poNumber: generatePONumber(),
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      orderDate: nowISO(),
+      expectedDate: null,
+      status: status,
+      totalAmount: totalAmount,
+      items: items,
+      itemsJson: JSON.stringify(items),
+      notes: finalNotes,
+      createdBy: (currentUser && currentUser.name) || 'Staff',
+      receivedAt: null
+    };
+
+    if (!db.purchaseOrders) db.purchaseOrders = [];
+    db.purchaseOrders.push(po);
+
+    if (typeof logAudit === 'function') {
+      const itemSummary = items.map(it => `${it.productName} (${it.qty} × ${fmtSize(it.size)})`).join(', ');
+      logAudit(
+        isAdmin ? 'PO_CREATE' : 'PO_SUBMIT',
+        'Purchase Order',
+        `${isAdmin ? 'Created & approved' : 'Submitted'} Purchase Order ${po.poNumber} for ${supplier.name} (${items.length} item${items.length === 1 ? '' : 's'}, Total: ${peso(po.totalAmount)})`,
+        {
+          entityName: po.poNumber,
+          fieldChanged: 'Purchase Order Status',
+          oldValue: 'None',
+          newValue: isAdmin ? `Approved / Ordered (${peso(po.totalAmount)})` : `Submitted / Pending Approval (${peso(po.totalAmount)})`,
+          referenceNo: po.poNumber,
+          reason: finalNotes || `Procurement from ${supplier.name}: ${itemSummary}`
+        }
       );
+    }
 
-    const productCardHtml = `
-      <div class="po-product-group-card">
-        ${renderPOProductPickerTrigger(index, product)}
-        <div class="po-product-meta-details">
-          <div><b style="color:var(--ink);">Brand:</b> ${escapeHtml(product.brand || '—')}</div>
-          <div><b style="color:var(--ink);">Color:</b> ${escapeHtml(product.color && product.color !== '-' ? product.color : '—')}</div>
-          <div><b style="color:var(--ink);">Category:</b> <span class="badge" style="background:#F4EFE6; color:#6B6259; font-size:11px; padding:1px 6px;">${escapeHtml(product.category || product.type || 'General')}</span></div>
+    await saveDB();
+
+    showToast(
+      isAdmin
+        ? `Purchase Order ${po.poNumber} created & approved for ${supplier.name}.`
+        : `Purchase Order ${po.poNumber} submitted for Admin review.`,
+      'ok'
+    );
+
+    // Reset wizard state
+    poWizardStep = 1;
+    poSelectedKeys = new Set();
+    poSupplierId = '';
+    poReviewRows = [];
+    poNotes = '';
+
+    poViewMode = 'detail';
+    poDetailId = po.id;
+    renderPage();
+    return false;
+  } catch (err) {
+    console.error('Error submitting purchase order:', err);
+    showToast('Failed to submit purchase order.', 'error');
+    return false;
+  } finally {
+    window._isSubmittingPO = false;
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+// ------------------------------------------------------------
+// PRODUCT SUPPLIERS CONFIGURATION & COST HELPERS
+// ------------------------------------------------------------
+
+function openManageProductSuppliersModal(productId = null, defaultSize = null) {
+  const prods = activeProducts();
+  if (prods.length === 0) {
+    showToast('No active products found.', 'error');
+    return;
+  }
+  const targetPid = productId || prods[0].id;
+  const p = productById(targetPid);
+  if (!p) return;
+
+  const sizes = poSizesFor(p);
+  const targetSize = (defaultSize !== undefined && defaultSize !== null && defaultSize !== '') ? Number(defaultSize) : null;
+  const existingRels = getProductSuppliers(targetPid, targetSize);
+  const allSuppliers = (db.suppliers || []).filter(s => s.status === 'active');
+
+  const bodyHtml = `
+    <div style="font-size:13px; color:var(--ink-soft); margin-bottom:14px;">
+      Manage multiple accredited suppliers, specific purchase costs, and minimum order quantities (MOQ) for each product and container size.
+    </div>
+
+    <!-- Product Selection dropdown -->
+    <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin-bottom:16px;">
+      <div>
+        <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:4px;">Select Product</label>
+        <select id="mps-product-select" onchange="openManageProductSuppliersModal(this.value)" style="width:100%; font-size:13px; padding:7px 10px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#fff;">
+          ${prods.map(pr => `<option value="${pr.id}" ${pr.id === targetPid ? 'selected' : ''}>${escapeHtml(pr.name)} (${escapeHtml(pr.brand || '')})</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:4px;">Filter Size</label>
+        <select id="mps-filter-size" onchange="openManageProductSuppliersModal('${targetPid}', this.value)" style="width:100%; font-size:13px; padding:7px 10px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#fff;">
+          <option value="">All Sizes</option>
+          ${sizes.map(sz => `<option value="${sz}" ${sz === targetSize ? 'selected' : ''}>${fmtSize(sz)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <!-- Existing Relationships Table -->
+    <div style="margin-bottom:20px;">
+      <h4 style="margin:0 0 8px 0; font-size:14px;">Current Supplier Relationships (${existingRels.length})</h4>
+      ${existingRels.length === 0 ? `
+        <div style="padding:16px; background:#FAF8F5; border:1px dashed var(--line); border-radius:var(--radius-sm); text-align:center; color:var(--ink-soft); font-size:12.5px;">
+          No suppliers linked yet for this product. Use the form below to add suppliers.
         </div>
-        <div class="po-product-stock-indicators">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:var(--ink-soft);">Total Stock:</span>
-            <span style="font-weight:700; color:var(--ink);">${formatStock(product.stock)}L <span class="muted font-normal">(${totalProductCans} units)</span></span>
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:var(--ink-soft);">Requires Restock:</span>
-            <span class="badge ${restockCount > 0 ? 'low' : 'ok'} small" style="font-size:11px;">
-              ${restockCount > 0 ? `⚠️ ${restockCount} size${restockCount === 1 ? '' : 's'}` : '✓ None'}
-            </span>
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:var(--ink-soft);">Hidden Good Stock:</span>
-            <span style="font-weight:700; color:${hiddenGoodCount > 0 ? 'var(--teal-dark)' : 'var(--ink-soft)'};">
-              ${isExpanded ? '0 (Expanded)' : `${hiddenGoodCount} size${hiddenGoodCount === 1 ? '' : 's'}`}
-            </span>
-          </div>
+      ` : `
+        <div style="border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden;">
+          <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead>
+              <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+                <th style="padding:8px 10px; text-align:left;">Supplier</th>
+                <th style="padding:8px 10px; text-align:left;">Size</th>
+                <th style="padding:8px 10px; text-align:right;">Purchase Cost</th>
+                <th style="padding:8px 10px; text-align:center;">MOQ</th>
+                <th style="padding:8px 10px; text-align:center;">Availability</th>
+                <th style="padding:8px 10px; text-align:center;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${existingRels.map(rel => `
+                <tr style="border-bottom:1px solid var(--line-light);">
+                  <td style="padding:8px 10px; font-weight:600;">${escapeHtml(rel.supplier ? rel.supplier.name : rel.supplierId)}</td>
+                  <td style="padding:8px 10px;"><span class="badge ghost small">${rel.containerSize ? fmtSize(rel.containerSize) : 'All Sizes'}</span></td>
+                  <td style="padding:8px 10px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif;">${peso(rel.purchaseCost)}</td>
+                  <td style="padding:8px 10px; text-align:center;"><span class="badge ghost small">${rel.minOrderQty} units</span></td>
+                  <td style="padding:8px 10px; text-align:center;">
+                    <span class="badge ${rel.availability === 'available' ? 'ok' : (rel.availability === 'out_of_stock' ? 'danger' : 'warning')} small">
+                      ${rel.availability === 'available' ? '🟢 Available' : (rel.availability === 'out_of_stock' ? '🔴 Out of Stock' : '🟠 Lead Time')}
+                    </span>
+                  </td>
+                  <td style="padding:8px 10px; text-align:center;">
+                    <button type="button" class="btn-icon danger" onclick="removeProductSupplierInModal('${rel.id || rel.relId}', '${p.id}', ${targetSize})" title="Remove link">🗑️</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
         </div>
-        <div style="margin-top:2px;">
-          ${expandBtnHtml}
+      `}
+    </div>
+
+    <!-- Add New Supplier Relationship Form -->
+    <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:16px;">
+      <h4 style="margin:0 0 12px 0; font-size:13.5px; color:var(--ink);">+ Link New Supplier / Update Cost</h4>
+      <div style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:10px; margin-bottom:10px;">
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Supplier *</label>
+          <select id="mps-supplier" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+            ${allSuppliers.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Container Size</label>
+          <select id="mps-size" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+            ${sizes.map(sz => `<option value="${sz}" ${sz === targetSize ? 'selected' : ''}>${fmtSize(sz)}</option>`).join('')}
+            <option value="0">All Container Sizes</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Purchase Cost (₱) *</label>
+          <input type="number" id="mps-cost" step="0.01" min="0" placeholder="0.00" value="${(p.price * 0.85).toFixed(2)}" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
         </div>
       </div>
-    `;
 
-    const actionCellHtml = (rowSpan) => `
-      <td class="po-cell-action-group center" rowspan="${rowSpan}" style="vertical-align:middle;">
-        ${poItemRows.length > 1
-        ? `<button type="button" class="btn ghost small po-remove-product-btn" onclick="removePOItemRow(${index})" title="Remove ${escapeHtml(product.name)} from order">✕</button>`
-        : `<button type="button" class="btn ghost small po-remove-product-btn" onclick="clearPOProductRow(${index}, event)" title="Clear product">✕</button>`}
-      </td>
-    `;
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; align-items:flex-end;">
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Min. Order Qty (MOQ)</label>
+          <input type="number" id="mps-moq" min="1" step="1" value="10" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+        </div>
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Availability</label>
+          <select id="mps-avail" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+            <option value="available">🟢 In Stock / Available</option>
+            <option value="out_of_stock">🔴 Out of Stock</option>
+            <option value="lead_time">🟠 Limited / Lead Time</option>
+          </select>
+        </div>
+        <div>
+          <button type="button" class="btn small" style="width:100%; font-weight:700;" onclick="submitProductSupplierInModal('${p.id}', ${targetSize})">+ Link Supplier</button>
+        </div>
+      </div>
+    </div>
+  `;
 
-    if (visibleSizes.length === 0) {
-      return `
-        <tr class="po-group-first-row po-product-row-empty" style="animation:poRowIn .18s ease-out both;">
-          <td class="po-cell-product-group" rowspan="1">
-            ${productCardHtml}
-          </td>
-          <td colspan="6" class="center muted po-empty-sizes-cell" style="padding:20px 14px; background:#FAF9F6; vertical-align:middle;">
-            <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-              <span style="font-size:13px; color:var(--ink-soft);">
-                All container sizes are in <b>Good Stock</b> (${hiddenGoodCount} hidden).
-              </span>
-              <button type="button" class="btn secondary small" onclick="togglePOProductExpand(${index})">
-                ▾ Show All Container Sizes (${hiddenGoodCount})
-              </button>
-            </div>
-          </td>
-          ${actionCellHtml(1)}
-        </tr>
-      `;
-    }
+  openModal('Manage Product Suppliers & Procurement Costs', bodyHtml, '<button type="button" class="btn secondary" onclick="closeModal()">Close</button>', 'wide');
+}
 
-    const rowSpan = visibleSizes.length;
-    return visibleSizes.map((s, sizeIdx) => {
-      const currentQty = Number(row.qtys && row.qtys[s]) || 0;
-      const rawInputVal = (row.rawInputs && row.rawInputs[s] !== undefined)
-        ? row.rawInputs[s]
-        : (currentQty > 0 ? String(currentQty) : '0');
-      const isRowInvalid = isPOSizeRowInvalid(row, s);
-      const canCount = productCanCount(product, s);
-      const thresh = productSizeThreshold(product, s);
-      const st = productSizeStatus(product, s);
-      const isLow = st === 'low' || st === 'out';
+window.openManageProductSuppliersModal = openManageProductSuppliersModal;
 
-      const purchaseCostPerUnit = poPurchaseCostPerUnit(product, s);
-      const lineTotal = Number((currentQty * purchaseCostPerUnit).toFixed(2));
+window.removeProductSupplierInModal = async function(relId, productId, targetSize) {
+  deleteProductSupplierRelationship(relId);
+  await saveDB();
+  openManageProductSuppliersModal(productId, targetSize);
+  renderPage();
+  showToast('Supplier link removed.', 'ok');
+};
 
-      const isFirstSizeRow = sizeIdx === 0;
+window.submitProductSupplierInModal = async function(productId, targetSize) {
+  const supplierId = document.getElementById('mps-supplier').value;
+  const containerSize = Number(document.getElementById('mps-size').value) || 0;
+  const purchaseCost = Number(document.getElementById('mps-cost').value) || 0;
+  const rawMoq = Number(document.getElementById('mps-moq').value);
+  const minOrderQty = Number.isInteger(rawMoq) && rawMoq >= 1 ? rawMoq : Math.max(1, Math.round(rawMoq) || 10);
+  const availability = document.getElementById('mps-avail').value;
 
-      const productCellHtml = isFirstSizeRow
-        ? `<td class="po-cell-product-group" rowspan="${rowSpan}">
-             ${productCardHtml}
-           </td>`
-        : '';
-
-      const actionTd = isFirstSizeRow ? actionCellHtml(rowSpan) : '';
-
-      let stockBadgeHtml = '';
-      if (st === 'out') {
-        stockBadgeHtml = `
-          <div class="po-stock-display">
-            <span class="badge out" title="Out of stock! Threshold is ${thresh} units">0 units</span>
-            <div class="po-shortage-hint">OUT OF STOCK</div>
-          </div>`;
-      } else if (st === 'low') {
-        stockBadgeHtml = `
-          <div class="po-stock-display">
-            <span class="badge low" title="Low stock: ${canCount} units (min threshold: ${thresh} units)">${canCount} ${canCount === 1 ? 'unit' : 'units'}</span>
-            <div class="po-shortage-hint">LOW STOCK (min ${thresh})</div>
-          </div>`;
-      } else {
-        stockBadgeHtml = `
-          <div class="po-stock-display">
-            <span class="badge ok" title="Good stock: ${canCount} units (threshold: ${thresh} units)">${canCount} ${canCount === 1 ? 'unit' : 'units'}</span>
-            <div class="po-good-hint">GOOD STOCK</div>
-          </div>`;
-      }
-
-      return `
-        <tr class="po-size-row ${isFirstSizeRow ? 'po-group-first-row' : ''} ${currentQty >= PO_MIN_QTY ? 'has-order-qty' : ''} ${isRowInvalid ? 'po-row-invalid' : ''}"
-            id="po-size-row-${index}-${s}"
-            style="animation:poRowIn .18s ease-out both;">
-          ${productCellHtml}
-          <td class="po-cell-size center">
-            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
-              <span class="po-size-tag"><strong>${fmtSize(s)}</strong></span>
-            </div>
-          </td>
-          <td class="po-cell-stock center">
-            ${stockBadgeHtml}
-          </td>
-          <td class="po-cell-qty center">
-            <div class="po-table-qty-group">
-              <button type="button" class="po-table-qty-btn minus" onclick="stepPOQty(${index}, ${s}, -1)" title="Decrease quantity (min ${PO_MIN_QTY} units)">−</button>
-              <input type="number"
-                     id="po-qty-${index}-${s}"
-                     class="po-table-qty-input ${currentQty >= PO_MIN_QTY ? 'active' : ''} ${isRowInvalid ? 'invalid' : ''}"
-                     min="${PO_MIN_QTY}"
-                     max="${PO_MAX_QTY}"
-                     step="1"
-                     value="${escapeHtml(rawInputVal)}"
-                     placeholder="${PO_MIN_QTY}"
-                     onclick="this.select()"
-                     onfocus="this.select()"
-                     oninput="onPOQtyChange(${index}, ${s}, this.value)"
-                     onblur="onPOQtyBlur(${index}, ${s}, this.value)"
-                     onkeydown="if(['-','e','E','+','.'].includes(event.key)){event.preventDefault();}">
-              <button type="button" class="po-table-qty-btn plus" onclick="stepPOQty(${index}, ${s}, 1)" title="Increase quantity">+</button>
-              <span class="po-table-qty-unit">units</span>
-            </div>
-            <div class="po-qty-feedback-wrap" id="po-qty-feedback-${index}-${s}">
-              ${isRowInvalid
-          ? `<div class="po-qty-validation-msg" id="po-qty-err-${index}-${s}">Minimum order quantity is 10 units.</div>`
-          : `<div class="po-qty-min-hint">Min: ${PO_MIN_QTY} units</div>`}
-            </div>
-          </td>
-          <td class="po-cell-price-l right" id="po-cost-liter-${index}-${s}" style="font-family:'Space Grotesk',sans-serif; font-size:13.5px; font-weight:600; color:var(--ink);" title="Selling Price: ${peso(sellingPricePerLiter)}/L × 0.85 (15% deduction)">
-            <div class="po-cost-per-liter-val">${peso(purchaseCostPerLiter)}</div>
-            <div class="po-selling-price-ref">Sell: ${peso(sellingPricePerLiter)}/L (-15%)</div>
-          </td>
-          <td class="po-cell-price-can right" id="po-can-price-${index}-${s}" style="font-family:'Space Grotesk',sans-serif; font-size:13.5px; font-weight:600; color:var(--ink);" title="${peso(purchaseCostPerLiter)}/L × ${s}L">
-            <div class="po-cost-per-unit-val">${peso(purchaseCostPerUnit)}</div>
-            <div class="po-unit-size-ref">${fmtSize(s)} container</div>
-          </td>
-          <td class="po-cell-line-total right" id="po-line-total-${index}-${s}" style="font-family:'Space Grotesk',sans-serif; font-size:14px; font-weight:700;">
-            <span class="po-line-total-val ${lineTotal > 0 ? 'has-total' : 'zero'}">${peso(lineTotal)}</span>
-          </td>
-          ${actionTd}
-        </tr>`;
-    }).join('');
-  }).join('');
-
-  container.innerHTML = `
-    ${unlinkedBanner}
-    <div class="po-table-responsive-wrap">
-      <table class="po-create-order-table">
-        <thead>
-          <tr>
-            <th style="min-width:270px; text-align:left;">Product</th>
-            <th style="min-width:105px; text-align:center;">Container Size</th>
-            <th style="min-width:125px; text-align:center;">Available Stock</th>
-            <th style="min-width:175px; text-align:center;">Order Quantity <div style="font-size:10px; font-weight:500; text-transform:none; color:var(--ink-soft);">Min. 10 units / size</div></th>
-            <th style="min-width:135px; text-align:right;">Purchase Cost Per Liter</th>
-            <th style="min-width:135px; text-align:right;">Purchase Cost Per Unit</th>
-            <th style="min-width:130px; text-align:right;">Line Total</th>
-            <th style="width:40px; text-align:center;"></th>
-          </tr>
-        </thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-    </div>`;
-
-  if (totalEl) {
-    totalEl.innerHTML = `
-      <div><div class="po-grand-label">Grand Total · ${validLineCount} item${validLineCount !== 1 ? 's' : ''} (${totalCans} unit${totalCans !== 1 ? 's' : ''})</div></div>
-      <div class="po-grand-total" id="po-grand-total-value">${peso(grandTotal)}</div>
-    `;
-    const grandTotalEl = document.getElementById('po-grand-total-value');
-    if (grandTotalEl) {
-      grandTotalEl.classList.remove('bump');
-      void grandTotalEl.offsetWidth;
-      grandTotalEl.classList.add('bump');
-    }
+  if (!supplierId) {
+    showToast('Please select a supplier.', 'error');
+    return;
   }
-}
+  if (purchaseCost <= 0) {
+    showToast('Please enter a valid purchase cost greater than 0.', 'error');
+    return;
+  }
+  if (!Number.isFinite(rawMoq) || rawMoq < 1) {
+    showToast('Minimum order quantity (MOQ) must be at least 1 unit.', 'error');
+    return;
+  }
 
-
-const PO_MIN_QTY = 10; // minimum order quantity per product and container size
-const PO_MAX_QTY = 1000; // maximum quantity allowed per size per product
-const PO_PURCHASE_COST_MULTIPLIER = 0.85; // 15% deduction from selling price per liter
-const PO_SIZES = [1, 4, 16];
-/* Each product has its own can sizes (p.sizes); fall back to the defaults while no product is chosen */
-function poSizesFor(product) { return product ? productSizes(product) : PO_SIZES; }
-
-function newPORow(productId, qtys, expanded = false) {
-  const initialQtys = { ...(qtys || {}) };
-  const touchedSizes = {};
-  const invalidSizes = {};
-  Object.keys(initialQtys).forEach(k => {
-    const q = Number(initialQtys[k]) || 0;
-    if (q > 0) {
-      touchedSizes[k] = true;
-      if (q < PO_MIN_QTY) invalidSizes[k] = true;
-    }
+  updateProductSupplierRelationship({
+    productId,
+    supplierId,
+    containerSize,
+    purchaseCost,
+    minOrderQty,
+    availability,
+    notes: 'Configured by Admin'
   });
-  return {
-    id: uid('poi'),
-    productId: productId || '',
-    qtys: initialQtys,
-    rawInputs: {},
-    touchedSizes,
-    invalidSizes,
-    expanded: Boolean(expanded)
-  };
-}
 
-/**
- * Returns the original Selling Price Per Liter of a product (unchanged).
- */
+  await saveDB();
+  openManageProductSuppliersModal(productId, targetSize);
+  renderPage();
+  showToast('Supplier relationship saved.', 'ok');
+};
+
 function poSellingPricePerLiter(product) {
   return product && product.price ? Number(product.price) : 0;
 }
 
-/**
- * Calculates Purchase Cost Per Liter = Selling Price Per Liter × 0.85 (15% deduction).
- * Formula applied once and only to the purchase cost calculation.
- */
 function poPurchaseCostPerLiter(product) {
   const sellingPricePerLiter = poSellingPricePerLiter(product);
   return Number((sellingPricePerLiter * PO_PURCHASE_COST_MULTIPLIER).toFixed(2));
 }
 
-/**
- * Calculates Purchase Cost Per Unit = Purchase Cost Per Liter × Container Volume.
- * Supports 1L, 2L, 4L, 8L, 16L, and any newly added container sizes.
- */
 function poPurchaseCostPerUnit(product, size) {
   const costPerLiter = poPurchaseCostPerLiter(product);
   const volume = Number(size) || 1;
   return Number((costPerLiter * volume).toFixed(2));
 }
 
+function poSupplierPurchaseCost(productId, size, supplierId = null) {
+  if (productId) {
+    const matched = getSuppliersForProductAndSize(productId, size);
+    if (supplierId) {
+      const match = matched.find(m => m.supplierId === supplierId);
+      if (match && match.purchaseCost > 0) return match.purchaseCost;
+    } else if (matched.length === 1 && matched[0].purchaseCost > 0) {
+      return matched[0].purchaseCost;
+    }
+  }
+  const p = productById(productId);
+  return poPurchaseCostPerUnit(p, size);
+}
+
 function poUnitCost(product, size) {
   return poPurchaseCostPerUnit(product, size);
 }
 
-/**
- * Resolves historical purchase cost details recorded on a PO item without re-applying the 15% deduction.
- */
 function getPOItemCostDetails(item) {
-  const size = Number(item && item.size) || 1;
-  const qty = Number(item && (item.qty !== undefined ? item.qty : item.orderedQty)) || 0;
-  let purchaseCostPerUnit = Number(item && (item.purchaseCostPerUnit !== undefined ? item.purchaseCostPerUnit : item.unitCost));
+  const size = Number(item && (item.size || item.containerSize || item.container_size)) || 1;
+  const qty = Number(item && (item.qty !== undefined ? item.qty : (item.quantity || item.orderedQty))) || 0;
+  let purchaseCostPerUnit = Number(item && (item.purchaseCostPerUnit !== undefined ? item.purchaseCostPerUnit : (item.unitCost !== undefined ? item.unitCost : 0)));
   let purchaseCostPerLiter = Number(item && item.purchaseCostPerLiter);
 
   if (!Number.isFinite(purchaseCostPerUnit) || purchaseCostPerUnit <= 0) {
-    const p = item && item.productId ? productById(item.productId) : null;
-    if (p) {
-      purchaseCostPerLiter = poPurchaseCostPerLiter(p);
-      purchaseCostPerUnit = poPurchaseCostPerUnit(p, size);
-    } else {
-      purchaseCostPerLiter = 0;
-      purchaseCostPerUnit = 0;
-    }
-  } else if (!Number.isFinite(purchaseCostPerLiter) || purchaseCostPerLiter <= 0) {
+    const pid = item && (item.productId || item.product_id);
+    const sid = item && (item.supplierId || item.supplier_id);
+    purchaseCostPerUnit = poSupplierPurchaseCost(pid, size, sid);
+  }
+  if (!Number.isFinite(purchaseCostPerLiter) || purchaseCostPerLiter <= 0) {
     purchaseCostPerLiter = Number((purchaseCostPerUnit / size).toFixed(2));
   }
 
@@ -1755,426 +2881,62 @@ function getPOItemCostDetails(item) {
   };
 }
 
+const PO_MIN_QTY = 1;
+const PO_MAX_QTY = 999;
+const PO_PURCHASE_COST_MULTIPLIER = 0.85;
+
 window.PO_MIN_QTY = PO_MIN_QTY;
 window.PO_MAX_QTY = PO_MAX_QTY;
 window.PO_PURCHASE_COST_MULTIPLIER = PO_PURCHASE_COST_MULTIPLIER;
-window.poSellingPricePerLiter = poSellingPricePerLiter;
-window.poPurchaseCostPerLiter = poPurchaseCostPerLiter;
-window.poPurchaseCostPerUnit = poPurchaseCostPerUnit;
-window.poUnitCost = poUnitCost;
 window.getPOItemCostDetails = getPOItemCostDetails;
-
-function isPOSizeRowInvalid(row, size) {
-  if (!row) return false;
-  if (row.invalidSizes && row.invalidSizes[size]) return true;
-  const q = Number(row.qtys && row.qtys[size]) || 0;
-  if (q > 0 && q < PO_MIN_QTY) return true;
-  if (row.touchedSizes && row.touchedSizes[size] && q < PO_MIN_QTY) return true;
-  return false;
-}
-
-function renderPOSizeRowValidationDOM(index, size, isInvalid) {
-  const feedbackEl = document.getElementById(`po-qty-feedback-${index}-${size}`);
-  if (feedbackEl) {
-    feedbackEl.innerHTML = isInvalid
-      ? `<div class="po-qty-validation-msg" id="po-qty-err-${index}-${size}">Minimum order quantity is 10 units.</div>`
-      : `<div class="po-qty-min-hint">Min: ${PO_MIN_QTY} units</div>`;
-  }
-  const inputEl = document.getElementById(`po-qty-${index}-${size}`);
-  if (inputEl) {
-    inputEl.classList.toggle('invalid', Boolean(isInvalid));
-  }
-  const rowEl = document.getElementById(`po-size-row-${index}-${size}`);
-  if (rowEl) {
-    rowEl.classList.toggle('po-row-invalid', Boolean(isInvalid));
-  }
-}
-
-function poRowTotals(row) {
-  const product = row.productId ? productById(row.productId) : null;
-  let lineTotal = 0;
-  let hasQty = false;
-  if (product) {
-    poSizesFor(product).forEach(s => {
-      const q = Number(row.qtys && row.qtys[s]) || 0;
-      if (q > 0) {
-        hasQty = true;
-        lineTotal += q * poPurchaseCostPerUnit(product, s);
-      }
-    });
-  }
-  return { lineTotal: Number(lineTotal.toFixed(2)), hasQty };
-}
-
-function calculatePOGrandSummary() {
-  let grand = 0;
-  let totalCans = 0;
-  let validLines = 0;
-
-  poItemRows.forEach(r => {
-    const p = r.productId ? productById(r.productId) : null;
-    if (!p) return;
-    poSizesFor(p).forEach(s => {
-      const q = Number(r.qtys && r.qtys[s]) || 0;
-      if (q > 0) {
-        grand += q * poPurchaseCostPerUnit(p, s);
-        totalCans += q;
-        validLines++;
-      }
-    });
-  });
-
-  return { grand: Number(grand.toFixed(2)), totalCans, validLines };
-}
-
-function updatePOGrandTotalDisplay() {
-  const { grand, totalCans, validLines } = calculatePOGrandSummary();
-  const totalEl = document.getElementById('po-create-total');
-  if (totalEl) {
-    totalEl.innerHTML = `
-      <div><div class="po-grand-label">Grand Total · ${validLines} item${validLines !== 1 ? 's' : ''} (${totalCans} unit${totalCans !== 1 ? 's' : ''})</div></div>
-      <div class="po-grand-total" id="po-grand-total-value">${peso(grand)}</div>
-    `;
-    const grandEl = document.getElementById('po-grand-total-value');
-    if (grandEl) {
-      grandEl.classList.remove('bump');
-      void grandEl.offsetWidth;
-      grandEl.classList.add('bump');
-    }
-  }
-}
-
-function onPOQtyChange(index, size, rawValue) {
-  const row = poItemRows[index];
-  if (!row) return;
-  if (!row.qtys) row.qtys = {};
-  if (!row.rawInputs) row.rawInputs = {};
-  if (!row.touchedSizes) row.touchedSizes = {};
-  if (!row.invalidSizes) row.invalidSizes = {};
-
-  const valStr = String(rawValue === undefined || rawValue === null ? '' : rawValue).trim();
-  row.rawInputs[size] = valStr;
-  row.touchedSizes[size] = true;
-
-  let qty = 0;
-  if (valStr !== '') {
-    const parsed = Number(valStr);
-    qty = Number.isFinite(parsed) ? Math.floor(parsed) : 0;
-  }
-
-  if (qty > PO_MAX_QTY) {
-    qty = PO_MAX_QTY;
-    row.rawInputs[size] = String(PO_MAX_QTY);
-    showToast(`Maximum quantity per size is ${PO_MAX_QTY}.`, 'error');
-    const inputEl = document.getElementById(`po-qty-${index}-${size}`);
-    if (inputEl) inputEl.value = PO_MAX_QTY;
-  }
-
-  const isInvalid = valStr === '' || qty < PO_MIN_QTY;
-  row.invalidSizes[size] = isInvalid;
-  row.qtys[size] = Math.max(0, qty);
-
-  const product = row.productId ? productById(row.productId) : null;
-  const pricePerCan = poPurchaseCostPerUnit(product, size);
-  const lineTotal = Number((row.qtys[size] * pricePerCan).toFixed(2));
-
-  // update the line total cell for this container size row
-  const lineTotalEl = document.getElementById(`po-line-total-${index}-${size}`);
-  if (lineTotalEl) {
-    lineTotalEl.innerHTML = `<span class="po-line-total-val ${lineTotal > 0 ? 'has-total' : 'zero'}">${peso(lineTotal)}</span>`;
-  }
-
-  // update input active style
-  const inputEl = document.getElementById(`po-qty-${index}-${size}`);
-  if (inputEl) {
-    inputEl.classList.toggle('active', row.qtys[size] >= PO_MIN_QTY);
-  }
-
-  // highlight size row if qty >= PO_MIN_QTY
-  const rowEl = document.getElementById(`po-size-row-${index}-${size}`);
-  if (rowEl) {
-    rowEl.classList.toggle('has-order-qty', row.qtys[size] >= PO_MIN_QTY);
-  }
-
-  renderPOSizeRowValidationDOM(index, size, isInvalid);
-  updatePOGrandTotalDisplay();
-}
-
-function onPOQtyBlur(index, size, rawValue) {
-  const row = poItemRows[index];
-  if (!row) return;
-  const q = Number(row.qtys && row.qtys[size]) || 0;
-  const isInvalid = isPOSizeRowInvalid(row, size);
-  renderPOSizeRowValidationDOM(index, size, isInvalid);
-  if (isInvalid && q < PO_MIN_QTY) {
-    showToast('Minimum order quantity is 10 units.', 'error');
-  }
-}
-
-function stepPOQty(index, size, delta) {
-  const row = poItemRows[index];
-  if (!row) return;
-  if (!row.qtys) row.qtys = {};
-  if (!row.touchedSizes) row.touchedSizes = {};
-  if (!row.invalidSizes) row.invalidSizes = {};
-  if (!row.rawInputs) row.rawInputs = {};
-
-  const current = Number(row.qtys[size]) || 0;
-  let next = current + delta;
-
-  if (delta > 0 && next < PO_MIN_QTY) {
-    next = PO_MIN_QTY;
-  } else if (delta < 0 && current <= PO_MIN_QTY) {
-    row.touchedSizes[size] = true;
-    row.invalidSizes[size] = true;
-    renderPOSizeRowValidationDOM(index, size, true);
-    showToast('Minimum order quantity is 10 units.', 'error');
+window.startCreatePO = startCreatePO;
+window.poCreatePage = poCreatePage;
+window.poWizardGoToStep = poWizardGoToStep;
+window.poToggleProductSize = poToggleProductSize;
+function poOnRowClick(productId, containerSize, event) {
+  if (event && event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'BUTTON' || event.target.tagName === 'A')) {
     return;
   }
-
-  next = Math.max(PO_MIN_QTY, Math.min(PO_MAX_QTY, next));
-  row.rawInputs[size] = String(next);
-  const inputEl = document.getElementById(`po-qty-${index}-${size}`);
-  if (inputEl) inputEl.value = next;
-  onPOQtyChange(index, size, next);
+  poToggleProductSize(productId, containerSize);
 }
 
-function updatePOItemRow(index, field, value) {
-  if (!poItemRows[index]) return;
-  poItemRows[index][field] = value;
-  renderPOItemRows();
-}
+window.poToggleAllProductSizes = poToggleAllProductSizes;
+window.poOnRowClick = poOnRowClick;
+window.poToggleSelectAllVisible = poToggleSelectAllVisible;
+window.poClearProductSelection = poClearProductSelection;
+window.onPOCatalogSearchChange = onPOCatalogSearchChange;
+window.onPOCatalogCategoryChange = onPOCatalogCategoryChange;
+window.onPOCatalogStockChange = onPOCatalogStockChange;
+window.poResetCatalogFilters = poResetCatalogFilters;
+window.poSelectSupplier = poSelectSupplier;
+window.poFilterSelectionBySupplier = poFilterSelectionBySupplier;
+window.poUpdateReviewQty = poUpdateReviewQty;
+window.poStepReviewQty = poStepReviewQty;
+window.poRemoveReviewItem = poRemoveReviewItem;
+window.submitPO = submitPO;
 
-function addPOItemRow() {
-  poItemRows.push(newPORow(''));
-  renderPOItemRows();
-}
-
-function removePOItemRow(index) {
-  if (poItemRows.length <= 1) {
-    poItemRows[0] = newPORow('');
-  } else {
-    poItemRows.splice(index, 1);
-  }
-  renderPOItemRows();
+function poSizesFor(product) {
+  return productSizes(product);
 }
 
 function poSuggestedQty(p, size = 0) {
-  if (!p) return PO_MIN_QTY;
-  const s = size > 0 ? normalizeCanSize(size) : ((productSizes(p) || [])[0] || 1);
-  const count = productCanCount(p, s);
-  const thresh = productSizeThreshold(p, s);
-  const needed = Math.max(PO_MIN_QTY, (thresh * 2) - count);
-  return Math.min(PO_MAX_QTY, needed);
-}
-window.poSuggestedQty = poSuggestedQty;
-
-function addAllSupplierProductsToPO() {
-  const supplier = poSupplierId ? db.suppliers.find(s => s.id === poSupplierId) : null;
-  if (!supplier) { showToast('Select a supplier first.', 'error'); return; }
-  const supplied = getProductsForSupplier(supplier.id);
-  if (!supplied.length) { showToast('No products linked to this supplier.', 'error'); return; }
-  poItemRows = supplied.map(p => {
-    const qtys = {};
-    poSizesFor(p).forEach(s => {
-      qtys[s] = poSuggestedQty(p, s);
-    });
-    return newPORow(p.id, qtys, true);
-  });
-  renderPOItemRows();
-  showToast(`Loaded ${supplied.length} product(s) from ${supplier.name}.`);
+  if (!p) return 10;
+  const count = productCanCount(p, size);
+  const thresh = productSizeThreshold(p, size);
+  return Math.min(PO_MAX_QTY, Math.max(PO_MIN_QTY, (thresh * 2) - count));
 }
 
-function addLowStockToPO() {
-  const supplier = poSupplierId ? db.suppliers.find(s => s.id === poSupplierId) : null;
-  if (!supplier) { showToast('Select a supplier first.', 'error'); return; }
-  const supplied = getProductsForSupplier(supplier.id);
-  const low = supplied.filter(p => productHasLowStock(p));
-  if (!low.length) { showToast('No low-stock products from this supplier.', 'ok'); return; }
-  if (poItemRows.length === 1 && !poItemRows[0].productId) poItemRows = [];
-  low.forEach(p => {
-    if (!poItemRows.some(r => r.productId === p.id)) {
-      const qtys = {};
-      const lowSizes = productLowSizes(p);
-      if (lowSizes.length > 0) {
-        lowSizes.forEach(s => {
-          const count = productCanCount(p, s);
-          const thresh = productSizeThreshold(p, s);
-          qtys[s] = Math.min(PO_MAX_QTY, Math.max(PO_MIN_QTY, (thresh * 2) - count));
-        });
-      } else {
-        const primarySize = (productSizes(p) || [])[0] || 1;
-        qtys[primarySize] = poSuggestedQty(p, primarySize);
-      }
-      poItemRows.push(newPORow(p.id, qtys, false));
-    }
-  });
-  renderPOItemRows();
-  showToast(`Added ${low.length} low-stock item(s).`);
+// Stubs for backwards compatibility
+function newPORow(productId = '', containerSize = null, supplierId = '', qty = 0) {
+  return { productId, containerSize, supplierId, qty, minOrderQty: 10, unitCost: 0, lineTotal: 0 };
+}
+function renderPOItemRows() {
+  // handled by wizard
+}
+function updatePOGrandTotalDisplay() {
+  // handled by wizard
 }
 
-async function submitPO(e) {
-  if (e && e.preventDefault) e.preventDefault();
-  if (window._isSubmittingPO) return false;
-  window._isSubmittingPO = true;
-  const submitBtn = document.getElementById('btn-submit-po');
-  if (submitBtn) submitBtn.disabled = true;
-
-  try {
-    const supplierId = document.getElementById('po-supplier').value;
-    const supplier = db.suppliers.find(s => s.id === supplierId);
-    if (!supplier) { showToast('Please select a supplier.', 'error'); return false; }
-
-    const validRows = poItemRows.filter(r => r.productId && productById(r.productId));
-    if (validRows.length === 0) { showToast('Add at least one product to the order.', 'error'); return false; }
-
-    // Validate minimum order quantity (10 units) separately on every product-size row
-    let hasInvalidMinQty = false;
-    let firstInvalidInputEl = null;
-
-    poItemRows.forEach((row, rowIdx) => {
-      if (!row || !row.productId) return;
-      const p = productById(row.productId);
-      if (!p || p.status !== 'active') return;
-      const allSizes = poSizesFor(p);
-      const visibleSizes = allSizes.filter(s => isSizeVisibleInPO(p, s, row, poCreateStockFilter));
-
-      visibleSizes.forEach(s => {
-        const inputEl = document.getElementById(`po-qty-${rowIdx}-${s}`);
-        const rawVal = inputEl ? String(inputEl.value).trim() : String((row.qtys && row.qtys[s]) || 0);
-        const parsedQty = rawVal === '' ? 0 : Math.floor(Number(rawVal) || 0);
-        const rowInvalid = isPOSizeRowInvalid(row, s) || (parsedQty > 0 && parsedQty < PO_MIN_QTY);
-        if (rowInvalid) {
-          if (!row.invalidSizes) row.invalidSizes = {};
-          row.invalidSizes[s] = true;
-          renderPOSizeRowValidationDOM(rowIdx, s, true);
-          hasInvalidMinQty = true;
-          if (!firstInvalidInputEl && inputEl) firstInvalidInputEl = inputEl;
-        }
-      });
-    });
-
-    // One PO item per product + size (only sizes with order quantity >= PO_MIN_QTY)
-    const items = [];
-    validRows.forEach(row => {
-      const p = productById(row.productId);
-      poSizesFor(p).forEach(s => {
-        const q = Number(row.qtys && row.qtys[s]) || 0;
-        if (q > 0 && q < PO_MIN_QTY) {
-          hasInvalidMinQty = true;
-        } else if (q >= PO_MIN_QTY) {
-          const variant = productSizeVariantBySize(p, s);
-          const sellingPricePerLiter = poSellingPricePerLiter(p);
-          const purchaseCostPerLiter = poPurchaseCostPerLiter(p);
-          const purchaseCostPerUnit = poPurchaseCostPerUnit(p, s);
-          const lineTotal = Number((q * purchaseCostPerUnit).toFixed(2));
-          items.push({
-            productId: p.productId || p.id,
-            product_id: p.productId || p.id,
-            sizeId: variant ? variant.sizeId : null,
-            size_id: variant ? variant.sizeId : null,
-            productName: p.name,
-            brand: p.brand,
-            color: p.color,
-            size: s,
-            qty: q,
-            sellingPricePerLiter,
-            purchaseCostPerLiter,
-            pricePerLiter: purchaseCostPerLiter,
-            purchaseCostPerUnit,
-            unitCost: purchaseCostPerUnit,
-            lineTotal
-          });
-        }
-      });
-    });
-
-    if (hasInvalidMinQty) {
-      showToast('Minimum order quantity is 10 units.', 'error');
-      if (firstInvalidInputEl) firstInvalidInputEl.focus();
-      return false;
-    }
-
-    if (items.length === 0) {
-      // Flag visible size rows so the user sees the minimum order quantity requirement on each row
-      poItemRows.forEach((row, rowIdx) => {
-        if (!row || !row.productId) return;
-        const p = productById(row.productId);
-        if (!p) return;
-        const visibleSizes = poSizesFor(p).filter(s => isSizeVisibleInPO(p, s, row, poCreateStockFilter));
-        visibleSizes.forEach(s => {
-          if (!row.invalidSizes) row.invalidSizes = {};
-          row.invalidSizes[s] = true;
-          renderPOSizeRowValidationDOM(rowIdx, s, true);
-        });
-      });
-      showToast('Minimum order quantity is 10 units.', 'error');
-      return false;
-    }
-
-    const totalAmount = items.reduce((sum, it) => sum + (it.qty * it.unitCost), 0);
-    const notes = (document.getElementById('po-notes') ? document.getElementById('po-notes').value : '').trim();
-    const isAdmin = currentUser && currentUser.role === 'admin';
-    const status = isAdmin ? 'ordered' : 'pending';
-
-    const expectedDate = null; // Offline system: no expected delivery date
-
-    const po = {
-      id: uid('po'),
-      poNumber: generatePONumber(),
-      supplierId: supplier.id,
-      supplierName: supplier.name,
-      orderDate: nowISO(),
-      expectedDate,
-      status,
-      totalAmount: Number(totalAmount.toFixed(2)),
-      items,
-      itemsJson: JSON.stringify(items),
-      notes,
-      createdBy: (currentUser && currentUser.name) || 'Staff',
-      receivedAt: null
-    };
-
-    if (!db.purchaseOrders) db.purchaseOrders = [];
-    db.purchaseOrders.push(po);
-    if (typeof logAudit === 'function') {
-      const itemSummary = items.map(it => `${it.productName} (${it.qty} × ${it.size || 1}L)`).join(', ');
-      logAudit(
-        isAdmin ? 'PO_CREATE' : 'PO_SUBMIT',
-        'Purchase Order',
-        `${isAdmin ? 'Created & approved' : 'Submitted'} Purchase Order ${po.poNumber} for ${supplier.name} (${items.length} item${items.length === 1 ? '' : 's'}, Total: ${peso(po.totalAmount)})`,
-        {
-          entityName: po.poNumber,
-          fieldChanged: 'Purchase Order Status',
-          oldValue: 'None',
-          newValue: isAdmin ? `Approved / Ordered (${peso(po.totalAmount)})` : `Submitted / Pending Approval (${peso(po.totalAmount)})`,
-          referenceNo: po.poNumber,
-          reason: notes || `Order for ${supplier.name}: ${itemSummary}`
-        }
-      );
-    }
-    await saveDB();
-
-    showToast(
-      isAdmin
-        ? `Purchase Order ${po.poNumber} created & approved for ${supplier.name}.`
-        : `Purchase Order ${po.poNumber} submitted for Admin approval.`,
-      'ok'
-    );
-    poViewMode = 'detail';
-    poDetailId = po.id;
-    poItemRows = [];
-    renderPage();
-    return false;
-  } catch (err) {
-    console.error('Error submitting purchase order:', err);
-    showToast('Failed to submit purchase order.', 'error');
-    return false;
-  } finally {
-    window._isSubmittingPO = false;
-    if (submitBtn) submitBtn.disabled = false;
-  }
-}
 
 /* ============================================================
    DIRECT PO CREATION FROM LOW-STOCK PRODUCTS
@@ -2341,7 +3103,7 @@ async function createPOFromSelectedLowStock(productIds, targetSize = null) {
         supplierGroups.get(fallback.id).products.push(p);
       });
     } else if (activeSuppliers.length > 1) {
-      openUnlinkedSupplierModal(unlinkedProducts, supplierGroups, ids);
+      openUnlinkedSupplierModal(unlinkedProducts, supplierGroups, ids, targetSize);
       return;
     } else {
       showToast('No active suppliers found in system. Please add an active supplier first.', 'error');
@@ -2367,61 +3129,36 @@ async function createPOFromSelectedLowStock(productIds, targetSize = null) {
 
 function loadPOWithProducts(supplierId, products, targetSize = null) {
   poViewMode = 'create';
-  poSupplierId = supplierId;
-  poCreateStockFilter = 'low_out';
+  poSupplierId = supplierId || '';
+  poSelectedKeys = new Set();
+  poReviewRows = [];
 
-  // Build the item rows pre-filled with suggested quantities
-  poItemRows = products.map(p => {
-    const qtys = {};
+  (products || []).forEach(p => {
     const sizes = productSizes(p);
-    let addedAny = false;
-
     sizes.forEach(s => {
-      const count = productCanCount(p, s);
-      const thresh = productSizeThreshold(p, s);
-      const st = productSizeStatus(p, s);
       const variant = productSizeVariantBySize(p, s);
-      const hasOpen = productSizeHasOpenPO(p.id, s, variant ? variant.sizeId : null);
-
       const isSelected = targetSize != null
         ? isSizeIncludedInSelection(p.id, s, variant ? variant.sizeId : null, targetSize)
-        : (st === 'out' || st === 'low' || count <= thresh) && !hasOpen;
-
+        : true;
       if (isSelected) {
-        if (!hasOpen || window._allowDuplicatePOCreation) {
-          qtys[s] = Math.min(PO_MAX_QTY, Math.max(PO_MIN_QTY, (thresh * 2) - count));
-          addedAny = true;
-        } else {
-          qtys[s] = 0;
-        }
-      } else {
-        qtys[s] = 0;
+        poSelectedKeys.add(`${p.id}__${s}`);
       }
     });
-
-    return newPORow(p.id, qtys);
-  }).filter(row => {
-    return Object.values(row.qtys).some(q => Number(q) > 0);
   });
 
-  // If all rows were filtered out (e.g. all on order), provide fallback row
-  if (!poItemRows.length && products.length) {
-    poItemRows = [newPORow(products[0].id, {})];
+  if (poSupplierId && poSelectedKeys.size > 0) {
+    poSyncReviewRows();
+    poWizardStep = 3;
+  } else if (poSelectedKeys.size > 0) {
+    poWizardStep = 2;
+  } else {
+    poWizardStep = 1;
   }
 
-  // Pre-fill notes
-  window._poInitialNotes = `Low-stock restock order for ${poItemRows.length} product(s)`;
-
-  // Clear selections
-  if (typeof selectedAlertSizeKeys !== 'undefined') selectedAlertSizeKeys.clear();
-  if (typeof selectedAlertProductIds !== 'undefined') selectedAlertProductIds.clear();
-  if (typeof selectedDashProductIds !== 'undefined') selectedDashProductIds.clear();
-
-  // Navigate to purchase orders page in create mode so staff can check before submitting
+  window._poInitialNotes = `Restock order for ${(products || []).length} product(s)`;
   goTo('purchaseOrders');
-
   const s = supplierById(supplierId);
-  showToast(`Loaded ${poItemRows.length} product(s) for ${s ? s.name : 'supplier'}. Please check quantities before submitting for approval.`, 'ok');
+  showToast(`Loaded ${poSelectedKeys.size} item(s) for ${s ? s.name : 'purchase order'}. Review and submit.`);
 }
 
 function openMultiSupplierPOPickerModal(supplierGroups, targetSize = null) {
@@ -2454,7 +3191,7 @@ function openMultiSupplierPOPickerModal(supplierGroups, targetSize = null) {
   openModal('Select Supplier Order to Check', bodyHtml, '<button class="btn secondary" onclick="closeModal()">Cancel</button>', 'modal-md');
 }
 
-function openUnlinkedSupplierModal(unlinkedProducts, supplierGroups, allIds) {
+function openUnlinkedSupplierModal(unlinkedProducts, supplierGroups, allIds, targetSize = null) {
   const activeSuppliers = (db.suppliers || []).filter(s => s.status === 'active');
   const prodNames = unlinkedProducts.map(p => escapeHtml(p.name)).join(', ');
 
@@ -2479,6 +3216,7 @@ function openUnlinkedSupplierModal(unlinkedProducts, supplierGroups, allIds) {
 
   window._pendingUnlinkedProducts = unlinkedProducts;
   window._pendingAllIds = allIds;
+  window._pendingTargetSize = targetSize;
   openModal('Assign Supplier for Order', bodyHtml, footHtml, 'modal-sm');
 }
 
@@ -2496,7 +3234,7 @@ async function confirmUnlinkedSupplierAndCreate() {
   await saveDB();
   closeModal();
 
-  createPOFromSelectedLowStock(window._pendingAllIds);
+  createPOFromSelectedLowStock(window._pendingAllIds, window._pendingTargetSize ?? null);
 }
 
 /* ============================================================
@@ -2597,20 +3335,36 @@ function duplicatePO(id) {
   if (!po) return;
   const items = getPOItems(po);
   poViewMode = 'create';
+  poWizardStep = 3;
   poSupplierId = po.supplierId;
+  poSelectedKeys = new Set();
+  poReviewRows = [];
 
-  const grouped = {};
   items.forEach(it => {
-    if (!grouped[it.productId]) {
-      grouped[it.productId] = { qtys: {}, showAllSizes: true };
-    }
-    const sz = Number(it.size) || 1;
-    const rawQty = Number(it.qty) || 0;
-    grouped[it.productId].qtys[sz] = rawQty > 0 ? Math.max(PO_MIN_QTY, rawQty) : 0;
-  });
+    const p = productById(it.productId);
+    const size = Number(it.size || it.containerSize) || 1;
+    const key = `${it.productId}__${size}`;
+    poSelectedKeys.add(key);
 
-  poItemRows = Object.keys(grouped).map(pid => newPORow(pid, grouped[pid].qtys, grouped[pid].showAllSizes));
-  if (!poItemRows.length) poItemRows = [newPORow('')];
+    const supplierInfo = getSuppliersForProductAndSize(it.productId, size).find(m => m.supplierId === po.supplierId);
+    const unitCost = (supplierInfo && supplierInfo.purchaseCost > 0) ? supplierInfo.purchaseCost : Number(it.unitCost || it.purchaseCostPerUnit || 0);
+    const minOrderQty = supplierInfo ? (Number(supplierInfo.minOrderQty) || 1) : 1;
+    const qty = Math.max(minOrderQty, Number(it.qty) || 1);
+
+    poReviewRows.push({
+      productId: it.productId,
+      containerSize: size,
+      productName: it.productName || (p ? p.name : it.productId),
+      brand: it.brand || (p ? p.brand : ''),
+      category: p ? (p.category || p.type) : '',
+      color: it.color || (p ? p.color : ''),
+      availableStock: p ? productCanCount(p, size) : 0,
+      unitCost: unitCost,
+      minOrderQty: minOrderQty,
+      qty: qty,
+      lineTotal: Number((qty * unitCost).toFixed(2))
+    });
+  });
 
   window._poInitialNotes = `Reorder from ${po.poNumber}`;
   if (typeof syncRouteState === 'function') syncRouteState({ push: true });

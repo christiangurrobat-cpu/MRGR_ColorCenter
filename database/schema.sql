@@ -176,10 +176,52 @@ CREATE TABLE IF NOT EXISTS `purchase_orders` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ------------------------------------------------------------
+-- 6b. PURCHASE ORDER ITEMS TABLE
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `purchase_order_items` (
+    `id` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `po_id` VARCHAR(50) NOT NULL,
+    `product_id` VARCHAR(50) NOT NULL,
+    `product_name` VARCHAR(200) NOT NULL DEFAULT '',
+    `brand` VARCHAR(100) NULL,
+    `color` VARCHAR(100) NULL,
+    `size_id` VARCHAR(50) NULL,
+    `container_size` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `quantity` INT NOT NULL DEFAULT 0,
+    `received_quantity` INT NOT NULL DEFAULT 0,
+    `unit_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `total_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `supplier_id` VARCHAR(50) NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_poi_po` (`po_id`),
+    INDEX `idx_poi_supplier` (`supplier_id`),
+    INDEX `idx_poi_product` (`product_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
+-- 6c. PRODUCT SUPPLIERS TABLE
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `product_suppliers` (
+    `id` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `product_id` VARCHAR(50) NOT NULL,
+    `supplier_id` VARCHAR(50) NOT NULL,
+    `container_size` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `purchase_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `min_order_qty` INT NOT NULL DEFAULT 10,
+    `availability` VARCHAR(50) NOT NULL DEFAULT 'available',
+    `notes` VARCHAR(255) NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_prod_supp_size` (`product_id`, `supplier_id`, `container_size`),
+    INDEX `idx_ps_product` (`product_id`),
+    INDEX `idx_ps_supplier` (`supplier_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
 -- 7. AUDIT LOGS TABLE
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `audit_logs` (
-    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `id` INT AUTO_INCREMENT,
     `created_at` DATETIME NOT NULL,
     `user_id` VARCHAR(64) NULL,
     `user_name` VARCHAR(255) NULL,
@@ -213,6 +255,61 @@ CREATE TABLE IF NOT EXISTS `adjustment_requests` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY `idx_adj_status` (`status`),
     KEY `idx_adj_req_num` (`req_number`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
+-- 7C. INVENTORY BATCHES TABLE (Expiration Tracking & FIFO)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `inventory_batches` (
+    `batch_id` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `size_id` VARCHAR(50) NOT NULL,
+    `product_id` VARCHAR(50) NOT NULL,
+    `product_name` VARCHAR(200) NULL,
+    `brand` VARCHAR(100) NULL,
+    `container_size` DECIMAL(10,2) NULL,
+    `batch_number` VARCHAR(100) NOT NULL,
+    `supplier_id` VARCHAR(50) NULL,
+    `supplier_name` VARCHAR(200) NULL,
+    `po_id` VARCHAR(50) NULL,
+    `po_number` VARCHAR(50) NULL,
+    `date_received` DATETIME NOT NULL,
+    `expiration_date` DATE NULL,
+    `original_qty` INT NOT NULL DEFAULT 0,
+    `remaining_qty` INT NOT NULL DEFAULT 0,
+    `unit_cost` DECIMAL(10,2) NULL,
+    `source` VARCHAR(30) NOT NULL DEFAULT 'receiving',
+    `notes` TEXT NULL,
+    `created_by` VARCHAR(150) NULL,
+    `updated_by` VARCHAR(150) NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY `idx_batch_size` (`size_id`),
+    KEY `idx_batch_product` (`product_id`),
+    KEY `idx_batch_exp` (`expiration_date`),
+    KEY `idx_batch_received` (`date_received`),
+    CONSTRAINT `fk_batches_product_size` FOREIGN KEY (`size_id`) REFERENCES `product_sizes` (`size_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `fk_batches_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
+-- 7D. BATCH MOVEMENTS TABLE (Batch Ledger & FIFO Tracking)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `batch_movements` (
+    `id` INT AUTO_INCREMENT,
+    `batch_id` VARCHAR(50) NOT NULL,
+    `movement_id` VARCHAR(50) NULL,
+    `type` VARCHAR(30) NOT NULL,
+    `qty_change` INT NOT NULL DEFAULT 0,
+    `balance_after` INT NOT NULL DEFAULT 0,
+    `reference` VARCHAR(150) NULL,
+    `note` TEXT NULL,
+    `staff_name` VARCHAR(150) NULL,
+    `created_at` DATETIME NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_bm_batch` (`batch_id`),
+    KEY `idx_bm_movement` (`movement_id`),
+    UNIQUE KEY `uk_bm_movement_batch` (`movement_id`, `batch_id`),
+    CONSTRAINT `fk_bm_batch` FOREIGN KEY (`batch_id`) REFERENCES `inventory_batches` (`batch_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================

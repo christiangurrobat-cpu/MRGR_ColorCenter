@@ -314,6 +314,56 @@ function canBreakdownHtml(p) {
   }).join('')}</div>`;
 }
 
+function renderProductSuppliersSummaryHtml(p) {
+  if (!p) {
+    return `<div class="muted small" style="padding:10px; background:#fff; border-radius:4px; text-align:center;">Save product first to configure multiple suppliers.</div>`;
+  }
+  const rels = (typeof db !== 'undefined' && db.productSuppliers ? db.productSuppliers : []).filter(ps => String(ps.productId || ps.product_id) === String(p.id));
+  if (!rels.length) {
+    return `
+      <div style="padding:10px; background:#fff; border-radius:4px; font-size:12px; color:var(--ink-soft); display:flex; justify-content:space-between; align-items:center;">
+        <span>No extra supplier links configured yet.</span>
+        <button type="button" class="btn secondary small" onclick="openManageProductSuppliersModal('${p.id}')">+ Add Supplier Link</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div style="overflow-x:auto; background:#fff; border-radius:4px; border:1px solid var(--line);">
+      <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
+        <thead style="background:#FAF8F5;">
+          <tr>
+            <th style="padding:5px 8px; text-align:left;">Supplier</th>
+            <th style="padding:5px 8px; text-align:center;">Size</th>
+            <th style="padding:5px 8px; text-align:right;">Purchase Cost</th>
+            <th style="padding:5px 8px; text-align:center;">MOQ</th>
+            <th style="padding:5px 8px; text-align:center;">Availability</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rels.map(r => {
+            const s = (typeof supplierById === 'function') ? supplierById(r.supplierId || r.supplier_id) : null;
+            const sz = Number(r.containerSize || r.container_size) === 0 ? 'All' : fmtSize(r.containerSize || r.container_size);
+            return `
+              <tr style="border-bottom:1px solid var(--line);">
+                <td style="padding:5px 8px; font-weight:600;">${escapeHtml(s ? s.name : (r.supplierId || '—'))}</td>
+                <td style="padding:5px 8px; text-align:center;">${sz}</td>
+                <td style="padding:5px 8px; text-align:right; font-weight:700;">${peso(r.purchaseCost || r.purchase_cost)}</td>
+                <td style="padding:5px 8px; text-align:center;">${r.minOrderQty || r.min_order_qty} units</td>
+                <td style="padding:5px 8px; text-align:center;">
+                  <span class="badge ${r.availability === 'available' ? 'ok' : (r.availability === 'out_of_stock' ? 'out' : 'low')} small" style="font-size:10px;">
+                    ${r.availability === 'available' ? 'Available' : (r.availability === 'out_of_stock' ? 'Out of Stock' : 'Limited')}
+                  </span>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function openProductModal(id) {
   const user = currentUser || (typeof db !== 'undefined' && db && db.users ? db.users.find(u => u.role === 'admin') : null);
   if (!user || (user.role !== 'staff' && user.role !== 'admin')) {
@@ -369,6 +419,7 @@ function openProductModal(id) {
   const initialName = (prop && prop.name !== undefined) ? prop.name : (p ? p.name : '');
   const initialBrand = (prop && prop.brand !== undefined) ? prop.brand : (p ? p.brand : '');
   const initialType = (prop && prop.type !== undefined) ? prop.type : (p ? p.type : 'Automotive Paint');
+  const initialTaxClass = (prop && prop.taxClassification !== undefined) ? prop.taxClassification : (p ? (p.taxClassification || p.tax_classification || 'vatable') : 'vatable');
   const initialColor = (prop && prop.color !== undefined) ? prop.color : (p ? p.color : '');
   const initialStatus = (prop && prop.status !== undefined) ? prop.status : (p ? (p.status || 'active') : 'active');
 
@@ -543,6 +594,15 @@ function openProductModal(id) {
       </select>
     </div>
     <div class="field">
+      <label>Tax Classification <span class="muted small">(BIR VAT)</span></label>
+      <select id="pf-tax-class">
+        <option value="vatable" ${initialTaxClass === 'vatable' ? 'selected' : ''}>VATable (Standard 12% VAT)</option>
+        <option value="exempt" ${initialTaxClass === 'exempt' ? 'selected' : ''}>VAT-Exempt</option>
+        <option value="zero_rated" ${initialTaxClass === 'zero_rated' ? 'selected' : ''}>Zero-Rated (0% VAT)</option>
+      </select>
+      <div class="muted small" style="font-size:11px; margin-top:2px;">Determines Philippine VAT treatment at Point of Sale.</div>
+    </div>
+    <div class="field">
       <label>Color Name <span class="muted small">(e.g. White, Sky Blue, Gloss Black)</span></label>
       <input id="pf-color-name" value="${escapeHtml(initialColorName)}" placeholder="e.g. White, Sky Blue" oninput="onProductColorNameInput(this.value)">
     </div>
@@ -626,6 +686,22 @@ function openProductModal(id) {
       </div>
     </div>
     ${stockNoteHtml}
+    ${p ? `
+      <div class="full" style="background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-top:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700;">
+            🏢 Multiple Suppliers &amp; Procurement Costs (${(db.productSuppliers || []).filter(ps => String(ps.productId || ps.product_id) === String(p.id)).length} linked)
+          </div>
+          <button type="button" class="btn secondary small" onclick="openManageProductSuppliersModal('${p.id}')">
+            ⚙️ Configure Suppliers &amp; Costs
+          </button>
+        </div>
+        ${renderProductSuppliersSummaryHtml(p)}
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:6px;">
+          Independent purchase costs and minimum order quantities are maintained per supplier and container size.
+        </div>
+      </div>
+    ` : ''}
   </div>
 </form>`,
     `<button type="button" class="btn secondary" id="pf-cancel-btn" onclick="closeModal()">Cancel</button><button type="button" class="btn" id="pf-submit-btn" onclick="submitProductFormDirectly(${p ? `'${p.id}'` : 'null'})">${submitButtonLabel}</button>`
@@ -770,6 +846,7 @@ async function submitProduct(e, id) {
   window._isSubmittingProduct = true;
   const submitBtn = document.getElementById('pf-submit-btn');
   if (submitBtn) submitBtn.disabled = true;
+  try {
   const user = currentUser || (typeof db !== 'undefined' && db && db.users ? db.users.find(u => u.role === 'admin') : null);
   if (!user || (user.role !== 'staff' && user.role !== 'admin')) {
     if (typeof logAudit === 'function') {
@@ -837,10 +914,14 @@ async function submitProduct(e, id) {
   const statusReasonInput = document.getElementById('pf-status-reason');
   const statusReason = statusReasonInput ? statusReasonInput.value.trim() : '';
 
+  const taxClassEl = document.getElementById('pf-tax-class');
+  const taxClassification = taxClassEl ? taxClassEl.value : 'vatable';
   const data = {
     name: document.getElementById('pf-name').value.trim(),
     brand: document.getElementById('pf-brand').value.trim(),
     type: document.getElementById('pf-type').value,
+    taxClassification: taxClassification,
+    tax_classification: taxClassification,
     color: colorName,
     colorHex: colorHex,
     color_hex: colorHex,
@@ -948,30 +1029,24 @@ async function submitProduct(e, id) {
 
     const changeKeys = Object.keys(changes);
 
-    // Sync supplier in db.suppliers
-    if (selectedSupplierId) {
-      (db.suppliers || []).forEach(s => {
-        if (s.id === selectedSupplierId) {
-          if (!Array.isArray(s.productIds)) s.productIds = [];
-          if (!s.productIds.includes(id)) s.productIds.push(id);
-        } else {
-          if (Array.isArray(s.productIds)) {
-            s.productIds = s.productIds.filter(pid => pid !== id);
-          }
+    // Sync supplier in db.suppliers only when Admin applies directly (remove old supplier link if changed)
+    if (isAdmin) {
+      if (oldSupplierId && oldSupplierId !== selectedSupplierId) {
+        const oldSup = (db.suppliers || []).find(s => s.id === oldSupplierId);
+        if (oldSup && Array.isArray(oldSup.productIds)) {
+          oldSup.productIds = oldSup.productIds.filter(pid => pid !== id && pid !== existing.productId);
         }
-      });
-    } else {
-      (db.suppliers || []).forEach(s => {
-        if (Array.isArray(s.productIds)) {
-          s.productIds = s.productIds.filter(pid => pid !== id);
+      }
+      if (selectedSupplierId) {
+        const targetSup = (db.suppliers || []).find(s => s.id === selectedSupplierId);
+        if (targetSup) {
+          if (!Array.isArray(targetSup.productIds)) targetSup.productIds = [];
+          if (!targetSup.productIds.includes(id)) targetSup.productIds.push(id);
         }
-      });
+      }
     }
 
     const adminName = (currentUser && currentUser.name) || 'Administrator';
-    window._isSubmittingProduct = true;
-    const submitBtn = document.getElementById('pf-submit-btn');
-    if (submitBtn) submitBtn.disabled = true;
 
     if (isAdmin) {
       if (changeKeys.length === 0 && !existing.pendingEdit) {
@@ -1092,6 +1167,8 @@ async function submitProduct(e, id) {
       existing.brand = data.brand;
       existing.type = data.type;
       existing.category = data.type;
+      existing.taxClassification = taxClassification;
+      existing.tax_classification = taxClassification;
       existing.color = data.color;
       existing.colorHex = data.colorHex;
       existing.color_hex = data.colorHex;
@@ -1202,10 +1279,12 @@ async function submitProduct(e, id) {
           name: data.name,
           brand: data.brand,
           type: data.type,
+          category: data.category,
+          taxClassification: data.taxClassification,
           color: data.color,
           colorHex: data.colorHex,
           price: data.price,
-          sizes: sanitizeSizeList([...(existing.sizes || []), ...addedSizes]),
+          sizes: data.sizes,
           threshold: data.threshold,
           thresholdBySize: data.thresholdBySize,
           supplierId: selectedSupplierId,
@@ -1317,14 +1396,6 @@ async function submitProduct(e, id) {
         newProd.discontinueReason = statusReason;
       }
 
-      if (selectedSupplierId) {
-        const targetSupplier = (db.suppliers || []).find(s => s.id === selectedSupplierId);
-        if (targetSupplier) {
-          if (!Array.isArray(targetSupplier.productIds)) targetSupplier.productIds = [];
-          if (!targetSupplier.productIds.includes(newProd.id)) targetSupplier.productIds.push(newProd.id);
-        }
-      }
-
       db.products.push(newProd);
       logAudit('PRODUCT_CREATE', 'Product', `Created new product ${data.name} (${data.brand} · ${data.type}, Base Price: ${peso(data.price)}/L)`, {
         productId: newPid,
@@ -1362,14 +1433,6 @@ async function submitProduct(e, id) {
         pendingSizes: []
       };
 
-      if (selectedSupplierId) {
-        const targetSupplier = (db.suppliers || []).find(s => s.id === selectedSupplierId);
-        if (targetSupplier) {
-          if (!Array.isArray(targetSupplier.productIds)) targetSupplier.productIds = [];
-          if (!targetSupplier.productIds.includes(newProd.id)) targetSupplier.productIds.push(newProd.id);
-        }
-      }
-
       db.products.push(newProd);
       logAudit('PRODUCT_REQUEST', 'Product', `Staff submitted new product ${data.name} (price ${peso(data.price)}) for Admin approval`, {
         productId: newPid,
@@ -1383,17 +1446,19 @@ async function submitProduct(e, id) {
     }
   }
   try {
-    await saveDB();
+    const savedOk = await saveDB();
+    if (!savedOk) return false;
     closeModal();
     if (typeof renderInventoryTable === 'function') renderInventoryTable();
     if (typeof renderPage === 'function') renderPage();
   } catch (err) {
     console.error('Error saving to database:', err);
     showToast('Failed to save product changes to database.', 'error');
+  }
   } finally {
     window._isSubmittingProduct = false;
-    const submitBtn = document.getElementById('pf-submit-btn');
-    if (submitBtn) submitBtn.disabled = false;
+    const btn = document.getElementById('pf-submit-btn');
+    if (btn) btn.disabled = false;
   }
   return false;
 }
@@ -1508,6 +1573,13 @@ async function approvePendingProductPrice(id) {
   p.recentPrice = oldPrice;
   p.price = newPrice;
   p.pendingPrice = null;
+  if (Array.isArray(p.sizesData)) {
+    p.sizesData.forEach(sz => {
+      sz.pricePerLiter = newPrice;
+      sz.pricePerCan = Number((newPrice * (Number(sz.containerSize) || 1)).toFixed(2));
+    });
+  }
+  if (typeof syncProductVariants === 'function') syncProductVariants(p);
   logAudit('PRODUCT_PRICE_CHANGE', 'Product', `Approved price change for ${p.name}: ${peso(oldPrice)} ➔ ${peso(newPrice)}`, {
     productId: p.id,
     entityName: p.name,
@@ -1556,10 +1628,32 @@ async function approveProductPendingEdits(id) {
   const reviewer = (currentUser && currentUser.name) || 'Administrator';
   const prevName = p.name;
 
-  if (prop.name) p.name = prop.name;
+  if (prop.name) { p.name = prop.name; p.productName = prop.name; }
   if (prop.brand) p.brand = prop.brand;
   if (prop.type) p.type = prop.type;
+  if (prop.category) p.category = prop.category;
+  if (prop.taxClassification) { p.taxClassification = prop.taxClassification; p.tax_classification = prop.taxClassification; }
   if (prop.color) p.color = prop.color;
+  if (prop.colorHex) { p.colorHex = prop.colorHex; p.color_hex = prop.colorHex; }
+  if (prop.status) p.status = prop.status;
+  if (prop.supplierId !== undefined) {
+    const oldSupId = p.supplierId || null;
+    const newSupId = prop.supplierId || null;
+    if (oldSupId && oldSupId !== newSupId) {
+      const oldSup = (db.suppliers || []).find(s => s.id === oldSupId);
+      if (oldSup && Array.isArray(oldSup.productIds)) {
+        oldSup.productIds = oldSup.productIds.filter(pid => pid !== p.id && pid !== p.productId);
+      }
+    }
+    if (newSupId) {
+      const newSup = (db.suppliers || []).find(s => s.id === newSupId);
+      if (newSup) {
+        if (!Array.isArray(newSup.productIds)) newSup.productIds = [];
+        if (!newSup.productIds.includes(p.id)) newSup.productIds.push(p.id);
+      }
+    }
+    p.supplierId = newSupId;
+  }
   if (prop.threshold !== undefined && !isNaN(Number(prop.threshold))) {
     p.threshold = Number(prop.threshold);
   }
@@ -1567,7 +1661,7 @@ async function approveProductPendingEdits(id) {
     p.thresholdBySize = prop.thresholdBySize;
   }
   if (Array.isArray(prop.sizes) && prop.sizes.length > 0) {
-    p.sizes = sanitizeSizeList([...(p.sizes || []), ...prop.sizes]);
+    p.sizes = sanitizeSizeList(prop.sizes);
   }
   if (prop.price !== undefined && !isNaN(Number(prop.price))) {
     const oldPrice = Number(p.price);
@@ -1583,6 +1677,7 @@ async function approveProductPendingEdits(id) {
   p.pendingSizes = [];
   p.reviewedBy = reviewer;
   p.reviewedAt = nowISO();
+  if (typeof syncProductVariants === 'function') syncProductVariants(p);
 
   const chgKeys = Object.keys(chg);
   const fieldLabels = chgKeys.map(k => chg[k].label || k).join(', ');

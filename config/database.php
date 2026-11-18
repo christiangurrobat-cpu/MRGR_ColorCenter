@@ -50,7 +50,12 @@ function getDBConnection() {
                         if ($res = $conn->store_result()) {
                             $res->free();
                         }
+                        if ($conn->errno) {
+                            error_log("Schema seed warning: " . $conn->error);
+                        }
                     } while ($conn->more_results() && $conn->next_result());
+                } else {
+                    error_log("Schema seed failed: " . $conn->error);
                 }
             }
         }
@@ -64,6 +69,11 @@ function getDBConnection() {
 function executeQuery($query, $params = []) {
     $conn = getDBConnection();
     $stmt = $conn->prepare($query);
+    if (!$stmt) {
+        $err = $conn->error;
+        $conn->close();
+        throw new Exception("Prepare failed: " . $err);
+    }
     
     if (!empty($params)) {
         $types = str_repeat('s', count($params));
@@ -82,6 +92,11 @@ function executeQuery($query, $params = []) {
 function getLastInsertId($query, $params = []) {
     $conn = getDBConnection();
     $stmt = $conn->prepare($query);
+    if (!$stmt) {
+        $err = $conn->error;
+        $conn->close();
+        throw new Exception("Prepare failed: " . $err);
+    }
     
     if (!empty($params)) {
         $types = str_repeat('s', count($params));

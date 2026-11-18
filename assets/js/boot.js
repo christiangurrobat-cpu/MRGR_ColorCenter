@@ -31,7 +31,7 @@ async function init() {
         const authData = await authRes.json();
         if (authData && authData.authenticated && authData.user && authData.user.status === 'active') {
           currentUser = authData.user;
-          await storage.set(SESSION_KEY, JSON.stringify({ userId: currentUser.id, username: currentUser.username, role: currentUser.role }));
+          await storage.set(SESSION_KEY, JSON.stringify({ userId: currentUser.id, username: currentUser.username, name: currentUser.name, role: currentUser.role }));
           sessionResolved = true;
         } else if (authData && authData.authenticated === false) {
           currentUser = null;
@@ -51,7 +51,7 @@ async function init() {
       const session = await storage.get(SESSION_KEY);
       const savedUser = session ? JSON.parse(session) : null;
       if (savedUser) {
-        currentUser = { id: savedUser.userId, username: savedUser.username, role: savedUser.role };
+        currentUser = { id: savedUser.userId, username: savedUser.username, name: savedUser.name || savedUser.username || 'User', role: savedUser.role };
       }
     } catch (e) {
       try { localStorage.removeItem(SESSION_KEY); } catch (error) { }

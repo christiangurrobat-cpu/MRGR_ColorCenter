@@ -254,7 +254,11 @@
 }
 
 .inv-select-type {
-  width: 152px;
+  width: 145px;
+}
+
+.inv-select-size {
+  width: 105px;
 }
 
 .inv-select-status {
@@ -583,10 +587,11 @@
   }
 
   .inv-select-type,
+  .inv-select-size,
   .inv-select-status,
   .inv-select-sort {
-    flex: 1 1 calc(33.333% - 6px);
-    min-width: 120px;
+    flex: 1 1 calc(25% - 6px);
+    min-width: 105px;
   }
 }
 

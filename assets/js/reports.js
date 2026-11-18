@@ -233,7 +233,8 @@ function extractMixingLogRecord(m) {
     if (pMatch && pMatch.hex) hexColor = pMatch.hex;
   }
   if (!hexColor) {
-    const audit = (db.auditLogs || []).find(a => (a.action === 'MIXING_COMPLETE' || a.action === 'COLOR_MIX') && (
+    const auditList = (typeof auditRows !== 'undefined' && Array.isArray(auditRows)) ? auditRows : (db.auditLogs || []);
+    const audit = auditList.find(a => (a.action === 'MIXING_COMPLETE' || a.action === 'COLOR_MIX') && (
       (a.entityName && a.entityName.toLowerCase() === colorName.toLowerCase()) ||
       (a.details && a.details.toLowerCase().includes(colorName.toLowerCase()))
     ));
@@ -674,16 +675,17 @@ function exportActiveReportCSV() {
     showToast('No records found to export.', 'error');
     return;
   }
-  const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + rows.join('\r\n');
-  const encodedUri = encodeURI(csvContent);
+  const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const blobUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
   const fromStr = reportDateFrom || 'start';
   const toStr = reportDateTo || 'end';
-  link.setAttribute('href', encodedUri);
+  link.setAttribute('href', blobUrl);
   link.setAttribute('download', `MRGR_Report_${reportActiveTab}_${fromStr}_to_${toStr}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   showToast('✓ Report exported to CSV successfully.', 'ok');
 }
 
@@ -874,14 +876,20 @@ function setReportDatePreset(preset) {
 function onReportDateChange() {
   const fromEl = document.getElementById('rep-from');
   const toEl = document.getElementById('rep-to');
-  let f = fromEl ? fromEl.value : '';
-  let t = toEl ? toEl.value : '';
+  const toIso = (v) => {
+    if (!v) return '';
+    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
+    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
+  };
+  let f = toIso(fromEl ? fromEl.value : '');
+  let t = toIso(toEl ? toEl.value : '');
   if (f && t && f > t) {
     const tmp = f;
     f = t;
     t = tmp;
-    if (fromEl) fromEl.value = f;
-    if (toEl) toEl.value = t;
+    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
+    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
   }
   reportDateFrom = f;
   reportDateTo = t;
@@ -1148,6 +1156,9 @@ function reportsPage() {
       </button>
       <button type="button" class="report-toggle-btn ${reportActiveTab === 'mixing' ? 'active' : ''}" data-tab="mixing" onclick="setReportTab('mixing')">
         <span class="rt-icon">🎨</span> Color Mixing
+      </button>
+      <button type="button" class="report-toggle-btn ${reportActiveTab === 'expiration' ? 'active' : ''}" data-tab="expiration" onclick="setReportTab('expiration')">
+        <span class="rt-icon">🗓️</span> Expiration Tracking
       </button>
       ${isAdmin ? `
         <button type="button" class="report-toggle-btn ${reportActiveTab === 'returns' ? 'active' : ''}" data-tab="returns" onclick="setReportTab('returns')">
@@ -2425,7 +2436,7 @@ function renderSalesHistoryTableRowsHtml(pagedSales) {
         <td class="right" style="white-space:nowrap;">
           <div class="row wrap" style="justify-content:flex-end; gap:6px;">
             <button class="btn ghost small" onclick='viewSale("${s.id}")' title="View Sales Receipt">🧾 Receipt</button>
-            ${(!isVoidOrCancel && status !== 'refunded') ? (
+            ${(!isVoidOrCancel && status !== 'refunded' && status !== 'pending void approval' && status !== 'pending_void') ? (
         (typeof hasSaleReturnableItems === 'function' ? hasSaleReturnableItems(s) : true)
           ? `<button class="btn secondary small" onclick='openReturnRefundModal("${s.id}")' title="Process Return &amp; Exchange under store policy">↩️ Return / Exchange</button>`
           : ((typeof saleHasOnlyCustomMixItems === 'function' && saleHasOnlyCustomMixItems(s))
@@ -2630,6 +2641,11 @@ function renderInventoryStockReportSectionHtml() {
           hex
         });
       });
+      const openedLtrs = Number(typeof productOpenedStock === 'function' ? productOpenedStock(p) : (p.openedStock || 0));
+      if (openedLtrs > 0) {
+        totalLiters += openedLtrs;
+        totalStockVal += openedLtrs * Number(p.price || 0);
+      }
     } else {
       const cans = Number(p.stock || 0);
       const val = cans * Number(p.price || 0);
@@ -3080,15 +3096,22 @@ function reportBodyHtml(from, to) {
   const moves = movementsBetween(from, to);
   const isAdmin = currentUser && currentUser.role === 'admin';
 
-  // Per-day totals for the bar chart
+  // Per-day totals for the bar chart (show up to the latest 35 days in the selected range)
   const dayList = [];
-  const chartFrom = from || (sales.length ? sales[sales.length - 1].date.slice(0, 10) : daysAgoISO(29));
+  const sortedSalesDates = sales.map(s => (s.date || '').slice(0, 10)).filter(Boolean).sort();
+  const chartFrom = from || (sortedSalesDates.length ? sortedSalesDates[0] : daysAgoISO(29));
   const chartTo = to || todayISO();
   let cur = new Date(chartFrom + 'T00:00:00');
   let end = new Date(chartTo + 'T00:00:00');
   if (isNaN(cur.getTime())) cur = new Date(daysAgoISO(29) + 'T00:00:00');
   if (isNaN(end.getTime())) end = new Date(todayISO() + 'T00:00:00');
-  while (cur <= end && dayList.length < 35) {
+  const maxDays = 35;
+  const spanDays = Math.floor((end - cur) / 86400000) + 1;
+  if (spanDays > maxDays) {
+    cur = new Date(end.getTime());
+    cur.setDate(cur.getDate() - (maxDays - 1));
+  }
+  while (cur <= end && dayList.length < maxDays) {
     const iso = toLocalISODate(cur);
     dayList.push({ iso, total: sumSales(salesOn(iso).filter(s => (!from || s.date.slice(0, 10) >= from) && (!to || s.date.slice(0, 10) <= to))) });
     cur.setDate(cur.getDate() + 1);
@@ -3109,14 +3132,15 @@ function reportBodyHtml(from, to) {
     const st = String((s && s.status) || 'completed').trim().toLowerCase();
     return st !== 'voided' && st !== 'void' && st !== 'cancelled' && st !== 'canceled';
   });
-  const grossSales = validSalesForRev.reduce((t, s) => t + Number(s.total || 0), 0);
+  const grossSales = validSalesForRev.reduce((t, s) => t + Number(s.subtotal || s.total || 0), 0);
+  const netPreRefundSales = validSalesForRev.reduce((t, s) => t + Number(s.total || 0), 0);
   const periodRefunds = validSalesForRev.reduce((t, s) => {
     const st = String(s.status || 'completed').trim().toLowerCase();
     const ref = Number(s.refundTotal || 0);
     const effRef = (st === 'refunded' && ref === 0 && (!s.returns || !s.returns.length)) ? Number(s.total || 0) : ref;
     return t + effRef;
   }, 0);
-  const netSales = Number((grossSales - periodRefunds).toFixed(2));
+  const netSales = Number((netPreRefundSales - periodRefunds).toFixed(2));
 
   // Sales Section (Stats cards + Daily Bar Chart + Top Products)
   const salesHtml = `
@@ -3124,7 +3148,7 @@ function reportBodyHtml(from, to) {
       <div class="stat-card"><div class="label">Net Revenue</div><div class="value">${peso(netSales)}</div></div>
       <div class="stat-card mustard"><div class="label">Gross Sales</div><div class="value">${peso(grossSales)}</div></div>
       <div class="stat-card low"><div class="label">Returns / Exchanges</div><div class="value">${peso(periodRefunds)}</div></div>
-      <div class="stat-card sage"><div class="label">Transactions</div><div class="value">${sales.length}</div></div>
+      <div class="stat-card sage"><div class="label">Transactions</div><div class="value">${validSalesForRev.length}</div></div>
     </div>
     <div class="panel">
       <div class="panel-head"><h3>Sales by Day</h3></div>
@@ -3649,7 +3673,7 @@ function reportBodyHtml(from, to) {
     const q = Number(m.qtyChange) || 0;
     if (m.type === 'receiving') totalReceivedLitres += q;
     else if (m.type === 'sale') totalSoldLitres += Math.abs(q);
-    else if (m.type === 'colormix') totalMixedLitres += Math.abs(q);
+    else if (m.type === 'colormix' && !m.productId) totalMixedLitres += Math.abs(q);
     else if (m.type === 'adjustment') totalAdjustedLitres += q;
   });
 
@@ -3740,6 +3764,20 @@ function reportBodyHtml(from, to) {
     contentHtml = summaryCardsHtml + previousInventoryReportHtml;
   } else if (reportActiveTab === 'mixing') {
     contentHtml = summaryCardsHtml + mixingHtml;
+  } else if (reportActiveTab === 'expiration') {
+    contentHtml = `
+      <div class="panel" style="margin-top:16px;">
+        <div class="panel-head">
+          <h3>🗓️ Expiration Tracking Overview</h3>
+          <div class="spacer"></div>
+          <button type="button" class="btn secondary small" onclick="goToExpiration('all')">Open Dedicated Expiration Module &rarr;</button>
+        </div>
+        <div class="panel-body" id="exp-report-container">
+          <div class="muted small">Loading expiration batch data…</div>
+        </div>
+      </div>
+    `;
+    setTimeout(() => { if (typeof expReportSectionLoad === 'function') expReportSectionLoad('exp-report-container'); }, 30);
   } else if (reportActiveTab === 'returns') {
     contentHtml = isAdmin ? (summaryCardsHtml + returnsHtml) : '<div class="empty-state">Returns report is restricted to administrators.</div>';
   } else {

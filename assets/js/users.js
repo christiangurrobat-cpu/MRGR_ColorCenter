@@ -103,13 +103,37 @@ async function submitUser(e, id) {
     return false;
   }
   const username = document.getElementById('uf-username').value.trim();
+  const fullName = document.getElementById('uf-name').value.trim();
+  if (!fullName || !username) {
+    showToast('Full Name and Username cannot be empty or whitespace.', 'error');
+    return false;
+  }
   const dupe = db.users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.id !== id);
   if (dupe) { showToast('That username is already taken.', 'error'); return false; }
   const password = document.getElementById('uf-password').value;
-  const data = { name: document.getElementById('uf-name').value.trim(), username, role: document.getElementById('uf-role').value };
+  if (!id && (!password || password.trim().length < 4)) {
+    showToast('Password is required and must be at least 4 characters.', 'error');
+    return false;
+  }
+  if (id && password && password.trim().length > 0 && password.trim().length < 4) {
+    showToast('New password must be at least 4 characters.', 'error');
+    return false;
+  }
+  const data = { name: fullName, username, role: document.getElementById('uf-role').value };
   if (id) {
     const u = db.users.find(x => x.id === id);
     if (!u) { showToast('User not found.', 'error'); return false; }
+    if (currentUser && currentUser.id === id && u.role !== data.role) {
+      showToast('You cannot change your own role while signed in.', 'error');
+      return false;
+    }
+    if (u.role === 'admin' && data.role !== 'admin') {
+      const otherActiveAdmins = (db.users || []).filter(x => x.id !== id && x.role === 'admin' && x.status === 'active');
+      if (otherActiveAdmins.length === 0) {
+        showToast('Cannot demote the last active Administrator.', 'error');
+        return false;
+      }
+    }
     const oldName = u.name;
     const oldUsername = u.username;
     const oldRole = u.role;
@@ -189,12 +213,16 @@ async function submitUser(e, id) {
     );
     showToast('User added.');
   }
-  await saveDB();
-  // Clear any in-memory password fields after persisting
+  const savedOk = await saveDB();
+  // Clear any in-memory password fields after persisting and refresh localStorage cache without plaintext passwords
   if (db && Array.isArray(db.users)) {
     db.users.forEach(userObj => {
       delete userObj.password;
     });
+    try { await storage.set(DB_KEY, JSON.stringify(db)); } catch (err) { }
+  }
+  if (!savedOk) {
+    return false;
   }
   closeModal();
   renderApp();

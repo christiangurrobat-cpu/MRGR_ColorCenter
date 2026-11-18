@@ -65,20 +65,23 @@ if ($action === 'login') {
     $storedHash = (string)$user['password'];
     $isValid = false;
 
-    // Verify bcrypt hash or migrate legacy plaintext credentials
-    if (password_verify($password, $storedHash)) {
-        $isValid = true;
-        if (password_needs_rehash($storedHash, PASSWORD_BCRYPT)) {
-            $newHash = password_hash($password, PASSWORD_BCRYPT);
-            $upStmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-            if ($upStmt) {
-                $upStmt->bind_param("ss", $newHash, $user['id']);
-                $upStmt->execute();
-                $upStmt->close();
+    // Verify bcrypt hash or migrate legacy plaintext credentials (never accept a hash string as password)
+    $hashInfo = password_get_info($storedHash);
+    if (($hashInfo['algo'] ?? null) !== null) {
+        if (password_verify($password, $storedHash)) {
+            $isValid = true;
+            if (password_needs_rehash($storedHash, PASSWORD_BCRYPT)) {
+                $newHash = password_hash($password, PASSWORD_BCRYPT);
+                $upStmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+                if ($upStmt) {
+                    $upStmt->bind_param("ss", $newHash, $user['id']);
+                    $upStmt->execute();
+                    $upStmt->close();
+                }
             }
         }
-    } elseif ($password === $storedHash) {
-        // Plaintext match: seamlessly upgrade to bcrypt in database
+    } elseif ($storedHash !== '' && hash_equals($storedHash, $password)) {
+        // Legacy plaintext match: seamlessly upgrade to bcrypt in database
         $isValid = true;
         $newHash = password_hash($password, PASSWORD_BCRYPT);
         $upStmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
@@ -93,6 +96,11 @@ if ($action === 'login') {
         http_response_code(401);
         echo json_encode(['success' => false, 'error' => 'Incorrect username or password.']);
         exit;
+    }
+
+    // Prevent session fixation
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_regenerate_id(true);
     }
 
     // Set server-side session
@@ -199,7 +207,12 @@ if ($action === 'verify_admin') {
 
     $storedHash = (string)$user['password'];
     $isValid = false;
-    if (password_verify($password, $storedHash) || $password === $storedHash) {
+    $hashInfo = password_get_info($storedHash);
+    if (($hashInfo['algo'] ?? null) !== null) {
+        if (password_verify($password, $storedHash)) {
+            $isValid = true;
+        }
+    } elseif ($storedHash !== '' && hash_equals($storedHash, $password)) {
         $isValid = true;
     }
 
@@ -223,7 +236,24 @@ if ($action === 'verify_admin') {
 
 // POST: Logout endpoint
 if ($action === 'logout') {
-    unset($_SESSION['user_id'], $_SESSION['username'], $_SESSION['name'], $_SESSION['role']);
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['success' => false, 'error' => 'Method not allowed.']);
+        exit;
+    }
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(
+            session_name(),
+            '',
+            time() - 42000,
+            $params['path'],
+            $params['domain'],
+            $params['secure'],
+            $params['httponly']
+        );
+    }
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_destroy();
     }
