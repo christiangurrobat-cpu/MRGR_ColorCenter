@@ -36,36 +36,6 @@ function calculateCurrentInventoryValue() {
   return totalVal;
 }
 
-function setReportProductFilter(val) {
-  reportProductFilter = val || 'all';
-  resetPaginationByPrefix('rep_');
-  renderReportBody();
-}
-
-function setReportBrandFilter(val) {
-  reportBrandFilter = val || 'all';
-  resetPaginationByPrefix('rep_');
-  renderReportBody();
-}
-
-function setReportSupplierFilter(val) {
-  reportSupplierFilter = val || 'all';
-  resetPaginationByPrefix('rep_');
-  renderReportBody();
-}
-
-function setReportTxTypeFilter(val) {
-  reportTxTypeFilter = val || 'all';
-  resetPaginationByPrefix('rep_');
-  renderReportBody();
-}
-
-function setReportSearch(val) {
-  reportSearchQuery = String(val || '').trim().toLowerCase();
-  resetPaginationByPrefix('rep_');
-  renderReportBody();
-}
-
 function setMixingSort(field) {
   if (reportMixingSortField === field) {
     reportMixingSortAsc = !reportMixingSortAsc;
@@ -657,42 +627,6 @@ function openMixingDetailsModal(mixId) {
 }
 window.openMixingDetailsModal = openMixingDetailsModal;
 
-function exportActiveReportCSV() {
-  const table = document.querySelector('#report-body table');
-  if (!table) {
-    showToast('No report table available to export.', 'error');
-    return;
-  }
-  const rows = [];
-  table.querySelectorAll('tr').forEach(tr => {
-    const cells = Array.from(tr.querySelectorAll('th, td')).map(td => {
-      let text = td.innerText.replace(/\r?\n/g, ' ').replace(/"/g, '""').trim();
-      return `"${text}"`;
-    });
-    if (cells.length) rows.push(cells.join(','));
-  });
-  if (rows.length === 0) {
-    showToast('No records found to export.', 'error');
-    return;
-  }
-  const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-  const blobUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  const fromStr = reportDateFrom || 'start';
-  const toStr = reportDateTo || 'end';
-  link.setAttribute('href', blobUrl);
-  link.setAttribute('download', `MRGR_Report_${reportActiveTab}_${fromStr}_to_${toStr}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-  showToast('✓ Report exported to CSV successfully.', 'ok');
-}
-
-function printActiveReport() {
-  window.print();
-}
-
 function resetReportsSalesHistoryPagination() {
   if (typeof resetPaginationByPrefix === 'function') {
     resetPaginationByPrefix('rep_');
@@ -873,49 +807,8 @@ function setReportDatePreset(preset) {
   renderReportBody();
 }
 
-function onReportDateChange() {
-  const fromEl = document.getElementById('rep-from');
-  const toEl = document.getElementById('rep-to');
-  const toIso = (v) => {
-    if (!v) return '';
-    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
-    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
-  };
-  let f = toIso(fromEl ? fromEl.value : '');
-  let t = toIso(toEl ? toEl.value : '');
-  if (f && t && f > t) {
-    const tmp = f;
-    f = t;
-    t = tmp;
-    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
-    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
-  }
-  reportDateFrom = f;
-  reportDateTo = t;
-  // Preserve selected year; do NOT set to custom
-  updateReportDatePresetsUI();
-  resetReportsSalesHistoryPagination();
-  renderReportBody();
-}
-
 function clearReportDates() {
   setReportDatePreset('all');
-}
-
-function setReportDateRange(daysAgo) {
-  if (daysAgo === null || daysAgo === undefined) setReportDatePreset('all');
-  else if (daysAgo === 0) setReportDatePreset('today');
-  else if (daysAgo === 1) setReportDatePreset('yesterday');
-  else if (daysAgo === 6) setReportDatePreset('7d');
-  else if (daysAgo === 29) setReportDatePreset('30d');
-  else {
-    reportDateFrom = daysAgoISO(daysAgo);
-    reportDateTo = todayISO();
-    syncReportDateInputs();
-    resetReportsSalesHistoryPagination();
-    renderReportBody();
-  }
 }
 
 function resetAllReportFilters() {
@@ -1023,10 +916,6 @@ function getLowStockReportData() {
 }
 
 
-function renderReportFilterToolbarHtml() {
-  return '';
-}
-
 function reportsPage() {
   const curY = getCurrentYear();
   const availableYears = getAvailableRecordYears();
@@ -1058,7 +947,7 @@ function reportsPage() {
     </div>
 
     <!-- Dedicated Date Range Bar, Year Selector & Historical Records Option -->
-    <div class="audit-date-bar" style="padding:10px 18px; border-top:1px dashed var(--line-light); border-bottom:1px solid var(--line-light); background:#FBF9F4;">
+    <div class="audit-date-bar" style="padding:10px 18px; border-top:1px dashed var(--line-light); border-bottom:1px solid var(--line-light); background:var(--surface-2);">
       <div class="audit-date-group">
         <!-- Year Selector (Defaults to Current Year) -->
         <div class="audit-year-wrap">
@@ -1173,6 +1062,11 @@ function reportsPage() {
 }
 
 function setReportTab(tab) {
+  const isAdmin = typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin';
+  if (!isAdmin && (tab === 'sales' || tab === 'history' || tab === 'returns')) {
+    showToast('Sales reports are restricted to Administrators.', 'error');
+    return;
+  }
   reportActiveTab = tab;
   resetReportsSalesHistoryPagination();
   document.querySelectorAll('.report-toggle-btn').forEach(b => {
@@ -1239,7 +1133,7 @@ function toggleTopProductExpand(key) {
     toggleBtn.innerHTML = isExpanded ? '▴ Close' : '▾ Details';
     toggleBtn.className = `btn ${isExpanded ? 'ghost' : 'secondary'} small`;
     if (chevron) chevron.textContent = isExpanded ? '▼' : '▶';
-    if (mainRow) mainRow.style.background = isExpanded ? '#FAF7F0' : '';
+    if (mainRow) mainRow.style.background = isExpanded ? 'var(--surface-2)' : '';
   } else {
     renderTopProductsPanel();
   }
@@ -1466,7 +1360,7 @@ function formatHistoricalPrices(pricesList) {
 
 function formatContainerSizeBadge(size, sizeId) {
   const szNum = normalizeCanSize(size);
-  const szBadge = `<span class="badge" style="background:#FAF8F5; border:1px solid #E5DDCF; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:11.5px; padding:2px 7px;">${fmtSize(szNum)}</span>`;
+  const szBadge = `<span class="badge" style="background:var(--surface-2); border:1px solid var(--line); font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:11.5px; padding:2px 7px;">${fmtSize(szNum)}</span>`;
   return `<div style="display:inline-flex; align-items:center; gap:5px; justify-content:center;">${szBadge}</div>`;
 }
 
@@ -1478,17 +1372,17 @@ function formatColorVariantCell(colorName, hex) {
       <span class="cm-color-dot" style="background:${safeHex}; width:15px; height:15px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.18); flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.12);" title="${escapeHtml(safeName)} (${safeHex})"></span>
       <div>
         <div style="font-weight:600; font-size:12.5px; color:var(--ink);">${escapeHtml(safeName)}</div>
-        <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:700; color:var(--teal);">(${safeHex})</code>
+        <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:700; color:var(--teal-text);">(${safeHex})</code>
       </div>
     </div>`;
 }
 
 function formatRankBadge(rankIndex) {
   const r = rankIndex + 1;
-  let bg = '#F2EDE4', fg = 'var(--ink)', border = '#E5DDCF';
-  if (r === 1) { bg = '#FEF3C7'; fg = '#92400E'; border = '#FCD34D'; }
-  else if (r === 2) { bg = '#F3F4F6'; fg = '#374151'; border = '#D1D5DB'; }
-  else if (r === 3) { bg = '#FFEDD5'; fg = '#9A3412'; border = '#FDBA74'; }
+  let bg = 'var(--surface-3)', fg = 'var(--ink)', border = 'var(--line)';
+  if (r === 1) { bg = 'var(--warning-bg)'; fg = 'var(--warning-text)'; border = 'var(--warning-border)'; }
+  else if (r === 2) { bg = 'var(--surface-3)'; fg = 'var(--ink)'; border = 'var(--line-strong)'; }
+  else if (r === 3) { bg = 'var(--warning-bg)'; fg = 'var(--warning-text)'; border = 'var(--warning-border)'; }
   return `<span style="display:inline-flex; align-items:center; justify-content:center; width:25px; height:25px; border-radius:50%; background:${bg}; color:${fg}; border:1px solid ${border}; font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:11.5px;">${r}</span>`;
 }
 
@@ -1520,7 +1414,7 @@ function renderTopProductsSectionHtml(sales) {
         <div>
           <h3 style="margin:0; font-size:15px; display:inline-flex; align-items:center; gap:8px;">
             Top Products Sold
-            <span class="badge" style="font-size:11px; padding:2px 8px; font-weight:600; background:#F2EDE4; border:1px solid var(--line); color:var(--ink-soft);">
+            <span class="badge" style="font-size:11px; padding:2px 8px; font-weight:600; background:var(--surface-3); border:1px solid var(--line); color:var(--ink-soft);">
               ${products.length} Products &bull; ${allVariants.length} Variations
             </span>
           </h3>
@@ -1528,7 +1422,7 @@ function renderTopProductsSectionHtml(sales) {
         <div class="spacer"></div>
         <div class="row wrap" style="gap:10px; align-items:center;">
           <!-- Two Viewing Modes -->
-          <div class="btn-group" style="display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#FAF8F5;">
+          <div class="btn-group" style="display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-2);">
             <button type="button" 
               class="btn small ${topProductsViewMode === 'overview' ? 'primary' : 'ghost'}" 
               style="border:none; border-radius:0; padding:5px 12px; font-size:12px; font-weight:600;" 
@@ -1548,7 +1442,7 @@ function renderTopProductsSectionHtml(sales) {
           <!-- Ranking Method Selector -->
           <div style="display:inline-flex; align-items:center; gap:6px;">
             <label for="top-prod-rank-select" class="muted small" style="font-size:11.5px; font-weight:600;">Rank by:</label>
-            <select id="top-prod-rank-select" class="audit-year-select" style="padding:4px 8px; font-size:12px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#FFFFFF;" onchange="setTopProductsRanking(this.value)" title="Select ranking method for Top Products">
+            <select id="top-prod-rank-select" class="audit-year-select" style="padding:4px 8px; font-size:12px; border-radius:var(--radius-sm); border:1px solid var(--line); background:var(--surface);" onchange="setTopProductsRanking(this.value)" title="Select ranking method for Top Products">
               <option value="qty" ${topProductsRanking === 'qty' ? 'selected' : ''}>Quantity Sold (High to Low)</option>
               <option value="revenue" ${topProductsRanking === 'revenue' ? 'selected' : ''}>Total Revenue (High to Low)</option>
               <option value="transactions" ${topProductsRanking === 'transactions' ? 'selected' : ''}>Number of Transactions (High to Low)</option>
@@ -1574,7 +1468,7 @@ function renderTopProductsSectionHtml(sales) {
           <!-- VIEW MODE A: PRODUCT OVERVIEW (DEFAULT) -->
           <table class="table-hover" style="width:100%; border-collapse:collapse;">
             <thead>
-              <tr style="background:#FAF8F5;">
+              <tr style="background:var(--surface-2);">
                 <th style="width:45px; text-align:center;">#</th>
                 <th>Product Name</th>
                 <th>Brand</th>
@@ -1592,7 +1486,7 @@ function renderTopProductsSectionHtml(sales) {
     return `
                   <tr id="top-prod-row-${p.key}" 
                       class="top-prod-main-row" 
-                      style="cursor:pointer; background:${isExpanded ? '#FAF7F0' : (idx % 2 === 1 ? '#FCFBF9' : '#FFFFFF')}; transition:background .15s;" 
+                      style="cursor:pointer; background:${isExpanded ? 'var(--surface-2)' : (idx % 2 === 1 ? 'var(--surface-2)' : 'var(--surface)')}; transition:background .15s;" 
                       onclick="toggleTopProductExpand('${p.key}')" 
                       title="Click to ${isExpanded ? 'collapse' : 'expand'} color and size breakdown">
                     <td class="center" style="vertical-align:middle;">
@@ -1605,7 +1499,7 @@ function renderTopProductsSectionHtml(sales) {
                         </span>
                         <div>
                           <strong style="color:var(--ink); font-size:13.5px;">${escapeHtml(p.name)}</strong>
-                          <span class="badge" style="margin-left:6px; font-size:10.5px; padding:1px 6px; background:#F2EDE4; border:1px solid #E5DDCF;">
+                          <span class="badge" style="margin-left:6px; font-size:10.5px; padding:1px 6px; background:var(--surface-3); border:1px solid var(--line);">
                             ${p.variants.length} variation${p.variants.length === 1 ? '' : 's'}
                           </span>
                         </div>
@@ -1617,7 +1511,7 @@ function renderTopProductsSectionHtml(sales) {
                     <td class="right" style="vertical-align:middle; font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--ink);">
                       ${p.totalQty.toLocaleString()} <span style="font-size:11px; font-weight:normal; color:var(--ink-soft);">units</span>
                     </td>
-                    <td class="right" style="vertical-align:middle; font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--teal);">
+                    <td class="right" style="vertical-align:middle; font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--teal-text);">
                       ${peso(p.totalRevenue)}
                     </td>
                     <td class="right" style="vertical-align:middle; font-weight:600; font-family:'Space Grotesk',sans-serif; font-size:12.5px;">
@@ -1637,7 +1531,7 @@ function renderTopProductsSectionHtml(sales) {
 
                   <!-- VIEW MODE B: EXPANDABLE PRODUCT DETAILS (Exact Reconciliation) -->
                   <tr id="top-prod-detail-${p.key}" class="top-prod-detail-row" style="${isExpanded ? '' : 'display:none;'}">
-                    <td colspan="7" style="padding:0 !important; border-bottom:2px solid var(--line); background:#FBF9F4;">
+                    <td colspan="7" style="padding:0 !important; border-bottom:2px solid var(--line); background:var(--surface-2);">
                       <div style="padding:12px 18px 16px;">
                         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
                           <div>
@@ -1648,14 +1542,14 @@ function renderTopProductsSectionHtml(sales) {
                               (${escapeHtml(p.brand)})
                             </span>
                           </div>
-                          <div class="muted small" style="font-size:11.5px; background:#FAF8F5; padding:2px 8px; border-radius:4px; border:1px solid #ECE6DB;">
+                          <div class="muted small" style="font-size:11.5px; background:var(--surface-2); padding:2px 8px; border-radius:4px; border:1px solid var(--line);">
                             Reconciled Total: <b>${p.totalQty}</b> units &bull; <b>${peso(p.totalRevenue)}</b> &bull; <b>${p.transactionCount}</b> distinct transactions
                           </div>
                         </div>
 
-                        <table style="width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#FFFFFF;">
+                        <table style="width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface);">
                           <thead>
-                            <tr style="background:#F2EDE4; font-size:11.5px; border-bottom:1px solid var(--line);">
+                            <tr style="background:var(--surface-3); font-size:11.5px; border-bottom:1px solid var(--line);">
                               <th style="padding:7px 12px; text-align:left;">Color &amp; Color Code</th>
                               <th style="padding:7px 12px; text-align:center;">Container Size</th>
                               <th style="padding:7px 12px; text-align:right;">Quantity Sold</th>
@@ -1666,7 +1560,7 @@ function renderTopProductsSectionHtml(sales) {
                           </thead>
                           <tbody>
                             ${sortedPVariants.map((v, vIdx) => `
-                              <tr style="border-bottom:1px solid #F0ECE1; background:${vIdx % 2 === 1 ? '#FCFBF9' : '#FFFFFF'}; font-size:12px;">
+                              <tr style="border-bottom:1px solid var(--line); background:${vIdx % 2 === 1 ? 'var(--surface-2)' : 'var(--surface)'}; font-size:12px;">
                                 <td style="padding:7px 12px; vertical-align:middle;">
                                   ${formatColorVariantCell(v.colorName, v.hex)}
                                 </td>
@@ -1679,7 +1573,7 @@ function renderTopProductsSectionHtml(sales) {
                                 <td style="padding:7px 12px; text-align:right; vertical-align:middle;">
                                   ${formatHistoricalPrices(v.unitPricesList)}
                                 </td>
-                                <td style="padding:7px 12px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--teal); vertical-align:middle;">
+                                <td style="padding:7px 12px; text-align:right; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--teal-text); vertical-align:middle;">
                                   ${peso(v.revenue)}
                                 </td>
                                 <td style="padding:7px 12px; text-align:right; font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle;">
@@ -1689,7 +1583,7 @@ function renderTopProductsSectionHtml(sales) {
                             `).join('')}
                           </tbody>
                           <tfoot>
-                            <tr style="background:#FAF8F5; font-weight:700; border-top:2px solid #E2DACD; font-size:12px;">
+                            <tr style="background:var(--surface-2); font-weight:700; border-top:2px solid var(--line); font-size:12px;">
                               <td colspan="2" style="padding:8px 12px; color:var(--ink);">
                                 &Sigma; Reconciled Subtotal for ${escapeHtml(p.name)}:
                               </td>
@@ -1699,7 +1593,7 @@ function renderTopProductsSectionHtml(sales) {
                               <td style="padding:8px 12px; text-align:right; color:var(--ink-soft); font-weight:normal; font-size:11px;">
                                 (Preserved per variation)
                               </td>
-                              <td style="padding:8px 12px; text-align:right; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--teal);">
+                              <td style="padding:8px 12px; text-align:right; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--teal-text);">
                                 ${peso(p.totalRevenue)}
                               </td>
                               <td style="padding:8px 12px; text-align:right; font-family:'Space Grotesk',sans-serif; font-size:12.5px;" title="${p.transactionCount} unique sales receipts (no duplicate counts)">
@@ -1714,14 +1608,14 @@ function renderTopProductsSectionHtml(sales) {
   }).join('')}
             </tbody>
             <tfoot>
-              <tr style="background:#F2EDE4; font-weight:700; border-top:2px solid var(--line); font-size:13px;">
+              <tr style="background:var(--surface-3); font-weight:700; border-top:2px solid var(--line); font-size:13px;">
                 <td colspan="3" style="padding:10px 14px; color:var(--ink);">
                   Overall Total (${products.length} Products &bull; ${allVariants.length} Variations):
                 </td>
                 <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px;">
                   ${overallQty.toLocaleString()} units
                 </td>
-                <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:var(--teal);">
+                <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:var(--teal-text);">
                   ${peso(overallRevenue)}
                 </td>
                 <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px;" title="${overallUniqueTrans} unique transactions">
@@ -1735,7 +1629,7 @@ function renderTopProductsSectionHtml(sales) {
           <!-- VIEW MODE C: SIZE & VARIANT BREAKDOWN VIEW -->
           <table class="table-hover" style="width:100%; border-collapse:collapse;">
             <thead>
-              <tr style="background:#FAF8F5;">
+              <tr style="background:var(--surface-2);">
                 <th style="width:45px; text-align:center;">#</th>
                 <th>Product Name</th>
                 <th>Brand</th>
@@ -1751,7 +1645,7 @@ function renderTopProductsSectionHtml(sales) {
               ${varPag.pagedItems.map((v, idx) => {
     const rankIdx = (varPag.startRow > 0 ? varPag.startRow - 1 : 0) + idx;
     return `
-                <tr style="background:${idx % 2 === 1 ? '#FCFBF9' : '#FFFFFF'};">
+                <tr style="background:${idx % 2 === 1 ? 'var(--surface-2)' : 'var(--surface)'};">
                   <td class="center" style="vertical-align:middle;">
                     ${formatRankBadge(rankIdx)}
                   </td>
@@ -1773,7 +1667,7 @@ function renderTopProductsSectionHtml(sales) {
                   <td class="right" style="vertical-align:middle;">
                     ${formatHistoricalPrices(v.unitPricesList)}
                   </td>
-                  <td class="right" style="vertical-align:middle; font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--teal);">
+                  <td class="right" style="vertical-align:middle; font-weight:700; font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--teal-text);">
                     ${peso(v.revenue)}
                   </td>
                   <td class="right" style="vertical-align:middle; font-weight:600; font-family:'Space Grotesk',sans-serif; font-size:12.5px;">
@@ -1783,7 +1677,7 @@ function renderTopProductsSectionHtml(sales) {
   }).join('')}
             </tbody>
             <tfoot>
-              <tr style="background:#F2EDE4; font-weight:700; border-top:2px solid var(--line); font-size:13px;">
+              <tr style="background:var(--surface-3); font-weight:700; border-top:2px solid var(--line); font-size:13px;">
                 <td colspan="5" style="padding:10px 14px; color:var(--ink);">
                   Overall Total (${allVariants.length} Variations across ${products.length} Products):
                 </td>
@@ -1793,7 +1687,7 @@ function renderTopProductsSectionHtml(sales) {
                 <td class="right" style="padding:10px 14px; color:var(--ink-soft); font-weight:normal; font-size:11.5px;">
                   (Preserved per variant)
                 </td>
-                <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:var(--teal);">
+                <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:var(--teal-text);">
                   ${peso(overallRevenue)}
                 </td>
                 <td class="right" style="padding:10px 14px; font-family:'Space Grotesk',sans-serif; font-size:13.5px;">
@@ -2191,23 +2085,6 @@ function computeSalesHistorySummary(salesList) {
   };
 }
 
-async function fetchSalesHistorySummaryFromBackend(from, to, status = 'all', q = '') {
-  try {
-    const params = new URLSearchParams();
-    params.set('action', 'sales_history_summary');
-    if (from) params.set('from', from);
-    if (to) params.set('to', to);
-    if (status && status !== 'all') params.set('status', status);
-    if (q) params.set('q', q);
-    const res = await fetch('api/db.php?' + params.toString());
-    if (!res.ok) return null;
-    const data = await res.json();
-    return (data && data.success && data.summary) ? data.summary : null;
-  } catch (e) {
-    return null;
-  }
-}
-
 function toggleSalesHistoryBreakdowns() {
   salesHistoryBreakdownsExpanded = !salesHistoryBreakdownsExpanded;
   const sec = document.getElementById('sh-breakdowns-section');
@@ -2238,10 +2115,10 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
           <strong id="sh-active-period-range" style="font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:var(--ink);">${escapeHtml(periodInfo.rangeText)}</strong>
         </div>
         <div class="row wrap" style="gap:8px; align-items:center;">
-          <span class="badge" style="background:#FFFFFF; border:1px solid var(--line); color:var(--ink-soft); font-size:11.5px; padding:3px 9px;">
+          <span class="badge" style="background:var(--surface); border:1px solid var(--line); color:var(--ink-soft); font-size:11.5px; padding:3px 9px;">
             📊 Calculated from all <b>${summary.rawRecordCount.toLocaleString()}</b> matching record${summary.rawRecordCount === 1 ? '' : 's'}
           </span>
-          <button type="button" id="sh-breakdowns-toggle-btn" class="btn ghost small" style="background:#FFFFFF; border:1px solid var(--line); font-size:12px; padding:4px 10px;" onclick="toggleSalesHistoryBreakdowns()">
+          <button type="button" id="sh-breakdowns-toggle-btn" class="btn ghost small" style="background:var(--surface); border:1px solid var(--line); font-size:12px; padding:4px 10px;" onclick="toggleSalesHistoryBreakdowns()">
             ${salesHistoryBreakdownsExpanded ? '▴ Hide Product &amp; Size Breakdown' : '▾ Show Product &amp; Size Breakdown'}
           </button>
         </div>
@@ -2257,7 +2134,7 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
 
         <div class="stat-card" id="sh-card-net-sales" style="border-left:4px solid var(--teal);">
           <div class="label">Total Net Sales</div>
-          <div class="value" id="sh-val-net-sales" style="color:var(--teal);">${peso(summary.netSales)}</div>
+          <div class="value" id="sh-val-net-sales" style="color:var(--teal-text);">${peso(summary.netSales)}</div>
           <div class="sub">
             ${summary.totalDiscounts > 0
       ? `Actual revenue (${peso(summary.totalDiscounts)} promo discount${summary.discountedTransactionsCount === 1 ? '' : 's'}${summary.partialRefundsDeducted > 0 ? ` · -${peso(summary.partialRefundsDeducted)} refunds` : ''})`
@@ -2306,7 +2183,7 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
             </div>
 
             <!-- Sales by Container Size -->
-            <div style="padding:8px 16px 4px; background:#FCFBF9; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);">
+            <div style="padding:8px 16px 4px; background:var(--surface-2); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);">
               Sales by Container Size
             </div>
             ${summary.containerSizeBreakdown.length ? `
@@ -2317,9 +2194,9 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
                     <div class="sh-size-pill-card" data-size-key="${escapeAttr(sz.key)}">
                       <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
                         <strong style="font-size:12.5px; color:var(--ink); font-family:'Space Grotesk',sans-serif;">${escapeHtml(sz.label)}</strong>
-                        <span class="badge" style="font-size:10px; padding:1px 5px; background:#F2EDE4; color:var(--ink-soft);">${szPct}%</span>
+                        <span class="badge" style="font-size:10px; padding:1px 5px; background:var(--surface-3); color:var(--ink-soft);">${szPct}%</span>
                       </div>
-                      <div style="font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:14px; color:var(--teal); margin-top:2px;">
+                      <div style="font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:14px; color:var(--teal-text); margin-top:2px;">
                         ${peso(sz.salesAmount)}
                       </div>
                       <div class="muted small" style="font-size:11px; margin-top:1px;">
@@ -2330,17 +2207,17 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
       }).join('')}
               </div>
             ` : `
-              <div class="muted small" style="padding:10px 16px; border-bottom:1px solid #EFE9DC;">No container sales in this period.</div>
+              <div class="muted small" style="padding:10px 16px; border-bottom:1px solid var(--line);">No container sales in this period.</div>
             `}
 
             <!-- Best-Selling Products Table -->
-            <div style="padding:8px 16px 4px; background:#FFFFFF; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); display:flex; justify-content:space-between; align-items:center;">
+            <div style="padding:8px 16px 4px; background:var(--surface); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); display:flex; justify-content:space-between; align-items:center;">
               <span>Best-Selling Products (${summary.productBreakdown.length} total)</span>
               <span>Sorted by Qty Sold</span>
             </div>
             <div class="table-scroll" style="max-height:280px; overflow-y:auto;">
               <table style="width:100%; border-collapse:collapse; font-size:12px;">
-                <thead style="position:sticky; top:0; z-index:2; background:#FAF8F5;">
+                <thead style="position:sticky; top:0; z-index:2; background:var(--surface-2);">
                   <tr style="border-bottom:1px solid var(--line);">
                     <th style="padding:6px 10px; width:34px; text-align:center;">#</th>
                     <th style="padding:6px 10px;">Product &amp; Shade</th>
@@ -2351,7 +2228,7 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
                 </thead>
                 <tbody>
                   ${bestSellersList.length ? bestSellersList.map((prod, pIdx) => `
-                    <tr style="border-bottom:1px solid #F2EDE4; background:${pIdx % 2 === 1 ? '#FCFBF9' : '#FFFFFF'};">
+                    <tr style="border-bottom:1px solid var(--line); background:${pIdx % 2 === 1 ? 'var(--surface-2)' : 'var(--surface)'};">
                       <td style="padding:6px 10px; text-align:center; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink-soft); vertical-align:middle;">
                         ${pIdx + 1}
                       </td>
@@ -2366,14 +2243,14 @@ function renderSalesHistorySummaryAndBreakdownsHtml(salesList, from, to) {
                         </div>
                       </td>
                       <td style="padding:6px 10px; text-align:center; vertical-align:middle;">
-                        <span class="badge" style="background:#FAF8F5; border:1px solid #E5DDCF; font-size:11px; padding:2px 8px; font-weight:600; white-space:nowrap; display:inline-block;">
+                        <span class="badge" style="background:var(--surface-2); border:1px solid var(--line); font-size:11px; padding:2px 8px; font-weight:600; white-space:nowrap; display:inline-block;">
                           ${escapeHtml(prod.sizeLabel || (prod.sizes && prod.sizes[0]) || 'Standard')}
                         </span>
                       </td>
                       <td style="padding:6px 10px; text-align:right; font-family:'Space Grotesk',sans-serif; font-weight:700; vertical-align:middle; white-space:nowrap;">
                         ${formatStock(prod.qtySold)} <span style="font-weight:normal; font-size:10.5px; color:var(--ink-soft);">${prod.qtySold === 1 ? 'unit' : 'units'}</span>
                       </td>
-                      <td style="padding:6px 10px; text-align:right; font-family:'Space Grotesk',sans-serif; font-weight:700; color:var(--teal); vertical-align:middle; white-space:nowrap;">
+                      <td style="padding:6px 10px; text-align:right; font-family:'Space Grotesk',sans-serif; font-weight:700; color:var(--teal-text); vertical-align:middle; white-space:nowrap;">
                         ${peso(prod.salesAmount)}
                       </td>
                     </tr>
@@ -2413,25 +2290,25 @@ function renderSalesHistoryTableRowsHtml(pagedSales) {
     const itemCount = Array.isArray(s.items) ? s.items.length : 0;
 
     return `
-      <tr style="${isVoidOrCancel ? 'opacity:0.62; background:#FDF9F9;' : ''}">
-        <td><code style="color:var(--teal); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code></td>
+      <tr style="${isVoidOrCancel ? 'opacity:0.62; background:var(--danger-bg);' : ''}">
+        <td><code style="color:var(--teal-text); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code></td>
         <td>${formatDateTime(s.date)}</td>
         <td>${resolveStaffLabel(s.cashierName)}</td>
         <td>${itemCount} item${itemCount === 1 ? '' : 's'}</td>
         <td class="center">${saleStatusBadge(status)}</td>
         <td class="right">
           ${isVoidOrCancel
-        ? `<div><strong style="font-family:'Space Grotesk'; font-size:13.5px; text-decoration:line-through; color:var(--ink-soft);">${peso(s.total)}</strong></div>
+        ? `<div><strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13.5px; text-decoration:line-through; color:var(--ink-soft);">${peso(s.total)}</strong></div>
                <div class="muted small" style="color:var(--danger); font-size:11px;">Excluded (${escapeHtml(status)})</div>`
         : ((returnedVal > 0 || refundTotal > 0)
-          ? `<div><strong style="font-family:'Space Grotesk'; font-size:13.5px;">${peso(netTotal)}</strong></div>
+          ? `<div><strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13.5px;">${peso(netTotal)}</strong></div>
                  <div class="muted small" style="color:${exchangeTotal > 0 ? 'var(--teal)' : 'var(--danger)'}; font-size:11px;">
                    ${exchangeTotal > 0
             ? `Exchanged: ${peso(exchangeTotal)}`
             : `Returned: -${peso(returnedVal || refundTotal)}`}
                  </div>`
-          : `<div><strong style="font-family:'Space Grotesk'; font-size:13.5px;">${peso(s.total)}</strong></div>
-             ${(Number(s.discountAmount || s.discount || 0) > 0) ? `<div class="muted small" style="color:var(--teal); font-size:11px; font-weight:600;">10% Disc: -${peso(Number(s.discountAmount || s.discount || 0))}</div>` : ''}`)}
+          : `<div><strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13.5px;">${peso(s.total)}</strong></div>
+             ${(Number(s.discountAmount || s.discount || 0) > 0) ? `<div class="muted small" style="color:var(--teal-text); font-size:11px; font-weight:600;">10% Disc: -${peso(Number(s.discountAmount || s.discount || 0))}</div>` : ''}`)}
         </td>
         <td class="right" style="white-space:nowrap;">
           <div class="row wrap" style="justify-content:flex-end; gap:6px;">
@@ -2441,12 +2318,12 @@ function renderSalesHistoryTableRowsHtml(pagedSales) {
           ? `<button class="btn secondary small" onclick='openReturnRefundModal("${s.id}")' title="Process Return &amp; Exchange under store policy">↩️ Return / Exchange</button>`
           : ((typeof saleHasOnlyCustomMixItems === 'function' && saleHasOnlyCustomMixItems(s))
             ? (currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager')
-              ? `<button class="btn ghost small" onclick='openReturnRefundModal("${s.id}")' style="border-color:#D8A868; color:#8A5A24;" title="Custom Color Mix is strictly Final Sale under standard policy. Click to open Administrator Review for store mixing errors.">🛡️ Custom Mix (Admin Review)</button>`
+              ? `<button class="btn ghost small" onclick='openReturnRefundModal("${s.id}")' style="border-color:var(--warning-border); color:var(--warning-text);" title="Custom Color Mix is strictly Final Sale under standard policy. Click to open Administrator Review for store mixing errors.">🛡️ Custom Mix (Admin Review)</button>`
               : `<button class="btn ghost small" disabled style="opacity:0.65; cursor:not-allowed;" title="Custom Color Mix cannot be returned or exchanged once mixed (Final Sale)">🔒 Custom Mix (Final Sale)</button>`)
             : `<button class="btn ghost small" disabled style="opacity:0.55; cursor:not-allowed;" title="All purchased items have already been returned or exchanged">✓ Fully Returned</button>`)
       ) : ''}
             ${hasReturns ? `
-              <button class="btn ghost small" onclick='viewReturnVouchers("${s.id}")' title="View return &amp; exchange slips" style="color:#856404; background:#FFF3CD; border:1px solid #FFEBAA;">📋 Slip (${s.returns.length})</button>
+              <button class="btn ghost small" onclick='viewReturnVouchers("${s.id}")' title="View return &amp; exchange slips" style="color:var(--warning-text); background:var(--warning-bg); border:1px solid var(--warning-border);">📋 Slip (${s.returns.length})</button>
             ` : ''}
           </div>
         </td>
@@ -2505,7 +2382,7 @@ function renderReportsSalesHistoryPageOnly() {
 function renderReportsSalesHistorySectionHtml(salesList, from, to) {
   if (currentUser && currentUser.role === 'cashier') {
     return `
-      <div class="empty-state" style="padding:40px; margin:20px; background:#fff; border:1px solid var(--line); border-radius:8px;">
+      <div class="empty-state" style="padding:40px; margin:20px; background:var(--surface); border:1px solid var(--line); border-radius:8px;">
         <h3>🔒 Access Restricted</h3>
         <p class="muted">Cashiers are restricted from accessing business-wide sales reports and analytics.</p>
       </div>
@@ -2556,14 +2433,16 @@ function renderOverallReportSummaryCardsHtml(from, to, sales, moves) {
   });
 
   const totalInvValue = calculateCurrentInventoryValue();
+  const isAdminUser = typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin';
 
   return `
     <div class="stat-grid" style="margin-bottom:18px;">
+      ${isAdminUser ? `
       <div class="stat-card" style="cursor:pointer;" onclick="setReportTab('sales')" title="Click to view sales and revenue reports">
         <div class="label">Total Net Sales</div>
         <div class="value">${peso(netSales)}</div>
         <div class="sub">Gross: ${peso(grossSales)}${totalDiscounts > 0 ? ` · Disc: -${peso(totalDiscounts)}` : ''} (${validSalesForRev.length} sales)</div>
-      </div>
+      </div>` : ''}
       <div class="stat-card sage" style="cursor:pointer;" onclick="setReportTab('receiving')" title="Click to view stock receiving deliveries">
         <div class="label">Total Stock Received</div>
         <div class="value">+${formatLiters(totalReceivedLitres)}</div>
@@ -2853,11 +2732,13 @@ function renderPurchaseOrderReportSectionHtml(from, to) {
     const totalCans = items.reduce((sum, it) => sum + (Number(it.qty !== undefined ? it.qty : (it.orderedQty || 0))), 0);
     const stBadge = o.status === 'received' || o.status === 'completed'
       ? '<span class="badge ok small">✓ Received</span>'
-      : (o.status === 'pending'
-        ? '<span class="badge warning small" style="background:#FEF3C7; color:#92400E;">⏳ Pending</span>'
-        : (o.status === 'ordered'
-          ? '<span class="badge teal small">Ordered</span>'
-          : '<span class="badge danger small">✕ Cancelled</span>'));
+      : (o.status === 'partial'
+        ? '<span class="badge po-partial small">Partially Received</span>'
+        : (o.status === 'pending'
+          ? '<span class="badge warning small" style="background:var(--warning-bg); color:var(--warning-text);">⏳ Pending</span>'
+          : (o.status === 'ordered'
+            ? '<span class="badge teal small">Ordered</span>'
+            : '<span class="badge danger small">✕ Cancelled</span>')));
     return `
                 <tr>
                   <td style="font-family:'Space Grotesk',monospace; font-weight:700;">${escapeHtml(o.poNumber)}</td>
@@ -2956,7 +2837,7 @@ function renderStockReceivingReportSectionHtml(from, to, moves) {
     return `
                 <tr>
                   <td style="font-size:12px; color:var(--ink-soft);">${formatDateTime(m.date)}</td>
-                  <td><code style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal);">${escapeHtml(m.reference || 'Restock')}</code></td>
+                  <td><code style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal-text);">${escapeHtml(m.reference || 'Restock')}</code></td>
                   <td>
                     <span style="font-weight:600; color:var(--ink);">${escapeHtml(m.productName || (p ? p.name : 'Paint'))}</span>
                     ${p && p.color && p.color !== '-' ? `<span class="muted small">(${escapeHtml(p.color)})</span>` : ''}
@@ -3069,10 +2950,10 @@ function renderSupplierReportSectionHtml(from, to) {
                   <td style="font-weight:700; color:var(--ink);">${escapeHtml(s.name)}</td>
                   <td style="font-size:12.5px;">${escapeHtml(s.contact || '—')}</td>
                   <td style="font-size:12px;">${escapeHtml(s.phone || '—')}</td>
-                  <td style="font-size:12px;">${s.email ? `<a href="mailto:${escapeHtml(s.email)}" style="color:var(--teal);">${escapeHtml(s.email)}</a>` : '—'}</td>
+                  <td style="font-size:12px;">${s.email ? `<a href="mailto:${escapeHtml(s.email)}" style="color:var(--teal-text);">${escapeHtml(s.email)}</a>` : '—'}</td>
                   <td style="text-align:center;"><span class="badge ghost small" style="font-weight:600;">${d.productsCount}</span></td>
                   <td style="text-align:center; font-weight:600;">${d.totalOrders}</td>
-                  <td style="text-align:center; font-weight:600; color:var(--teal);">${d.completedOrders}</td>
+                  <td style="text-align:center; font-weight:600; color:var(--teal-text);">${d.completedOrders}</td>
                   <td class="right" style="font-family:'Space Grotesk',monospace; font-weight:700; font-size:13px; color:var(--teal-dark);">${peso(d.totalSpend)}</td>
                   <td>${s.status === 'active' ? '<span class="badge ok small">Active</span>' : '<span class="badge inactive small">Inactive</span>'}</td>
                   <td class="right">
@@ -3127,28 +3008,93 @@ function reportBodyHtml(from, to) {
   const staffLabel = reportStaffLabel;
   const low = lowStockProducts();
 
-  // Sales calculations (excluding voided / cancelled transactions)
-  const validSalesForRev = sales.filter(s => {
-    const st = String((s && s.status) || 'completed').trim().toLowerCase();
-    return st !== 'voided' && st !== 'void' && st !== 'cancelled' && st !== 'canceled';
-  });
-  const grossSales = validSalesForRev.reduce((t, s) => t + Number(s.subtotal || s.total || 0), 0);
-  const netPreRefundSales = validSalesForRev.reduce((t, s) => t + Number(s.total || 0), 0);
-  const periodRefunds = validSalesForRev.reduce((t, s) => {
-    const st = String(s.status || 'completed').trim().toLowerCase();
-    const ref = Number(s.refundTotal || 0);
-    const effRef = (st === 'refunded' && ref === 0 && (!s.returns || !s.returns.length)) ? Number(s.total || 0) : ref;
-    return t + effRef;
-  }, 0);
-  const netSales = Number((netPreRefundSales - periodRefunds).toFixed(2));
+  // Sales calculations — reuse authoritative computeSalesHistorySummary() so Sales & Sales History match 100%
+  const salesSum = computeSalesHistorySummary(sales);
+  const grossSales = salesSum.grossSales;
+  const periodRefunds = Number((salesSum.partialRefundsDeducted + salesSum.fullRefundAmount).toFixed(2));
+  const netSales = salesSum.netSales;
 
-  // Sales Section (Stats cards + Daily Bar Chart + Top Products)
+  // VAT & COGS / Gross Profit summary (strictly from recorded sales VAT fields & recorded productSuppliers costs)
+  let totalVatableSales = 0;
+  let totalVatAmount = 0;
+  let totalVatExempt = 0;
+  let totalZeroRated = 0;
+  let estimatedCogs = 0;
+  let cogsMatchedItems = 0;
+  let cogsUnmatchedItems = 0;
+
+  const supplierCostMap = new Map();
+  (db.productSuppliers || []).forEach(ps => {
+    const pid = String(ps.productId || ps.product_id || '');
+    const cSz = Number(ps.containerSize || ps.container_size || 0);
+    const cost = Number(ps.purchaseCost || ps.purchase_cost || 0);
+    if (pid && cost > 0) {
+      const key = `${pid}_${cSz}`;
+      if (!supplierCostMap.has(key) || cost < supplierCostMap.get(key)) {
+        supplierCostMap.set(key, cost);
+      }
+      if (!supplierCostMap.has(`${pid}_perL`) && cSz > 0) {
+        supplierCostMap.set(`${pid}_perL`, cost / cSz);
+      }
+    }
+  });
+
+  sales.forEach(s => {
+    if (!s) return;
+    const st = String(s.status || 'completed').trim().toLowerCase();
+    if (st === 'voided' || st === 'void' || st === 'cancelled' || st === 'canceled') return;
+    const rawTotal = Number(s.total || s.subtotal || 0);
+    const ref = Number(s.refundTotal || 0);
+    const effRef = (st === 'refunded' && ref === 0 && (!s.returns || !s.returns.length)) ? rawTotal : ref;
+    const saleNet = Number((rawTotal - effRef).toFixed(2));
+    if (st === 'refunded' && saleNet <= 0.0001) return;
+
+    const ratio = (rawTotal > 0 && effRef > 0) ? Math.max(0, saleNet / rawTotal) : 1;
+    totalVatableSales += Number(s.vatableSales || s.vatable_sales || 0) * ratio;
+    totalVatAmount += Number(s.vatAmount || s.vat_amount || 0) * ratio;
+    totalVatExempt += Number(s.vatExemptSales || s.vat_exempt_sales || 0) * ratio;
+    totalZeroRated += Number(s.zeroRatedSales || s.zero_rated_sales || 0) * ratio;
+
+    (s.items || []).forEach(it => {
+      const netQty = Math.max(0, (Number(it.qty) || 0) - (Number(it.returnedQty) || 0));
+      if (netQty <= 0) return;
+      if (it.type === 'product' && it.productId) {
+        const sz = Number(it.size) || 1;
+        const unitCost = supplierCostMap.get(`${it.productId}_${sz}`) ?? (supplierCostMap.has(`${it.productId}_perL`) ? supplierCostMap.get(`${it.productId}_perL`) * sz : null);
+        if (unitCost !== null && unitCost > 0) {
+          estimatedCogs += unitCost * netQty;
+          cogsMatchedItems++;
+        } else {
+          cogsUnmatchedItems++;
+        }
+      } else {
+        cogsUnmatchedItems++;
+      }
+    });
+  });
+
+  totalVatableSales = Number(totalVatableSales.toFixed(2));
+  totalVatAmount = Number(totalVatAmount.toFixed(2));
+  totalVatExempt = Number(totalVatExempt.toFixed(2));
+  totalZeroRated = Number(totalZeroRated.toFixed(2));
+  estimatedCogs = Number(estimatedCogs.toFixed(2));
+  const netSalesExVat = Number((netSales - totalVatAmount).toFixed(2));
+  const grossProfit = Number((netSalesExVat - estimatedCogs).toFixed(2));
+  const grossMarginPct = netSalesExVat > 0 ? Number(((grossProfit / netSalesExVat) * 100).toFixed(1)) : 0;
+
+  // Sales Section (Stats cards + VAT & Profit Summary + Daily Bar Chart + Top Products)
   const salesHtml = `
     <div class="stat-grid">
-      <div class="stat-card"><div class="label">Net Revenue</div><div class="value">${peso(netSales)}</div></div>
-      <div class="stat-card mustard"><div class="label">Gross Sales</div><div class="value">${peso(grossSales)}</div></div>
-      <div class="stat-card low"><div class="label">Returns / Exchanges</div><div class="value">${peso(periodRefunds)}</div></div>
-      <div class="stat-card sage"><div class="label">Transactions</div><div class="value">${validSalesForRev.length}</div></div>
+      <div class="stat-card"><div class="label">Net Revenue</div><div class="value">${peso(netSales)}</div><div class="sub">Excl. VAT: ${peso(netSalesExVat)}</div></div>
+      <div class="stat-card mustard"><div class="label">Gross Sales</div><div class="value">${peso(grossSales)}</div><div class="sub">${salesSum.totalDiscounts > 0 ? `Discounts: -${peso(salesSum.totalDiscounts)}` : 'Before discounts'}</div></div>
+      <div class="stat-card low"><div class="label">Returns / Refunds</div><div class="value">${peso(periodRefunds)}</div><div class="sub">${salesSum.fullRefundCount} full · ${salesSum.partiallyRefundedCount} partial</div></div>
+      <div class="stat-card sage"><div class="label">Transactions</div><div class="value">${salesSum.totalTransactions}</div><div class="sub">${salesSum.excludedCount > 0 ? `${salesSum.excludedCount} voided excluded` : 'Completed active sales'}</div></div>
+    </div>
+    <div class="stat-grid" style="margin-top:12px;">
+      <div class="stat-card"><div class="label">VATable Sales</div><div class="value">${peso(totalVatableSales)}</div><div class="sub">Exempt: ${peso(totalVatExempt)} · Zero-Rated: ${peso(totalZeroRated)}</div></div>
+      <div class="stat-card teal"><div class="label">Output VAT Collected</div><div class="value">${peso(totalVatAmount)}</div><div class="sub">From recorded BIR/PH VAT receipts</div></div>
+      <div class="stat-card mustard"><div class="label">Recorded COGS</div><div class="value">${peso(estimatedCogs)}</div><div class="sub">${cogsMatchedItems} line(s) from supplier costs${cogsUnmatchedItems > 0 ? ` · ${cogsUnmatchedItems} custom/unmapped` : ''}</div></div>
+      <div class="stat-card sage"><div class="label">Est. Gross Profit</div><div class="value">${peso(grossProfit)}</div><div class="sub">Margin (net of VAT): ${grossMarginPct}%</div></div>
     </div>
     <div class="panel">
       <div class="panel-head"><h3>Sales by Day</h3></div>
@@ -3242,7 +3188,7 @@ function reportBodyHtml(from, to) {
         const p = item.product;
         const sizes = item.sizes;
         const rowSpan = sizes.length;
-        const bgGroup = pIdx % 2 === 1 ? 'background:#FCFBF9;' : 'background:#FFFFFF;';
+        const bgGroup = pIdx % 2 === 1 ? 'background:var(--surface-2);' : 'background:var(--surface);';
 
         return sizes.map((entry, idx) => {
           const isFirst = idx === 0;
@@ -3253,39 +3199,39 @@ function reportBodyHtml(from, to) {
           const stockVol = entry.stockVol;
           const threshVol = entry.threshVol;
           const st = entry.status;
-          const borderBottom = isLast ? 'border-bottom: 2px solid #D8D1C4;' : 'border-bottom: 1px solid #F0ECE1;';
+          const borderBottom = isLast ? 'border-bottom: 2px solid var(--line-strong);' : 'border-bottom: 1px solid var(--line-light);';
           const variant = entry.variant;
 
           return `
                 <tr style="${bgGroup}">
                   ${isFirst ? `
-                    <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                    <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                       <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:3px;">
                         <span style="font-weight:700; font-size:13px; color:var(--ink);">
                           ${escapeHtml(p.name)}
                         </span>
                       </div>
                       <div style="font-size:11px; color:var(--ink-soft); margin-top:2px;">
-                        <code style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal);">(${getProductHex(p)})</code>
+                        <code style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal-text);">(${getProductHex(p)})</code>
                         ${p.color && p.color !== '-' ? `(${escapeHtml(p.color)})` : ''}
                       </div>
                       <div class="muted small" style="margin-top:3px; font-size:11px;">
                         Total Stock: <b>${formatLiters(p.stock)}</b>
                       </div>
                     </td>
-                    <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC; font-weight:600;">
+                    <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line); font-weight:600;">
                       ${escapeHtml(p.brand)}
                     </td>
                   ` : ''}
                   <td class="center" style="vertical-align:middle; ${borderBottom}">
-                    <span class="badge" style="background:#FAF8F5; border:1px solid #E5DDCF; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:12px; padding:2px 8px;">
+                    <span class="badge" style="background:var(--surface-2); border:1px solid var(--line); font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:12px; padding:2px 8px;">
                       ${fmtSize(s)}
                     </span>
                   </td>
-                  <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : 'color:#B45309;'}">
+                  <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : 'color:var(--warning-text);'}">
                     ${count} ${count === 1 ? 'unit' : 'units'}
                   </td>
-                  <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : 'color:#B45309;'}">
+                  <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : 'color:var(--warning-text);'}">
                     ${formatLiters(stockVol)}
                   </td>
                   <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} color:var(--ink);">
@@ -3402,7 +3348,7 @@ function reportBodyHtml(from, to) {
 
   const mixSortIcon = field => {
     if (reportMixingSortField !== field) return '<span class="sort-icon" style="opacity:0.35;">⇅</span>';
-    return `<span class="sort-icon active" style="color:var(--teal); font-weight:700;">${reportMixingSortAsc ? '▲' : '▼'}</span>`;
+    return `<span class="sort-icon active" style="color:var(--teal-text); font-weight:700;">${reportMixingSortAsc ? '▲' : '▼'}</span>`;
   };
 
   const mixTh = (field, label, extraClass = '', extraStyle = '') => `
@@ -3600,10 +3546,10 @@ function reportBodyHtml(from, to) {
         return `
               <tr>
                 <td>
-                  <strong style="font-family:'Space Grotesk'; font-size:12px; color:var(--ink);">${escapeHtml(r.voucherNo || r.id)}</strong>
+                  <strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:12px; color:var(--ink);">${escapeHtml(r.voucherNo || r.id)}</strong>
                   <div class="muted small" style="font-size:11px;">${formatDateTime(r.date)}</div>
                 </td>
-                <td><code style="color:var(--teal); font-weight:700;">${escapeHtml(r.receiptNo)}</code></td>
+                <td><code style="color:var(--teal-text); font-weight:700;">${escapeHtml(r.receiptNo)}</code></td>
                 <td>
                   ${(r.items || []).map(it => {
           const col = it.color || it.colorName;
@@ -3626,13 +3572,13 @@ function reportBodyHtml(from, to) {
                     ${r.note ? `<span class="muted small" style="margin-left:4px;">${escapeHtml(r.note)}</span>` : ''}
                   </div>
                 </td>
-                <td class="right" style="font-family:'Space Grotesk'; font-weight:700; font-size:13.5px;">
+                <td class="right" style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-weight:700; font-size:13.5px;">
                   <div style="color:var(--danger);">-${peso(retVal)}</div>
-                  ${exVal > 0 ? `<div class="small" style="color:var(--teal); font-size:11px;">Exch: +${peso(exVal)}</div>` : ''}
+                  ${exVal > 0 ? `<div class="small" style="color:var(--teal-text); font-size:11px;">Exch: +${peso(exVal)}</div>` : ''}
                 </td>
                 <td>${staffLabel(r.cashierName)}</td>
                 <td class="right">
-                  <button class="btn ghost small" onclick='showReturnVoucherModal("${r.saleId}", "${r.id}")' title="View return &amp; exchange slip" style="color:#856404; background:#FFF3CD; border:1px solid #FFEBAA; padding:2px 7px; font-size:11px;">📋 Slip</button>
+                  <button class="btn ghost small" onclick='showReturnVoucherModal("${r.saleId}", "${r.id}")' title="View return &amp; exchange slip" style="color:var(--warning-text); background:var(--warning-bg); border:1px solid var(--warning-border); padding:2px 7px; font-size:11px;">📋 Slip</button>
                 </td>
               </tr>`;
       }).join('') : `<tr><td colspan="8" class="empty-state">No product returns or exchanges in this date range.</td></tr>`}
@@ -3728,11 +3674,11 @@ function reportBodyHtml(from, to) {
   }
 
   const historicalBannerHtml = isHistorical ? `
-    <div class="historical-records-banner" style="margin-bottom:14px; border-radius:var(--radius-sm); border:1px solid #EED8B5;">
+    <div class="historical-records-banner" style="margin-bottom:14px; border-radius:var(--radius-sm); border:1px solid var(--warning-border);">
       <div>
         🏛️ <b>${escapeHtml(histLabel)}:</b> Displaying historical business &amp; inventory records (<b>${sales.length}</b> sales transactions, <b>${moves.length}</b> stock movements). All historical database records are permanently retained and accessible.
       </div>
-      <button type="button" class="btn ghost small" onclick="setReportDatePreset('year')" style="color:#7B4F09; border-color:#D19A42; background:#fff;">Return to Current Year (${curY}) &rarr;</button>
+      <button type="button" class="btn ghost small" onclick="setReportDatePreset('year')" style="color:var(--warning-text); border-color:var(--warning-border); background:var(--surface);">Return to Current Year (${curY}) &rarr;</button>
     </div>
   ` : '';
 

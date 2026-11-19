@@ -193,32 +193,6 @@ function parseReqRows(r) {
   }
 }
 
-function onApprovalsDateChange() {
-  const fromEl = document.getElementById('appr-date-from');
-  const toEl = document.getElementById('appr-date-to');
-  const toIso = (v) => {
-    if (!v) return '';
-    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
-    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
-  };
-  let f = toIso(fromEl ? fromEl.value : '');
-  let t = toIso(toEl ? toEl.value : '');
-  if (f && t && f > t) {
-    const tmp = f;
-    f = t;
-    t = tmp;
-    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
-    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
-  }
-  approvalsDateFrom = f;
-  approvalsDateTo = t;
-  // Preserve selected year; do NOT set to custom
-  const contentEl = document.getElementById('approvals-tab-content');
-  if (contentEl) contentEl.innerHTML = renderHistoryTab();
-  else renderPage();
-}
-
 function clearApprovalsDates() {
   setApprovalsDatePreset('all');
 }
@@ -360,7 +334,7 @@ function getPendingProductsList() {
       // Sizes addition summary
       const addedSizes = (chg.sizes && chg.sizes.added) ? chg.sizes.added : (Array.isArray(p.pendingSizes) && p.pendingSizes.length > 0 ? p.pendingSizes : []);
       if (addedSizes && addedSizes.length > 0) {
-        changeParts.push(`<span>Adding: <b style="color:var(--teal);">+[${addedSizes.map(s => s + 'L').join(', ')}]</b></span>`);
+        changeParts.push(`<span>Adding: <b style="color:var(--teal-text);">+[${addedSizes.map(s => s + 'L').join(', ')}]</b></span>`);
       }
 
       // Other attribute changes
@@ -452,7 +426,7 @@ function getPendingProductsList() {
         requestedBy: p.pendingSizesBy || p.updatedBy || 'Staff',
         date: p.pendingSizesAt || p.updatedAt || nowISO(),
         detailsHtml: `
-          <span>Existing: <b>[${(p.sizes || []).map(s => s + 'L').join(', ')}]</b> ➔ Adding: <b style="color:var(--teal); font-weight:700;">+ [${p.pendingSizes.map(s => s + 'L').join(', ')}]</b></span>
+          <span>Existing: <b>[${(p.sizes || []).map(s => s + 'L').join(', ')}]</b> ➔ Adding: <b style="color:var(--teal-text); font-weight:700;">+ [${p.pendingSizes.map(s => s + 'L').join(', ')}]</b></span>
         `
       });
       return;
@@ -649,7 +623,7 @@ function approvalsPage() {
       </div>
 
       <div class="approvals-metric-card ${totalPending ? 'has-pending' : 'all-clear'}"
-           onclick="focusFirstPendingApprovalsTab()" style="background:#FAF8F5;" title="Click to focus active pending requests">
+           onclick="focusFirstPendingApprovalsTab()" style="background:var(--surface-2);" title="Click to focus active pending requests">
         <div class="card-top">
           <span class="card-label">⚡ Total Pending Actions</span>
           ${totalPending ? `<span class="badge danger">Action required</span>` : '<span class="badge ok">Up to date</span>'}
@@ -668,7 +642,7 @@ function approvalsPage() {
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         ${currentApprovalsTab === 'adjustments' ? `
           <select id="approvals-status-filter" onchange="setApprovalsAdjStatusFilter(this.value)"
-                  style="padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; background:#fff; cursor:pointer;"
+                  style="padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; background:var(--surface); cursor:pointer;"
                   title="Filter stock adjustments by status">
             <option value="pending" ${approvalsAdjStatusFilter === 'pending' ? 'selected' : ''}>⏳ Pending Review</option>
             <option value="approved" ${approvalsAdjStatusFilter === 'approved' ? 'selected' : ''}>✅ Approved</option>
@@ -816,7 +790,7 @@ function renderAdjustmentsTab() {
 
   return `
     <div class="panel">
-      <div class="panel-head row wrap" style="background:#FAF8F5; gap:10px;">
+      <div class="panel-head row wrap" style="background:var(--surface-2); gap:10px;">
         <div style="font-weight:700; font-size:13.5px; color:var(--ink);">
           ${approvalsAdjStatusFilter === 'pending' ? 'Stock Adjustment Requests Awaiting Review' : 'Stock Adjustment Requests'} (${list.length} record${list.length === 1 ? '' : 's'})
         </div>
@@ -884,7 +858,7 @@ function renderAdjustmentsTab() {
     }
 
     const statusBadge = r.status === 'pending'
-      ? '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D; font-weight:600;">⏳ Pending</span>'
+      ? '<span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-weight:600;">⏳ Pending</span>'
       : (r.status === 'approved'
         ? '<span class="badge ok" style="font-weight:600;">✅ Approved</span>'
         : '<span class="badge danger" style="font-weight:600;">✕ Rejected</span>');
@@ -997,7 +971,7 @@ function renderProductsTab() {
 
   return `
     <div class="panel">
-      <div class="panel-head row" style="background:#FAF8F5;">
+      <div class="panel-head row" style="background:var(--surface-2);">
         <div style="font-weight:700; font-size:13.5px; color:var(--ink);">
           Product Requests (${list.length} item${list.length === 1 ? '' : 's'})
         </div>
@@ -1331,7 +1305,7 @@ function renderPurchaseOrdersTab() {
 
   return `
     <div class="panel">
-      <div class="panel-head row" style="background:#FAF8F5;">
+      <div class="panel-head row" style="background:var(--surface-2);">
         <div style="font-weight:700; font-size:13.5px; color:var(--ink);">
           Awaiting Authorization (${list.length} order${list.length === 1 ? '' : 's'})
         </div>
@@ -1499,7 +1473,7 @@ function renderVoidRequestsTab() {
 
   return `
     <div class="panel">
-      <div class="panel-head row wrap" style="background:#FAF8F5; gap:10px;">
+      <div class="panel-head row wrap" style="background:var(--surface-2); gap:10px;">
         <div style="font-weight:700; font-size:13.5px; color:var(--ink);">
           Cashier Void Sale Requests Awaiting Administrator Approval (${list.length} request${list.length === 1 ? '' : 's'})
         </div>
@@ -1535,7 +1509,7 @@ function renderVoidRequestsTab() {
     return `
                 <tr>
                   <td>
-                    <div style="font-weight:700; color:var(--teal); font-family:monospace; font-size:13px;">${escapeHtml(r.receiptNo)}</div>
+                    <div style="font-weight:700; color:var(--teal-text); font-family:monospace; font-size:13px;">${escapeHtml(r.receiptNo)}</div>
                     <button type="button" class="btn ghost small" onclick="viewSale('${r.saleId}')" style="font-size:11px; padding:1px 6px; margin-top:2px;" title="View original receipt">🧾 View Receipt</button>
                   </td>
                   <td>
@@ -1558,9 +1532,9 @@ function renderVoidRequestsTab() {
                     </div>
                   </td>
                   <td>
-                    <div style="font-weight:700; font-size:12.5px; color:#C1443D;">${escapeHtml(r.reason)}</div>
+                    <div style="font-weight:700; font-size:12.5px; color:var(--danger-text);">${escapeHtml(r.reason)}</div>
                     ${r.explanation ? `<div class="muted small" style="font-size:11.5px; margin-top:3px; font-style:italic;">"${escapeHtml(r.explanation)}"</div>` : ''}
-                    ${hasMix ? `<div style="margin-top:4px; font-size:10.5px; color:#856404; background:#FFF3CD; padding:2px 6px; border-radius:4px; display:inline-block;">⚠️ Contains Custom Mix (Quarantine policy applies)</div>` : ''}
+                    ${hasMix ? `<div style="margin-top:4px; font-size:10.5px; color:var(--warning-text); background:var(--warning-bg); padding:2px 6px; border-radius:4px; display:inline-block;">⚠️ Contains Custom Mix (Quarantine policy applies)</div>` : ''}
                   </td>
                   <td class="right" style="white-space:nowrap;">
                     <div class="row wrap" style="justify-content:flex-end; gap:6px;">
@@ -1570,7 +1544,7 @@ function renderVoidRequestsTab() {
                         ✓ Approve Void
                       </button>
                       <button type="button" class="btn ghost small" onclick="openRejectVoidConfirmModal('${r.id}')"
-                              style="color:var(--danger); border-color:#FCA5A5; background:#FFF8F7; font-weight:600; font-size:12px; padding:5px 10px;"
+                              style="color:var(--danger); border-color:var(--danger-border); background:var(--danger-bg); font-weight:600; font-size:12px; padding:5px 10px;"
                               title="Reject void request: keeps original transaction completed">
                         ✕ Reject Void
                       </button>
@@ -1604,7 +1578,7 @@ function openApproveVoidConfirmModal(vrId) {
     const qty = Number(it.qty) || 1;
     if (isMix) {
       return `
-        <li style="margin-bottom:4px; color:#B45309;">
+        <li style="margin-bottom:4px; color:var(--warning-text);">
           <b>${escapeHtml(it.name)}</b> (${formatStock(it.liters || qty)}L Mix):
           <span class="badge low" style="font-size:10px;">Quarantined Miscast Stock</span>
           — <i>Will NOT be returned to regular sealed inventory per policy.</i>
@@ -1612,7 +1586,7 @@ function openApproveVoidConfirmModal(vrId) {
       `;
     }
     return `
-      <li style="margin-bottom:4px; color:#14532D;">
+      <li style="margin-bottom:4px; color:var(--success-text);">
         <b>${escapeHtml(it.name)}</b> (${qty} × ${size}L):
         <span class="badge ok" style="font-size:10px;">Restocking Eligible</span>
         — <i>Restores ${qty} can${qty === 1 ? '' : 's'} (+${formatStock(qty * size)}L) to active inventory.</i>
@@ -1622,26 +1596,26 @@ function openApproveVoidConfirmModal(vrId) {
 
   const bodyHtml = `
     <div style="display:flex; flex-direction:column; gap:14px; max-width:540px;">
-      <div style="background:#F0FDF4; border:1.5px solid #BBF7D0; border-radius:8px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start;">
+      <div style="background:var(--success-bg); border:1.5px solid var(--success-border); border-radius:8px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start;">
         <span style="font-size:24px; line-height:1;">✅</span>
         <div>
-          <div style="font-weight:700; color:#166534; font-size:13.5px;">Approve Void Sale — Receipt ${escapeHtml(receiptNo)}</div>
-          <div style="font-size:12px; color:#14532D; margin-top:2px;">
+          <div style="font-weight:700; color:var(--success-text); font-size:13.5px;">Approve Void Sale — Receipt ${escapeHtml(receiptNo)}</div>
+          <div style="font-size:12px; color:var(--success-text); margin-top:2px;">
             Approving this request will mark the transaction as <b>Voided</b>, reverse the original sale of <b>${peso(sale.total)}</b>, and restore eligible store inventory exactly once.
           </div>
         </div>
       </div>
 
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-size:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-size:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
         <div><b>Requesting Cashier:</b> ${escapeHtml((vr && vr.cashierName) || sale.cashierName || 'Cashier')}</div>
         <div><b>Transaction Amount:</b> ${peso(sale.total)}</div>
-        <div style="grid-column:1 / -1;"><b>Void Reason:</b> <span style="color:#C1443D; font-weight:700;">${escapeHtml((vr && vr.reason) || sale.voidReason || 'Cashier request')}</span></div>
+        <div style="grid-column:1 / -1;"><b>Void Reason:</b> <span style="color:var(--danger-text); font-weight:700;">${escapeHtml((vr && vr.reason) || sale.voidReason || 'Cashier request')}</span></div>
         ${(vr && vr.explanation) || sale.voidExplanation ? `<div style="grid-column:1 / -1; font-style:italic;">"${escapeHtml((vr && vr.explanation) || sale.voidExplanation)}"</div>` : ''}
       </div>
 
       <div>
         <label style="font-size:11.5px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em;">Inventory Restoration Actions</label>
-        <div style="background:#fff; border:1px solid var(--line); border-radius:6px; padding:10px 14px; max-height:140px; overflow-y:auto; margin-top:4px;">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:10px 14px; max-height:140px; overflow-y:auto; margin-top:4px;">
           <ul style="margin:0; padding-left:18px; font-size:12px;">
             ${itemsPlanHtml}
           </ul>
@@ -1704,17 +1678,17 @@ function openRejectVoidConfirmModal(vrId) {
 
   const bodyHtml = `
     <div style="display:flex; flex-direction:column; gap:14px; max-width:540px;">
-      <div style="background:#FEF2F2; border:1.5px solid #FECACA; border-radius:8px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start;">
+      <div style="background:var(--danger-bg); border:1.5px solid var(--danger-border); border-radius:8px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start;">
         <span style="font-size:24px; line-height:1;">✕</span>
         <div>
-          <div style="font-weight:700; color:#991B1B; font-size:13.5px;">Reject Void Request — Receipt ${escapeHtml(receiptNo)}</div>
-          <div style="font-size:12px; color:#7F1D1D; margin-top:2px;">
+          <div style="font-weight:700; color:var(--danger-text); font-size:13.5px;">Reject Void Request — Receipt ${escapeHtml(receiptNo)}</div>
+          <div style="font-size:12px; color:var(--danger-text); margin-top:2px;">
             Rejecting this request will keep the original transaction as <b>Completed</b>. No inventory will be restored. The requesting Cashier will be notified of your decision and rejection note.
           </div>
         </div>
       </div>
 
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-size:12px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-size:12px;">
         <div><b>Requesting Cashier:</b> ${escapeHtml((vr && vr.cashierName) || sale.cashierName || 'Cashier')}</div>
         <div><b>Transaction Total:</b> ${peso(sale.total)}</div>
         <div style="margin-top:2px;"><b>Void Reason:</b> ${escapeHtml((vr && vr.reason) || sale.voidReason || 'Cashier request')}</div>
@@ -1939,7 +1913,7 @@ function renderHistoryTab() {
 
   return `
     <div class="panel" style="padding:0; overflow:hidden;">
-      <div class="panel-head row" style="background:#FAF8F5; padding:12px 16px;">
+      <div class="panel-head row" style="background:var(--surface-2); padding:12px 16px;">
         <div style="font-weight:700; font-size:13.5px; color:var(--ink);">
           Recent Approvals &amp; Decisions Log (${filtered.length})
         </div>
@@ -1952,7 +1926,7 @@ function renderHistoryTab() {
       </div>
 
       <!-- Dedicated Date Range Bar, Year Selector & Historical Records Option -->
-      <div class="audit-date-bar" style="padding:10px 16px; border-top:1px dashed var(--line-light); border-bottom:1px solid var(--line-light); background:#FBF9F4;">
+      <div class="audit-date-bar" style="padding:10px 16px; border-top:1px dashed var(--line-light); border-bottom:1px solid var(--line-light); background:var(--surface-2);">
         <div class="audit-date-group">
           <!-- Year Selector (Defaults to Current Year) -->
           <div class="audit-year-wrap">
@@ -2017,7 +1991,7 @@ function renderHistoryTab() {
           <div>
             🏛️ <b>Historical Approval Decisions:</b> Showing ${!approvalsDateFrom && !approvalsDateTo ? 'All-Time' : (approvalsDateFrom.slice(0, 4) === approvalsDateTo.slice(0, 4) ? `Year ${approvalsDateFrom.slice(0, 4)}` : `${formatDateReadable(approvalsDateFrom)} – ${formatDateReadable(approvalsDateTo)}`)} decisions (<b>${filtered.length}</b> records). All approval audit records are permanently retained in the database.
           </div>
-          <button type="button" class="btn ghost small" onclick="setApprovalsDatePreset('year')" style="color:#7B4F09; border-color:#D19A42; background:#fff;">Return to Current Year (${getCurrentYear()}) &rarr;</button>
+          <button type="button" class="btn ghost small" onclick="setApprovalsDatePreset('year')" style="color:var(--warning-text); border-color:var(--warning-border); background:var(--surface);">Return to Current Year (${getCurrentYear()}) &rarr;</button>
         </div>
       ` : ''}
       <div class="panel-body tight table-scroll">
@@ -2083,17 +2057,17 @@ function renderHistoryRefCell(e) {
   if (e.category === 'voidRequest' && (e.saleId || e.id)) {
     const sid = e.saleId || e.id;
     return `<a href="#" onclick="openVoidDetailsModal('${sid}'); return false;"
-               class="approvals-clickable-ref" style="font-weight:600; color:var(--teal);"
+               class="approvals-clickable-ref" style="font-weight:600; color:var(--teal-text);"
                title="Click to view full void sale transaction details">${escapeHtml(e.ref)}</a>`;
   }
   if (e.category === 'adjustment' && e.id) {
     return `<a href="#" onclick="viewAdjRequestDetails('${e.id}'); return false;"
-               class="approvals-clickable-ref" style="font-weight:600; color:var(--teal);"
+               class="approvals-clickable-ref" style="font-weight:600; color:var(--teal-text);"
                title="Click to view full adjustment record">${escapeHtml(e.ref)}</a>`;
   }
   if (e.category === 'purchaseOrder' && e.id) {
     return `<a href="#" onclick="openPOPreviewModal('${e.id}'); return false;"
-               class="approvals-clickable-ref" style="font-weight:600; color:var(--teal);"
+               class="approvals-clickable-ref" style="font-weight:600; color:var(--teal-text);"
                title="Click to view purchase order record">${escapeHtml(e.ref)}</a>`;
   }
   return `<span style="font-weight:600; color:var(--ink);">${escapeHtml(e.ref)}</span>`;
@@ -2122,7 +2096,7 @@ function openRejectAdjRequestModal(reqId) {
 
   const bodyHtml = `
     <div>
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:12px 14px; margin-bottom:14px; font-size:13px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:12px 14px; margin-bottom:14px; font-size:13px;">
         <div>Request: <b style="font-family:'Space Grotesk',monospace; color:var(--ink);">${escapeHtml(req.reqNumber)}</b></div>
         <div class="muted small" style="margin-top:2px;">Submitted by <b>${escapeHtml(req.requestedBy)}</b> · Category: <b>${escapeHtml(req.reason)}</b></div>
       </div>
@@ -2187,24 +2161,24 @@ function openProductApprovalPreviewModal(productId) {
       </div>
 
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:14px;">
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px;">
           <div class="muted small">Current Price</div>
           <div style="font-size:16px; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink);">${peso(p.price)}</div>
-          ${hasPrice ? `<div style="font-size:12px; color:var(--teal); font-weight:700; margin-top:2px;">➔ Proposed: ${peso(p.pendingPrice)}</div>` : ''}
+          ${hasPrice ? `<div style="font-size:12px; color:var(--teal-text); font-weight:700; margin-top:2px;">➔ Proposed: ${peso(p.pendingPrice)}</div>` : ''}
         </div>
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px;">
           <div class="muted small">Sealed Container Sizes</div>
           <div style="font-size:13px; font-weight:700; color:var(--ink);">${(p.sizes || []).map(s => s + 'L').join(', ') || 'None'}</div>
-          ${hasSizes ? `<div style="font-size:12px; color:var(--teal); font-weight:700; margin-top:2px;">➔ Adding: +[${p.pendingSizes.map(s => s + 'L').join(', ')}]</div>` : ''}
+          ${hasSizes ? `<div style="font-size:12px; color:var(--teal-text); font-weight:700; margin-top:2px;">➔ Adding: +[${p.pendingSizes.map(s => s + 'L').join(', ')}]</div>` : ''}
         </div>
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px;">
           <div class="muted small">Current Stock / Threshold</div>
           <div style="font-size:14px; font-weight:700; color:var(--ink);">${formatStock(p.stock)} units (Minimum: ${p.threshold || 5} units)</div>
         </div>
       </div>
 
       ${hasEdit && p.pendingEdit.proposed ? `
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:12.5px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:12.5px;">
           <b>Proposed Edits:</b>
           <div style="margin-top:4px;">${JSON.stringify(p.pendingEdit.proposed)}</div>
         </div>
@@ -2295,7 +2269,7 @@ function openPOPreviewModal(poId) {
         </div>
       </div>
 
-      ${po.notes ? `<div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:13px;"><b>Order Notes:</b> "${escapeHtml(po.notes)}"</div>` : ''}
+      ${po.notes ? `<div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:13px;"><b>Order Notes:</b> "${escapeHtml(po.notes)}"</div>` : ''}
 
       <div style="max-height:300px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;">
         <table class="po-preview-table">

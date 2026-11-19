@@ -136,10 +136,6 @@ function getProductEligibleSizes(p) {
   return LowStockService.getProductEligibleSizes(p);
 }
 
-function getAllEligibleAlertSizes(productsList) {
-  return LowStockService.getAllEligibleSizes(productsList);
-}
-
 function toggleSelectAllAlerts(checked) {
   if (checked) {
     const list = getAlertsList();
@@ -167,10 +163,6 @@ function toggleSelectProductSizes(productId, forceState = null) {
 
 function onAlertSizeCheck(checkbox, productId, size, sizeId) {
   LowStockService.toggleSize(productId, size, sizeId, checkbox.checked);
-}
-
-function updateAlertsSelectionUI() {
-  LowStockService.syncUI();
 }
 
 function createPOForSingleSize(productId, size, sizeId = null) {
@@ -228,10 +220,10 @@ function alertsPage() {
         <div style="display:flex; align-items:center; gap:10px;">
           <span style="font-size:22px; line-height:1;">⚠️</span>
           <div>
-            <div style="font-weight:700; font-size:14px; color:#9B1C1C;">
+            <div style="font-weight:700; font-size:14px; color:var(--danger-text);">
               Attention Required: <b>${summary.needingPOSizes} container size(s)</b> across <b>${summary.needingPOProducts} product(s)</b> need purchase orders.
             </div>
-            <div style="font-size:12px; color:#B91C1C; margin-top:2px; opacity:0.95;">
+            <div style="font-size:12px; color:var(--danger-text); margin-top:2px; opacity:0.95;">
               ${summary.onOrderSizes > 0 ? `(${summary.onOrderSizes} other size(s) across ${summary.onOrderProducts} product(s) already have purchase orders awaiting delivery)` : 'No active purchase orders are currently placed for these low items.'}
             </div>
           </div>
@@ -245,7 +237,7 @@ function alertsPage() {
         ` : ''}
       </div>
     ` : (summary.onOrderSizes > 0 ? `
-      <div class="alert-banner" style="background:#EBF5FB; border-color:#AED6F1; color:#1B4F72; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:0; box-shadow:var(--shadow-sm); border-radius:var(--radius-sm);">
+      <div class="alert-banner" style="background:var(--info-bg); border-color:var(--info-border); color:var(--info-text); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:0; box-shadow:var(--shadow-sm); border-radius:var(--radius-sm);">
         <div style="display:flex; align-items:center; gap:10px;">
           <span style="font-size:22px; line-height:1;">🚚</span>
           <div>
@@ -256,7 +248,7 @@ function alertsPage() {
         <button class="btn small secondary" onclick="setAlertTab('on_order')">View On-Order Items (${summary.onOrderSizes}) &rarr;</button>
       </div>
     ` : `
-      <div class="alert-banner" style="background:#DEF7EC; border-color:#BCF0DA; color:#03543F; margin-bottom:0; box-shadow:var(--shadow-sm); border-radius:var(--radius-sm);">
+      <div class="alert-banner" style="background:var(--success-bg); border-color:var(--success-border); color:var(--success-text); margin-bottom:0; box-shadow:var(--shadow-sm); border-radius:var(--radius-sm);">
         <span style="font-size:18px;">✅</span> <b>Healthy Inventory:</b> All products and container sizes are currently above their minimum reorder thresholds.
       </div>
     `)}
@@ -265,9 +257,9 @@ function alertsPage() {
     <div class="restock-summary-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
       <!-- Card 1: Needs Purchase Order -->
       <div class="restock-card restock-card-accent-danger ${alertTab === 'needing_po' ? 'active' : ''}" onclick="setAlertTab('needing_po')" title="Click to filter products needing purchase orders">
-        <div class="restock-card-icon" style="background:#FDE8E8; color:#9B1C1C;">⚠️</div>
+        <div class="restock-card-icon" style="background:var(--danger-bg); color:var(--danger-text);">⚠️</div>
         <div class="restock-card-body">
-          <div class="restock-card-val" style="color:#C1443D;">
+          <div class="restock-card-val" style="color:var(--danger-text);">
             ${summary.needingPOSizes} <span style="font-size:12.5px; font-weight:600; color:var(--ink-soft);">Sizes</span>
           </div>
           <div class="restock-card-lbl">Needs Purchase Order</div>
@@ -277,9 +269,9 @@ function alertsPage() {
 
       <!-- Card 2: On Order / Awaiting Delivery -->
       <div class="restock-card restock-card-accent-info ${alertTab === 'on_order' ? 'active' : ''}" onclick="setAlertTab('on_order')" title="Click to filter items on order awaiting delivery">
-        <div class="restock-card-icon" style="background:#EBF5FB; color:#1B4F72;">🚚</div>
+        <div class="restock-card-icon" style="background:var(--info-bg); color:var(--info-text);">🚚</div>
         <div class="restock-card-body">
-          <div class="restock-card-val" style="color:#1F6F6B;">
+          <div class="restock-card-val" style="color:var(--teal-dark);">
             ${summary.onOrderSizes} <span style="font-size:12.5px; font-weight:600; color:var(--ink-soft);">Sizes</span>
           </div>
           <div class="restock-card-lbl">On Order / Awaiting Delivery</div>
@@ -289,7 +281,7 @@ function alertsPage() {
 
       <!-- Card 3: Total Low-Stock Items -->
       <div class="restock-card restock-card-accent-neutral ${alertTab === 'all' ? 'active' : ''}" onclick="setAlertTab('all')" title="Click to view all low-stock items">
-        <div class="restock-card-icon" style="background:#F4EFE6; color:var(--ink);">📊</div>
+        <div class="restock-card-icon" style="background:var(--surface-3); color:var(--ink);">📊</div>
         <div class="restock-card-body">
           <div class="restock-card-val" style="color:var(--ink);">
             ${summary.totalLowSizes} <span style="font-size:12.5px; font-weight:600; color:var(--ink-soft);">Sizes</span>
@@ -301,9 +293,9 @@ function alertsPage() {
 
       <!-- Card 4: Total Products Affected -->
       <div class="restock-card" style="border-left:4px solid #8B5CF6;" title="Total unique active products with low stock">
-        <div class="restock-card-icon" style="background:#F5F3FF; color:#6D28D9;">📦</div>
+        <div class="restock-card-icon" style="background:var(--purple-bg); color:var(--purple-text);">📦</div>
         <div class="restock-card-body">
-          <div class="restock-card-val" style="color:#6D28D9;">
+          <div class="restock-card-val" style="color:var(--purple-text);">
             ${summary.totalProductsAffected} <span style="font-size:12.5px; font-weight:600; color:var(--ink-soft);">Products</span>
           </div>
           <div class="restock-card-lbl">Total Products Affected</div>
@@ -313,9 +305,9 @@ function alertsPage() {
 
       <!-- Card 5: Total Container Sizes Affected -->
       <div class="restock-card" style="border-left:4px solid #F59E0B;" title="Total container sizes at or below threshold">
-        <div class="restock-card-icon" style="background:#FEF3C7; color:#B45309;">🪣</div>
+        <div class="restock-card-icon" style="background:var(--warning-bg); color:var(--warning-text);">🪣</div>
         <div class="restock-card-body">
-          <div class="restock-card-val" style="color:#B45309;">
+          <div class="restock-card-val" style="color:var(--warning-text);">
             ${summary.totalContainerSizesAffected} <span style="font-size:12.5px; font-weight:600; color:var(--ink-soft);">Variants</span>
           </div>
           <div class="restock-card-lbl">Total Container Sizes</div>
@@ -326,7 +318,7 @@ function alertsPage() {
   </div>
 
   <!-- PHASE 2.B: Tabs and Comprehensive Filters Bar -->
-  <div class="report-toggle-bar" style="margin-bottom:14px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#FAF7F2; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+  <div class="report-toggle-bar" style="margin-bottom:14px; border-radius:var(--radius-sm); border:1px solid var(--line); background:var(--surface-2); padding:10px 14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
     <!-- Status Tabs -->
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
       <button type="button" class="report-toggle-btn ${alertTab === 'needing_po' ? 'active' : ''}" onclick="setAlertTab('needing_po')">
@@ -352,26 +344,26 @@ function alertsPage() {
                placeholder="Search product, brand, color..."
                value="${escapeHtml(alertSearchQuery)}"
                oninput="setAlertSearch(this.value)"
-               style="width:100%; padding:5px 26px 5px 10px; font-size:12px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#fff; color:var(--ink);">
+               style="width:100%; padding:5px 26px 5px 10px; font-size:12px; border-radius:var(--radius-sm); border:1px solid var(--line); background:var(--surface); color:var(--ink);">
         ${alertSearchQuery ? `
           <button type="button" onclick="setAlertSearch('');" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); border:none; background:none; color:var(--ink-soft); cursor:pointer; font-size:12px;">✕</button>
         ` : ''}
       </div>
 
       <!-- Filter by Supplier -->
-      <select id="alerts-supplier-filter" onchange="setAlertSupplierFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:var(--ink); max-width:160px;" title="Filter by Supplier">
+      <select id="alerts-supplier-filter" onchange="setAlertSupplierFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); max-width:160px;" title="Filter by Supplier">
         <option value="all" ${alertSupplierFilter === 'all' ? 'selected' : ''}>All Suppliers</option>
         ${activeSuppliers.map(s => `<option value="${s.id}" ${String(alertSupplierFilter) === String(s.id) ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
       </select>
 
       <!-- Filter by Container Size -->
-      <select id="alerts-size-dropdown" onchange="setAlertContainerSizeFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:var(--ink);" title="Filter by Container Size">
+      <select id="alerts-size-dropdown" onchange="setAlertContainerSizeFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink);" title="Filter by Container Size">
         <option value="all" ${alertContainerSizeFilter === 'all' ? 'selected' : ''}>All Sizes</option>
         ${distinctSizes.map(sz => `<option value="${sz}" ${String(alertContainerSizeFilter) === String(sz) ? 'selected' : ''}>${fmtSize(sz)}</option>`).join('')}
       </select>
 
       <!-- Filter by Stock Status -->
-      <select id="alerts-status-dropdown" onchange="setAlertStockStatusFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:var(--ink);" title="Filter by Stock Status">
+      <select id="alerts-status-dropdown" onchange="setAlertStockStatusFilter(this.value)" style="padding:4px 8px; font-size:12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink);" title="Filter by Stock Status">
         <option value="all" ${alertStockStatusFilter === 'all' ? 'selected' : ''}>All Stock Statuses</option>
         <option value="low" ${alertStockStatusFilter === 'low' ? 'selected' : ''}>Low Stock</option>
         <option value="out" ${alertStockStatusFilter === 'out' ? 'selected' : ''}>Out of Stock</option>
@@ -379,7 +371,7 @@ function alertsPage() {
       </select>
 
       <!-- View Size Mode Toggle -->
-      <div style="display:flex; align-items:center; gap:2px; background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); padding:2px;">
+      <div style="display:flex; align-items:center; gap:2px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:2px;">
         <button type="button"
                 class="btn ghost small"
                 style="padding:3px 8px; font-size:11px; ${alertSizeFilter === 'low_only' ? 'background:var(--teal); color:#fff; font-weight:700;' : 'color:var(--ink-soft);'}"
@@ -480,7 +472,7 @@ function alertsPage() {
           if (!sizes.length) return '';
 
           const rowSpan = sizes.length;
-          const bgGroup = pIdx % 2 === 1 ? 'background:#FCFBF9;' : 'background:#FFFFFF;';
+          const bgGroup = pIdx % 2 === 1 ? 'background:var(--surface-2);' : 'background:var(--surface);';
           const prodEligible = LowStockService.getProductEligibleSizes(p);
           const parentState = LowStockService.getProductSelectionState(p.id);
 
@@ -498,14 +490,14 @@ function alertsPage() {
             const poSt = LowStockService.getVariantPOStatus(p, s, sizeId);
             const isEligible = LowStockService.isVariantEligible(p, s, sizeId);
             const isChecked = LowStockService.isSelected(p.id, s, sizeId);
-            const borderBottom = isLast ? 'border-bottom: 2px solid #D8D1C4;' : 'border-bottom: 1px solid #F0ECE1;';
+            const borderBottom = isLast ? 'border-bottom: 2px solid var(--line-strong);' : 'border-bottom: 1px solid var(--line-light);';
 
             return `
               <tr class="alert-row alert-prod-row-${p.id} ${isLast ? 'product-row-last' : ''} ${isChecked ? 'row-selected' : ''} ${poSt.status === 'on_order' ? 'row-on-order' : ''}" style="${bgGroup}">
                 
                 <!-- PHASE 4.A: Parent Checkbox (first row only) & PHASE 4.B: Child Size Checkbox -->
                 ${canOrder && alertTab !== 'on_order' ? (isFirst ? `
-                  <td rowspan="${rowSpan}" style="text-align:center; vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                  <td rowspan="${rowSpan}" style="text-align:center; vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                     <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
                       <input type="checkbox"
                              class="alert-prod-chk"
@@ -524,7 +516,7 @@ function alertsPage() {
                 <!-- Grouped Parent Product Info (First row only) -->
                 ${isFirst ? `
                   <!-- Product Name -->
-                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                     <div style="font-weight:700; font-size:13.5px; color:var(--ink); line-height:1.3;" title="${escapeHtml(p.name)}">
                       ${escapeHtml(p.name)}
                     </div>
@@ -534,10 +526,10 @@ function alertsPage() {
                   </td>
 
                   <!-- Color Code and Color Name -->
-                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                       <span style="display:inline-block; width:12px; height:12px; border-radius:2px; background:${getProductHex(p)}; border:1px solid rgba(0,0,0,0.25);"></span>
-                      <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:700; color:var(--teal);">${getProductHex(p)}</code>
+                      <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:700; color:var(--teal-text);">${getProductHex(p)}</code>
                     </div>
                     <div style="font-size:11.5px; color:var(--ink-soft); margin-top:3px; font-weight:500;">
                       ${p.color && p.color !== '-' ? escapeHtml(p.color) : '<span class="muted">—</span>'}
@@ -545,12 +537,12 @@ function alertsPage() {
                   </td>
 
                   <!-- Brand -->
-                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC; font-weight:600; font-size:12.5px;">
+                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line); font-weight:600; font-size:12.5px;">
                     ${escapeHtml(p.brand)}
                   </td>
 
                   <!-- Supplier -->
-                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                  <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                     ${supplierBadgesHtml(p.id)}
                   </td>
                 ` : ''}
@@ -569,23 +561,23 @@ function alertsPage() {
                              onchange="onAlertSizeCheck(this, '${p.id}', ${s}, '${sizeId || ''}')"
                              title="Select ${escapeHtml(p.name)} (${fmtSize(s)}) for purchase order">
                     ` : (poSt.status === 'on_order' ? `
-                      <span title="Already on order in purchase order ${poSt.poNumber || ''}" style="color:#1B4F72; font-size:12px; opacity:0.8; cursor:help;">🚚</span>
+                      <span title="Already on order in purchase order ${poSt.poNumber || ''}" style="color:var(--info-text); font-size:12px; opacity:0.8; cursor:help;">🚚</span>
                     ` : `
-                      <span style="color:#CBD5E1; font-size:12px;" title="Stock is sufficient — restocking not required">—</span>
+                      <span style="color:var(--ink-soft); font-size:12px;" title="Stock is sufficient — restocking not required">—</span>
                     `)) : ''}
-                    <span class="badge" style="background:#FAF8F5; border:1px solid #E5DDCF; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:11.5px; padding:2px 7px;">
+                    <span class="badge" style="background:var(--surface-2); border:1px solid var(--line); font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:11.5px; padding:2px 7px;">
                       ${fmtSize(s)}
                     </span>
                   </div>
                 </td>
 
                 <!-- Stock Quantity (Units) -->
-                <td class="right" style="font-weight:700; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:#B45309;' : 'color:var(--ink);')}">
+                <td class="right" style="font-weight:700; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:var(--warning-text);' : 'color:var(--ink);')}">
                   ${count} ${count === 1 ? 'unit' : 'units'}
                 </td>
 
                 <!-- Stock Volume (L) -->
-                <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:#B45309;' : 'color:var(--ink-soft);')}">
+                <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:var(--warning-text);' : 'color:var(--ink-soft);')}">
                   ${formatLiters(stockVol)}
                 </td>
 
@@ -622,7 +614,7 @@ function alertsPage() {
                       </button>
                     ` : '<span class="muted small">—</span>'}
                   ` : `
-                    <span class="muted small" style="color:#94A3B8; font-size:11px;">In Stock</span>
+                    <span class="muted small" style="color:var(--ink-soft); font-size:11px;">In Stock</span>
                   `)}
                 </td>
               </tr>`;
@@ -654,7 +646,7 @@ function alertsPage() {
     </div>
     <div style="display:flex; align-items:center; gap:8px;">
       <button class="btn ghost small" onclick="LowStockService.clear()" style="color:#fff; border-color:rgba(255,255,255,0.4);">Cancel</button>
-      <button id="alerts-floating-btn" class="btn small" style="background:#fff; color:var(--teal-dark); font-weight:700; box-shadow:var(--shadow-md);" onclick="createPOFromSelectedAlerts()">
+      <button id="alerts-floating-btn" class="btn small" style="background:var(--surface); color:var(--teal-dark); font-weight:700; box-shadow:var(--shadow-md);" onclick="createPOFromSelectedAlerts()">
         ⚡ Create Purchase Order (${selectedCount === 1 ? '1 Size' : `${selectedCount} Sizes`}) &rarr;
       </button>
     </div>

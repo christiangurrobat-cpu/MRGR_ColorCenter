@@ -500,43 +500,6 @@ function clearPODates() {
   setPODatePreset('all');
 }
 
-function setPODateFilter(from, to) {
-  const minDate = getPOMinSelectableDate();
-  const maxDate = getPOMaxSelectableDate();
-  let f = from || '';
-  let t = to || '';
-  if (f && f > maxDate) f = maxDate;
-  if (t && t > maxDate) t = maxDate;
-  if (f && f < minDate) f = minDate;
-  if (t && t < minDate) t = minDate;
-  if (f && t && f > t) {
-    const tmp = f;
-    f = t;
-    t = tmp;
-  }
-  poDateFrom = f;
-  poDateTo = t;
-  // Preserve selected year; do NOT set to custom
-  resetPaginationPage('purchase_orders');
-  renderPage();
-}
-
-function setPODateShortcut(daysAgo) {
-  if (daysAgo === null || daysAgo === undefined) setPODatePreset('all');
-  else if (daysAgo === 0) setPODatePreset('today');
-  else if (daysAgo === 1) setPODatePreset('yesterday');
-  else if (daysAgo === 6) setPODatePreset('7d');
-  else if (daysAgo === 29) setPODatePreset('30d');
-  else {
-    const minDate = getPOMinSelectableDate();
-    const d = daysAgoISO(daysAgo);
-    poDateFrom = d < minDate ? minDate : d;
-    poDateTo = todayISO();
-    resetPaginationPage('purchase_orders');
-    renderPage();
-  }
-}
-
 function formatPODateRangeLabel() {
   const curY = getCurrentYear();
   const today = todayISO();
@@ -687,7 +650,7 @@ function poListPage() {
         <div>
           🏛️ <b>Historical Purchase Orders:</b> Showing ${!poDateFrom && !poDateTo ? 'All-Time' : (poDateFrom.slice(0, 4) === poDateTo.slice(0, 4) ? `Year ${poDateFrom.slice(0, 4)}` : `${formatDateReadable(poDateFrom)} – ${formatDateReadable(poDateTo)}`)} orders (<b>${orders.length}</b> orders retained). Historical records are permanently retained in the database.
         </div>
-        <button type="button" class="btn ghost small" onclick="setPODatePreset('year')" style="color:#7B4F09; border-color:#D19A42; background:#fff;">Return to Current Year (${curY}) &rarr;</button>
+        <button type="button" class="btn ghost small" onclick="setPODatePreset('year')" style="color:var(--warning-text); border-color:var(--warning-border); background:var(--surface);">Return to Current Year (${curY}) &rarr;</button>
       </div>
     ` : ''}
 
@@ -893,7 +856,7 @@ function poDetailPage() {
                 <td>
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                     <strong>${escapeHtml(item.productName)}</strong>
-                    <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal);">(${getProductHex(p)})</code>
+                    <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal-text);">(${getProductHex(p)})</code>
                     ${item.color && item.color !== '-' ? `<span class="muted small"> (${escapeHtml(item.color)})</span>` : ''}
                   </div>
                 </td>
@@ -906,7 +869,7 @@ function poDetailPage() {
                 <td class="right" style="font-family:'Space Grotesk',sans-serif; font-weight:600;">${peso(costInfo.purchaseCostPerUnit)}</td>
                 <td class="right"><strong>${formatStock(ordered)}</strong></td>
                 <td class="right" style="color:${received > 0 ? 'var(--teal)' : 'var(--ink-soft)'}; font-weight:600;">${formatStock(received)}</td>
-                <td class="right" style="color:${remaining > 0 ? '#C1443D' : 'var(--success)'}; font-weight:700;">${formatStock(remaining)}</td>
+                <td class="right" style="color:${remaining > 0 ? 'var(--danger-text)' : 'var(--success)'}; font-weight:700;">${formatStock(remaining)}</td>
                 <td class="center">${statusBadge}</td>
                 <td class="right" style="font-weight:700; color:var(--teal-dark); font-family:'Space Grotesk',sans-serif;">${peso(costInfo.lineTotal)}</td>
               </tr>`;
@@ -942,9 +905,17 @@ function confirmApprovePO(id) {
 }
 
 async function approvePO(id) {
+  if (typeof currentUser === 'undefined' || !currentUser || currentUser.role !== 'admin') {
+    showToast('Access denied: Only Administrators can approve purchase orders.', 'error');
+    return;
+  }
   const po = (db.purchaseOrders || []).find(o => o.id === id);
   if (!po) return;
-  const prevStatus = po.status === 'pending' ? 'Pending Approval' : (po.status || 'Pending');
+  if (po.status !== 'pending') {
+    showToast(`Purchase Order ${po.poNumber} cannot be approved because its status is "${po.status}".`, 'error');
+    return;
+  }
+  const prevStatus = 'Pending Approval';
   po.status = 'ordered';
   logAudit('PO_APPROVE', 'Purchase Order', `Approved Purchase Order ${po.poNumber} for ${po.supplierName} (${peso(po.totalAmount)})`, {
     entityName: po.poNumber,
@@ -1039,6 +1010,9 @@ async function completePOReceiving(po, refNote = '', batchQtys = null, batchMeta
         afterSummaryList.push(`${p.name} (${size}L): ${afterCans} units (${formatStock(p.stock)}L total)`);
         const bm = (batchMeta && (batchMeta[idx] || batchMeta[item.productId])) || {};
         const unitCostVal = item.unitCost !== undefined ? Number(item.unitCost) : (item.purchaseCostPerUnit !== undefined ? Number(item.purchaseCostPerUnit) : null);
+        const datePart = String(date || '').slice(0, 10).replace(/-/g, '') || new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const randPart = (typeof uid === 'function' ? uid('') : Math.random().toString(36).slice(2, 8)).replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase();
+        const batchNumber = (bm.batchNumber && String(bm.batchNumber).trim()) ? String(bm.batchNumber).trim() : `LOT-${datePart}-${randPart}${idx}`;
         db.movements.push({
           id: uid('mv'),
           date,
@@ -1051,7 +1025,7 @@ async function completePOReceiving(po, refNote = '', batchQtys = null, batchMeta
           productName: p.name,
           qtyChange: liters,
           batch: {
-            batchNumber: bm.batchNumber || '',
+            batchNumber: batchNumber,
             expirationDate: bm.expirationDate || null,
             notes: bm.notes || refNote || null,
             unitCost: unitCostVal,
@@ -1149,7 +1123,7 @@ function printPO(id) {
       <img src="assets/images/logo.png" alt="MRGR Logo" style="width:50px; height:50px; border-radius:50%; object-fit:cover;">
       <div>
         <h1 style="margin:0 0 4px;">Purchase Order: ${escapeHtml(po.poNumber)}</h1>
-        <h2 style="margin:0; font-size:14px; color:#6B6259; font-weight:500;">MRGR Color Center</h2>
+        <h2 style="margin:0; font-size:14px; color:var(--ink-soft); font-weight:500;">MRGR Color Center</h2>
       </div>
     </div>
     <div class="meta">
@@ -1188,46 +1162,6 @@ function printPO(id) {
 }
 
 /* ----- PO CREATE ----- */
-function getProductsForSupplier(supplierId) {
-  if (!supplierId || typeof db === 'undefined' || !db || !Array.isArray(db.products)) return [];
-  const supplier = (db.suppliers || []).find(s => s.id === supplierId);
-  const sProductIds = supplier && Array.isArray(supplier.productIds) ? supplier.productIds : [];
-  const psProductIds = (db.productSuppliers || [])
-    .filter(ps => (ps.supplierId === supplierId || ps.supplier_id === supplierId))
-    .map(ps => ps.productId || ps.product_id);
-
-  return activeProducts().filter(p => {
-    if (!p || p.status !== 'active') return false;
-    return sProductIds.includes(p.id) ||
-      psProductIds.includes(p.id) ||
-      p.supplierId === supplierId ||
-      p.supplier_id === supplierId;
-  });
-}
-
-function onPOStockFilterChange(val) {
-  poCreateStockFilter = val || 'low_out';
-  renderPOItemRows();
-}
-
-function isSizeVisibleInPO(product, size, row, filter) {
-  if (filter === 'all') return true;
-  if (row && row.expanded) return true;
-  const st = productSizeStatus(product, size);
-  if (filter === 'low_out') return st === 'low' || st === 'out';
-  if (filter === 'low_only') return st === 'low';
-  if (filter === 'out_only') return st === 'out';
-  if (filter === 'good_only') return st === 'ok';
-  return true;
-}
-
-function togglePOProductExpand(index) {
-  if (poItemRows[index]) {
-    poItemRows[index].expanded = !poItemRows[index].expanded;
-    renderPOItemRows();
-  }
-}
-
 // ============================================================
 // REDESIGNED PURCHASE ORDER WORKFLOW: 4-STEP WIZARD
 // 1. SELECT MULTIPLE PRODUCTS -> 2. SELECT ONE COMMON SUPPLIER
@@ -1286,7 +1220,7 @@ function poCreatePage() {
       <span style="font-size:13px; font-weight:600; color:var(--ink);">Create Purchase Order</span>
     </div>
 
-    <div class="panel" style="border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-sm); background:#fff;">
+    <div class="panel" style="border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-sm); background:var(--surface);">
       <div class="panel-head row" style="border-bottom:1px solid var(--line-light); padding:16px 20px;">
         <div>
           <h3 style="margin:0; font-size:18px; color:var(--ink); font-weight:700;">📋 Create Purchase Order</h3>
@@ -1357,6 +1291,15 @@ function poCreatePage() {
       </div>
     </div>
   `;
+}
+
+/** Render a prominent color pill with swatch dot and color name for the PO wizard. */
+function poRenderColorPill(color, colorHex) {
+  if (!color) return '';
+  const swatch = colorHex
+    ? `<span class="po-color-swatch" style="background:${escapeHtml(colorHex)};"></span>`
+    : '';
+  return `<span class="po-color-pill">${swatch}${escapeHtml(color)}</span>`;
 }
 
 // ------------------------------------------------------------
@@ -1434,7 +1377,7 @@ function renderPOWizardStep1Html() {
   return `
     <div class="po-catalog-panel">
       <!-- Toolbar: Search, Filters, Selection Count & Continue -->
-      <div class="po-catalog-toolbar" style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; margin-bottom:16px;">
+      <div class="po-catalog-toolbar" style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; margin-bottom:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
           <div>
             <h4 style="margin:0; font-size:15px; color:var(--ink); font-weight:700;">📦 Step 1: Select Products &amp; Container Sizes</h4>
@@ -1455,13 +1398,13 @@ function renderPOWizardStep1Html() {
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <!-- Search box -->
           <div style="flex:1; min-width:220px; position:relative;">
-            <input type="text" id="po-catalog-search-input" placeholder="🔍 Search by product name, brand, color, SKU..." value="${escapeHtml(poCatalogSearch)}" oninput="onPOCatalogSearchChange(this.value)" style="width:100%; padding:7px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+            <input type="text" id="po-catalog-search-input" placeholder="🔍 Search by product name, brand, color, SKU..." value="${escapeHtml(poCatalogSearch)}" oninput="onPOCatalogSearchChange(this.value)" style="width:100%; padding:7px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:var(--surface);">
             ${poCatalogSearch ? `<button type="button" onclick="onPOCatalogSearchChange('')" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:14px;">✕</button>` : ''}
           </div>
 
           <!-- Category filter -->
           <div style="min-width:160px;">
-            <select id="po-catalog-cat-select" onchange="onPOCatalogCategoryChange(this.value)" style="width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+            <select id="po-catalog-cat-select" onchange="onPOCatalogCategoryChange(this.value)" style="width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:var(--surface);">
               <option value="all" ${cat === 'all' ? 'selected' : ''}>All Categories</option>
               ${categories.map(c => `<option value="${escapeHtml(c)}" ${cat === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
             </select>
@@ -1469,7 +1412,7 @@ function renderPOWizardStep1Html() {
 
           <!-- Stock level filter -->
           <div style="min-width:160px;">
-            <select id="po-catalog-stock-select" onchange="onPOCatalogStockChange(this.value)" style="width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+            <select id="po-catalog-stock-select" onchange="onPOCatalogStockChange(this.value)" style="width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:var(--surface);">
               <option value="all" ${stockFilter === 'all' ? 'selected' : ''}>All Stock Levels</option>
               <option value="low_out" ${stockFilter === 'low_out' ? 'selected' : ''}>⚠️ Low / Out of Stock</option>
               <option value="in_stock" ${stockFilter === 'in_stock' ? 'selected' : ''}>🟢 In Stock Only</option>
@@ -1490,7 +1433,7 @@ function renderPOWizardStep1Html() {
 
       <!-- Grouped Product Catalog Table -->
       ${groupedProducts.length === 0 ? `
-        <div style="text-align:center; padding:40px 20px; background:#FAF8F5; border:1px dashed var(--line); border-radius:var(--radius);">
+        <div style="text-align:center; padding:40px 20px; background:var(--surface-2); border:1px dashed var(--line); border-radius:var(--radius);">
           <div style="font-size:32px; margin-bottom:8px;">🔍</div>
           <div style="font-weight:700; color:var(--ink); font-size:15px;">No products match your search or filter</div>
           <div class="muted small" style="margin-top:4px;">Try clearing search keywords or selecting "All Categories" and "All Stock Levels".</div>
@@ -1499,10 +1442,10 @@ function renderPOWizardStep1Html() {
           </div>
         </div>
       ` : `
-        <div style="border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:#fff; margin-bottom:16px;">
+        <div style="border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--surface); margin-bottom:16px;">
           <table class="table" style="margin:0; width:100%; border-collapse:collapse;">
             <thead>
-              <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+              <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
                 <th style="width:36%; padding:10px 14px; font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase;">
                   Product Information
                 </th>
@@ -1513,28 +1456,23 @@ function renderPOWizardStep1Html() {
             </thead>
             <tbody>
               ${groupedProducts.map(grp => {
-                const p = grp.product;
-                const pSizes = grp.sizes;
-                const allThisProdSelected = pSizes.every(sz => poSelectedKeys.has(sz.key));
-                const someThisProdSelected = pSizes.some(sz => poSelectedKeys.has(sz.key));
+    const p = grp.product;
+    const pSizes = grp.sizes;
+    const allThisProdSelected = pSizes.every(sz => poSelectedKeys.has(sz.key));
+    const someThisProdSelected = pSizes.some(sz => poSelectedKeys.has(sz.key));
 
-                return `
+    return `
                   <tr class="po-product-row" style="border-bottom:1px solid var(--line);">
                     <!-- Left Column: Product Info & Select All Sizes button -->
-                    <td style="vertical-align:top; padding:14px; background:#FCFAF7; border-right:1px solid var(--line-light);">
+                    <td style="vertical-align:top; padding:14px; background:var(--surface-2); border-right:1px solid var(--line-light);">
                       <div style="font-weight:700; color:var(--ink); font-size:14px; line-height:1.3;">
                         ${escapeHtml(p.name)}
                       </div>
                       
                       <div style="display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap;">
-                        <span class="badge ghost small" style="background:#fff; font-weight:600;">${escapeHtml(p.brand || '—')}</span>
-                        <span class="badge ghost small" style="background:#fff;">${escapeHtml(p.category || p.type || 'General')}</span>
-                        ${p.color ? `
-                          <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--ink-soft); background:#fff; border:1px solid var(--line); border-radius:10px; padding:2px 7px;">
-                            ${p.colorHex ? `<span style="width:9px; height:9px; border-radius:50%; background:${escapeHtml(p.colorHex)}; border:1px solid rgba(0,0,0,0.15); display:inline-block;"></span>` : ''}
-                            ${escapeHtml(p.color)}
-                          </span>
-                        ` : ''}
+                        <span class="badge ghost small" style="background:var(--surface); font-weight:600;">${escapeHtml(p.brand || '—')}</span>
+                        <span class="badge ghost small" style="background:var(--surface);">${escapeHtml(p.category || p.type || 'General')}</span>
+                        ${poRenderColorPill(p.color, p.colorHex)}
                       </div>
 
                       <div class="muted small" style="margin-top:6px; font-size:11px;">
@@ -1552,12 +1490,12 @@ function renderPOWizardStep1Html() {
                     <td style="vertical-align:top; padding:8px 10px;">
                       <div class="po-grouped-sizes-list" style="display:flex; flex-direction:column; gap:6px;">
                         ${pSizes.map(sz => {
-                          const isChecked = poSelectedKeys.has(sz.key);
-                          const suppCount = sz.suppliers.length;
-                          const supplierNames = sz.suppliers.map(s => s.supplier ? s.supplier.name : s.supplierId).join(', ');
+      const isChecked = poSelectedKeys.has(sz.key);
+      const suppCount = sz.suppliers.length;
+      const supplierNames = sz.suppliers.map(s => s.supplier ? s.supplier.name : s.supplierId).join(', ');
 
-                          return `
-                            <div class="po-size-item-row po-catalog-row ${isChecked ? 'selected' : ''}" style="display:flex; align-items:center; gap:12px; padding:8px 12px; border-radius:var(--radius-sm); border:1px solid ${isChecked ? 'var(--teal)' : 'var(--line-light)'}; background:${isChecked ? '#F0F9F8' : '#FAF8F5'}; cursor:pointer; transition:all 0.12s ease;" onclick="poToggleProductSize('${p.id}', ${sz.size})">
+      return `
+                            <div class="po-size-item-row po-catalog-row ${isChecked ? 'selected' : ''}" style="display:flex; align-items:center; gap:12px; padding:8px 12px; border-radius:var(--radius-sm); border:1px solid ${isChecked ? 'var(--teal)' : 'var(--line-light)'}; background:${isChecked ? 'var(--teal-tint)' : 'var(--surface-2)'}; cursor:pointer; transition:all 0.12s ease;" onclick="poToggleProductSize('${p.id}', ${sz.size})">
                               <!-- Checkbox -->
                               <div onclick="event.stopPropagation()" style="display:flex; align-items:center;">
                                 <input type="checkbox" id="chk_${p.id}_${sz.size}" ${isChecked ? 'checked' : ''} onchange="poToggleProductSize('${p.id}', ${sz.size})" style="cursor:pointer; width:16px; height:16px;">
@@ -1565,7 +1503,7 @@ function renderPOWizardStep1Html() {
 
                               <!-- Size Badge -->
                               <div style="min-width:85px;">
-                                <span class="badge ghost small" style="background:#FFF; border:1px solid var(--line); font-weight:700; font-size:12px; color:var(--ink);">
+                                <span class="badge ghost small" style="background:var(--surface); border:1px solid var(--line); font-weight:700; font-size:12px; color:var(--ink);">
                                   ${fmtSize(sz.size)}
                                 </span>
                               </div>
@@ -1587,11 +1525,11 @@ function renderPOWizardStep1Html() {
                               <!-- Linked Suppliers Details -->
                               <div style="flex:1; display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
                                 ${suppCount === 0 ? `
-                                  <span class="badge small" style="background:#FEE2E2; color:#991B1B; border:1px solid #FCA5A5;">
+                                  <span class="badge small" style="background:var(--danger-bg); color:var(--danger-text); border:1px solid var(--danger-border);">
                                     ⚠️ No supplier linked
                                   </span>
                                 ` : `
-                                  <span class="badge small" style="background:#E6F4F1; color:#0F766E; border:1px solid #B2DFDB;" title="${escapeHtml(supplierNames)}">
+                                  <span class="badge small" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border);" title="${escapeHtml(supplierNames)}">
                                     ✓ ${suppCount} supplier${suppCount === 1 ? '' : 's'}
                                   </span>
                                   <span class="muted small" style="font-size:11px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(supplierNames)}">
@@ -1601,18 +1539,18 @@ function renderPOWizardStep1Html() {
                               </div>
                             </div>
                           `;
-                        }).join('')}
+    }).join('')}
                       </div>
                     </td>
                   </tr>
                 `;
-              }).join('')}
+  }).join('')}
             </tbody>
           </table>
         </div>
 
         <!-- Sticky / Bottom Continue Action Bar -->
-        <div style="padding:14px 18px; background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div style="padding:14px 18px; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
           <div>
             <span style="font-size:13.5px; font-weight:700; color:var(--ink);">
               ${selectedCount > 0 ? `Selected <b>${selectedCount}</b> size${selectedCount === 1 ? '' : 's'} across <b>${uniqueSelectedProducts.size}</b> product${uniqueSelectedProducts.size === 1 ? '' : 's'}` : 'No products selected yet'}
@@ -1819,14 +1757,14 @@ function renderPOWizardStep2Html() {
   return `
     <div class="po-supplier-selection-view">
       <!-- Top Selected Items Summary Bar -->
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
         <div style="flex:1;">
           <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:6px;">
             Selected Products &amp; Sizes (${selectedCount} item${selectedCount === 1 ? '' : 's'} across ${uniqueProductsCount} product${uniqueProductsCount === 1 ? '' : 's'}):
           </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             ${selectedItemsList.map(it => `
-              <span class="badge small" style="background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 8px; font-size:11.5px;">
+              <span class="badge small" style="background:var(--surface); border:1px solid var(--line); color:var(--ink); padding:4px 8px; font-size:11.5px;">
                 ${escapeHtml(it.productName)} (<b>${fmtSize(it.size)}</b>)
               </span>
             `).join('')}
@@ -1849,31 +1787,31 @@ function renderPOWizardStep2Html() {
 
           <div style="display:flex; flex-direction:column; gap:16px;">
             ${commonSuppliers.map(s => {
-              const isSelected = poSupplierId === s.id;
-              
-              // Calculate procurement breakdown for this supplier
-              let totalMinCost = 0;
-              const itemBreakdown = selectedItemsList.map(it => {
-                const matched = it.suppliers.find(rel => rel.supplierId === s.id);
-                const cost = matched ? matched.purchaseCost : 0;
-                const moq = matched ? matched.minOrderQty : 10;
-                const minLineTotal = cost * moq;
-                totalMinCost += minLineTotal;
-                return {
-                  ...it,
-                  cost,
-                  moq,
-                  availability: matched ? matched.availability : 'available'
-                };
-              });
+    const isSelected = poSupplierId === s.id;
 
-              return `
-                <div class="po-supplier-card ${isSelected ? 'selected' : ''}" style="border:2px solid ${isSelected ? 'var(--teal)' : 'var(--line)'}; border-radius:var(--radius); background:#fff; padding:18px 20px; transition:border-color 0.15s, box-shadow 0.15s; box-shadow:${isSelected ? 'var(--shadow-md)' : 'var(--shadow-sm)'};">
+    // Calculate procurement breakdown for this supplier
+    let totalMinCost = 0;
+    const itemBreakdown = selectedItemsList.map(it => {
+      const matched = it.suppliers.find(rel => rel.supplierId === s.id);
+      const cost = matched ? matched.purchaseCost : 0;
+      const moq = matched ? matched.minOrderQty : 10;
+      const minLineTotal = cost * moq;
+      totalMinCost += minLineTotal;
+      return {
+        ...it,
+        cost,
+        moq,
+        availability: matched ? matched.availability : 'available'
+      };
+    });
+
+    return `
+                <div class="po-supplier-card ${isSelected ? 'selected' : ''}" style="border:2px solid ${isSelected ? 'var(--teal)' : 'var(--line)'}; border-radius:var(--radius); background:var(--surface); padding:18px 20px; transition:border-color 0.15s, box-shadow 0.15s; box-shadow:${isSelected ? 'var(--shadow-md)' : 'var(--shadow-sm)'};">
                   <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; margin-bottom:14px; border-bottom:1px solid var(--line-light); padding-bottom:12px;">
                     <div>
                       <div style="display:flex; align-items:center; gap:10px;">
                         <h4 style="margin:0; font-size:16px; color:var(--ink); font-weight:700;">${escapeHtml(s.name)}</h4>
-                        <span class="badge ghost small" style="background:#FAF8F5;">ID: ${escapeHtml(s.id)}</span>
+                        <span class="badge ghost small" style="background:var(--surface-2);">ID: ${escapeHtml(s.id)}</span>
                         ${isSelected ? `<span class="badge ok small">✓ Selected Supplier</span>` : ''}
                       </div>
                       <div class="muted small" style="margin-top:4px; display:flex; gap:16px; flex-wrap:wrap;">
@@ -1894,7 +1832,7 @@ function renderPOWizardStep2Html() {
                   <div style="border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden;">
                     <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:12.5px;">
                       <thead>
-                        <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+                        <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
                           <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px;">Selected Product</th>
                           <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px;">Size</th>
                           <th style="padding:8px 12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px; text-align:right;">Supplier Purchase Cost</th>
@@ -1912,7 +1850,7 @@ function renderPOWizardStep2Html() {
                               ${peso(it.cost)}
                             </td>
                             <td style="padding:8px 12px; text-align:center;">
-                              <span class="badge ghost small" style="background:#FAF8F5; font-weight:700;">${it.moq} units</span>
+                              <span class="badge ghost small" style="background:var(--surface-2); font-weight:700;">${it.moq} units</span>
                             </td>
                             <td style="padding:8px 12px; text-align:center;">
                               <span class="badge ok small">🟢 Available</span>
@@ -1932,40 +1870,40 @@ function renderPOWizardStep2Html() {
                   </div>
                 </div>
               `;
-            }).join('')}
+  }).join('')}
           </div>
         </div>
       ` : `
         <!-- Section B: Conflict - No Single Common Supplier Available -->
-        <div class="po-conflict-card" style="border:2px solid #F59E0B; border-radius:var(--radius); background:#FFFBF5; padding:22px; margin-bottom:20px;">
+        <div class="po-conflict-card" style="border:2px solid #F59E0B; border-radius:var(--radius); background:var(--surface-2); padding:22px; margin-bottom:20px;">
           <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:16px;">
             <span style="font-size:28px; line-height:1;">⚠️</span>
             <div>
-              <h3 style="margin:0 0 4px 0; color:#B45309; font-size:17px; font-weight:700;">
+              <h3 style="margin:0 0 4px 0; color:var(--warning-text); font-size:17px; font-weight:700;">
                 No Single Supplier Can Supply All Selected Items
               </h3>
-              <div style="font-size:13.5px; color:#92400E; line-height:1.45;">
+              <div style="font-size:13.5px; color:var(--warning-text); line-height:1.45;">
                 MRGR Color Center purchase orders strictly require <b>all items in an order to come from a single supplier</b>. None of your accredited suppliers are linked to every product and container size you selected.
               </div>
             </div>
           </div>
 
           <!-- Conflict Breakdown Table -->
-          <div style="border:1px solid #FDE68A; border-radius:var(--radius-sm); overflow:hidden; background:#fff; margin-bottom:18px;">
+          <div style="border:1px solid var(--warning-border); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface); margin-bottom:18px;">
             <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:12.5px;">
               <thead>
-                <tr style="background:#FEF3C7; border-bottom:1px solid #FDE68A;">
-                  <th style="padding:10px 12px; font-weight:700; color:#92400E; text-align:left;">Selected Item &amp; Size</th>
-                  <th style="padding:10px 12px; font-weight:700; color:#92400E; text-align:left;">Accredited Supplier(s) Who Can Fulfill This Item</th>
-                  <th style="padding:10px 12px; font-weight:700; color:#92400E; text-align:center;">Fulfillment Status</th>
+                <tr style="background:var(--warning-bg); border-bottom:1px solid var(--warning-border);">
+                  <th style="padding:10px 12px; font-weight:700; color:var(--warning-text); text-align:left;">Selected Item &amp; Size</th>
+                  <th style="padding:10px 12px; font-weight:700; color:var(--warning-text); text-align:left;">Accredited Supplier(s) Who Can Fulfill This Item</th>
+                  <th style="padding:10px 12px; font-weight:700; color:var(--warning-text); text-align:center;">Fulfillment Status</th>
                 </tr>
               </thead>
               <tbody>
                 ${selectedItemsList.map(it => {
-                  const suppNames = it.suppliers.map(s => s.supplier ? s.supplier.name : s.supplierId);
-                  const hasSuppliers = suppNames.length > 0;
+    const suppNames = it.suppliers.map(s => s.supplier ? s.supplier.name : s.supplierId);
+    const hasSuppliers = suppNames.length > 0;
 
-                  return `
+    return `
                     <tr style="border-bottom:1px solid var(--line-light);">
                       <td style="padding:10px 12px;">
                         <div style="font-weight:700; color:var(--ink);">${escapeHtml(it.productName)}</div>
@@ -1975,13 +1913,13 @@ function renderPOWizardStep2Html() {
                         ${hasSuppliers ? `
                           <div style="display:flex; gap:6px; flex-wrap:wrap;">
                             ${it.suppliers.map(s => `
-                              <span class="badge small" style="background:#F0FDF4; border:1px solid #BBF7D0; color:#15803D; font-weight:600;">
+                              <span class="badge small" style="background:var(--success-bg); border:1px solid var(--success-border); color:var(--success-text); font-weight:600;">
                                 ${escapeHtml(s.supplier ? s.supplier.name : s.supplierId)} (${peso(s.purchaseCost)})
                               </span>
                             `).join('')}
                           </div>
                         ` : `
-                          <span class="badge small" style="background:#FEE2E2; border:1px solid #FCA5A5; color:#991B1B;">
+                          <span class="badge small" style="background:var(--danger-bg); border:1px solid var(--danger-border); color:var(--danger-text);">
                             ⚠️ No supplier linked to this product &amp; size
                           </span>
                         `}
@@ -1995,14 +1933,14 @@ function renderPOWizardStep2Html() {
                       </td>
                     </tr>
                   `;
-                }).join('')}
+  }).join('')}
               </tbody>
             </table>
           </div>
 
           <!-- Suggested Solutions / Split Options -->
-          <div style="background:#fff; border:1px solid #FDE68A; border-radius:var(--radius-sm); padding:14px 16px;">
-            <div style="font-weight:700; color:#92400E; font-size:13.5px; margin-bottom:8px;">
+          <div style="background:var(--surface); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:14px 16px;">
+            <div style="font-weight:700; color:var(--warning-text); font-size:13.5px; margin-bottom:8px;">
               💡 Recommended Solutions:
             </div>
             <div style="font-size:13px; color:var(--ink); line-height:1.5; margin-bottom:12px;">
@@ -2015,29 +1953,29 @@ function renderPOWizardStep2Html() {
               </button>
 
               ${(() => {
-                const candidateMap = new Map();
-                selectedItemsList.forEach(it => {
-                  it.suppliers.forEach(rel => {
-                    if (!candidateMap.has(rel.supplierId)) {
-                      candidateMap.set(rel.supplierId, {
-                        supplier: rel.supplier || supplierById(rel.supplierId),
-                        items: []
-                      });
-                    }
-                    candidateMap.get(rel.supplierId).items.push(it);
-                  });
-                });
+      const candidateMap = new Map();
+      selectedItemsList.forEach(it => {
+        it.suppliers.forEach(rel => {
+          if (!candidateMap.has(rel.supplierId)) {
+            candidateMap.set(rel.supplierId, {
+              supplier: rel.supplier || supplierById(rel.supplierId),
+              items: []
+            });
+          }
+          candidateMap.get(rel.supplierId).items.push(it);
+        });
+      });
 
-                return Array.from(candidateMap.values()).map(cand => {
-                  const s = cand.supplier;
-                  if (!s) return '';
-                  return `
+      return Array.from(candidateMap.values()).map(cand => {
+        const s = cand.supplier;
+        if (!s) return '';
+        return `
                     <button type="button" class="btn secondary" onclick="poFilterSelectionBySupplier('${s.id}')" style="box-shadow:var(--shadow-sm);" title="Keep only ${cand.items.length} items from ${s.name}">
                       Create PO with ${escapeHtml(s.name)} (${cand.items.length} of ${selectedCount} items) →
                     </button>
                   `;
-                }).join('');
-              })()}
+      }).join('');
+    })()}
             </div>
           </div>
         </div>
@@ -2179,16 +2117,16 @@ function renderPOWizardStep3Html() {
   return `
     <div class="po-review-view">
       <!-- Active Supplier Information Banner -->
-      <div class="alert-banner ok" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:18px; border-left:4px solid var(--teal,#0D9488); background:#F0FDF4;">
+      <div class="alert-banner ok" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:18px; border-left:4px solid var(--teal,#0D9488); background:var(--success-bg);">
         <div style="display:flex; align-items:flex-start; gap:12px;">
           <span style="font-size:24px;">🏢</span>
           <div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <span style="font-weight:700; font-size:15px; color:#0F766E;">Selected Supplier: ${escapeHtml(supplier.name)}</span>
+              <span style="font-weight:700; font-size:15px; color:var(--teal-dark);">Selected Supplier: ${escapeHtml(supplier.name)}</span>
               <span class="badge ok small">✓ Valid Common Supplier</span>
-              <span class="badge ghost small" style="background:#fff;">1 Supplier per Order</span>
+              <span class="badge ghost small" style="background:var(--surface);">1 Supplier per Order</span>
             </div>
-            <div style="font-size:12px; margin-top:3px; color:#115E59; line-height:1.4;">
+            <div style="font-size:12px; margin-top:3px; color:var(--teal-dark); line-height:1.4;">
               All items below are priced with ${escapeHtml(supplier.name)}'s actual procurement costs. Contact: ${escapeHtml(supplier.contact || '—')} · Phone: ${escapeHtml(supplier.phone || '—')}
             </div>
           </div>
@@ -2200,11 +2138,11 @@ function renderPOWizardStep3Html() {
       </div>
 
       <!-- Notes and Purpose Input -->
-      <div style="margin-bottom:18px; background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
+      <div style="margin-bottom:18px; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
         <label style="font-size:12.5px; font-weight:700; color:var(--ink); display:block; margin-bottom:4px;">
           Order Notes / Procurement Purpose (optional)
         </label>
-        <input type="text" id="po-notes" placeholder="e.g. Urgent store replenishment, bulk seasonal order, warehouse stock" value="${escapeHtml(poNotes)}" oninput="poNotes = this.value" style="width:100%; padding:8px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:#fff;">
+        <input type="text" id="po-notes" placeholder="e.g. Urgent store replenishment, bulk seasonal order, warehouse stock" value="${escapeHtml(poNotes)}" oninput="poNotes = this.value" style="width:100%; padding:8px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; background:var(--surface);">
       </div>
 
       <!-- Structured Order Review Table (Grouped by Product) -->
@@ -2213,21 +2151,21 @@ function renderPOWizardStep3Html() {
           <h4 style="margin:0; font-size:15px; color:var(--ink); font-weight:700;">
             Order Line Items (${poReviewRows.length} size${poReviewRows.length === 1 ? '' : 's'} across ${productGroups.size} product${productGroups.size === 1 ? '' : 's'})
           </h4>
-          <span class="badge ghost small" style="background:#FAF8F5; border:1px solid var(--line);">
+          <span class="badge ghost small" style="background:var(--surface-2); border:1px solid var(--line);">
             📦 Supplier MOQ &amp; Actual Unit Costs Applied
           </span>
         </div>
 
         ${poReviewRows.length === 0 ? `
-          <div style="text-align:center; padding:30px; background:#FAF8F5; border:1px dashed var(--line); border-radius:var(--radius);">
+          <div style="text-align:center; padding:30px; background:var(--surface-2); border:1px dashed var(--line); border-radius:var(--radius);">
             <div style="color:var(--ink-soft); font-size:14px;">No items in order.</div>
             <button type="button" class="btn small" onclick="poWizardGoToStep(1)" style="margin-top:10px;">+ Add Products</button>
           </div>
         ` : `
-          <div style="border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:#fff;">
+          <div style="border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--surface);">
             <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:13px;">
               <thead>
-                <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+                <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
                   <th style="padding:10px 14px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase;">Product / Container Size</th>
                   <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:center;">Store Stock</th>
                   <th style="padding:10px 12px; font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; text-align:right;">Purchase Cost</th>
@@ -2239,23 +2177,18 @@ function renderPOWizardStep3Html() {
               </thead>
               <tbody>
                 ${Array.from(productGroups.values()).map(grp => {
-                  return `
+    return `
                     <!-- Product Header Row -->
-                    <tr class="po-review-group-header" style="background:#FBF9F6; border-top:2px solid var(--line); border-bottom:1px solid var(--line-light);">
+                    <tr class="po-review-group-header" style="background:var(--surface-2); border-top:2px solid var(--line); border-bottom:1px solid var(--line-light);">
                       <td colspan="7" style="padding:10px 14px;">
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                           <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-size:15px;">📦</span>
                             <span style="font-weight:700; color:var(--ink); font-size:14px;">${escapeHtml(grp.productName)}</span>
                             <span class="muted small" style="font-size:11.5px;">(${escapeHtml(grp.brand || '—')} · ${escapeHtml(grp.category || 'General')})</span>
-                            ${grp.color ? `
-                              <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--ink-soft); background:#fff; border:1px solid var(--line); border-radius:10px; padding:2px 7px;">
-                                ${grp.colorHex ? `<span style="width:8px; height:8px; border-radius:50%; background:${escapeHtml(grp.colorHex)}; display:inline-block;"></span>` : ''}
-                                ${escapeHtml(grp.color)}
-                              </span>
-                            ` : ''}
+                            ${poRenderColorPill(grp.color, grp.colorHex)}
                           </div>
-                          <span class="badge ghost small" style="background:#fff; border:1px solid var(--line-light); font-size:11px;">
+                          <span class="badge ghost small" style="background:var(--surface); border:1px solid var(--line-light); font-size:11px;">
                             ${grp.items.length} size${grp.items.length === 1 ? '' : 's'}
                           </span>
                         </div>
@@ -2264,14 +2197,14 @@ function renderPOWizardStep3Html() {
 
                     <!-- Child Container Size Rows -->
                     ${grp.items.map(({ row, idx }) => {
-                      const isMoqViolated = (Number(row.qty) || 0) < row.minOrderQty;
+      const isMoqViolated = (Number(row.qty) || 0) < row.minOrderQty;
 
-                      return `
-                        <tr class="po-review-size-row" style="border-bottom:1px solid var(--line-light); background:${isMoqViolated ? '#FFF7F7' : 'transparent'};">
+      return `
+                        <tr class="po-review-size-row" style="border-bottom:1px solid var(--line-light); background:${isMoqViolated ? 'var(--danger-bg)' : 'transparent'};">
                           <td style="padding:10px 14px 10px 32px;">
                             <div style="display:flex; align-items:center; gap:8px;">
-                              <span style="color:var(--teal); font-size:14px; font-weight:700;">↳</span>
-                              <span class="badge ghost small" style="font-weight:700; font-size:12px; background:#fff; border:1px solid var(--line);">
+                              <span style="color:var(--teal-text); font-size:14px; font-weight:700;">↳</span>
+                              <span class="badge ghost small" style="font-weight:700; font-size:12px; background:var(--surface); border:1px solid var(--line);">
                                 ${fmtSize(row.containerSize)}
                               </span>
                             </div>
@@ -2285,16 +2218,16 @@ function renderPOWizardStep3Html() {
                             ${peso(row.unitCost)}
                           </td>
                           <td style="padding:10px 12px; text-align:center;">
-                            <span class="badge ghost small" style="background:#FAF8F5; font-weight:700; color:var(--ink);">
+                            <span class="badge ghost small" style="background:var(--surface-2); font-weight:700; color:var(--ink);">
                               ${row.minOrderQty} units
                             </span>
                           </td>
                           <td style="padding:10px 12px; text-align:center;">
                             <!-- Quantity Stepper -->
-                            <div class="po-qty-stepper" style="display:inline-flex; align-items:center; border:1px solid ${isMoqViolated ? 'var(--danger)' : 'var(--line)'}; border-radius:var(--radius-sm); background:#fff; overflow:hidden;">
-                              <button type="button" class="po-qty-btn" onclick="poStepReviewQty(${idx}, -1)" style="border:none; background:#FAF8F5; width:28px; height:28px; cursor:pointer; font-weight:700; color:var(--ink);">−</button>
+                            <div class="po-qty-stepper" style="display:inline-flex; align-items:center; border:1px solid ${isMoqViolated ? 'var(--danger)' : 'var(--line)'}; border-radius:var(--radius-sm); background:var(--surface); overflow:hidden;">
+                              <button type="button" class="po-qty-btn" onclick="poStepReviewQty(${idx}, -1)" style="border:none; background:var(--surface-2); width:28px; height:28px; cursor:pointer; font-weight:700; color:var(--ink);">−</button>
                               <input type="number" id="po-review-qty-${idx}" min="1" max="${typeof PO_MAX_QTY !== 'undefined' ? PO_MAX_QTY : 999}" class="po-qty-input" value="${row.qty}" onchange="poUpdateReviewQty(${idx}, this.value)" oninput="poUpdateReviewQty(${idx}, this.value)" style="border:none; width:55px; text-align:center; font-weight:700; font-size:13px; padding:4px; outline:none;">
-                              <button type="button" class="po-qty-btn" onclick="poStepReviewQty(${idx}, 1)" style="border:none; background:#FAF8F5; width:28px; height:28px; cursor:pointer; font-weight:700; color:var(--ink);">+</button>
+                              <button type="button" class="po-qty-btn" onclick="poStepReviewQty(${idx}, 1)" style="border:none; background:var(--surface-2); width:28px; height:28px; cursor:pointer; font-weight:700; color:var(--ink);">+</button>
                             </div>
                             <div id="po-review-moq-warn-${idx}" style="color:var(--danger); font-size:11px; font-weight:700; margin-top:3px; display:${isMoqViolated ? 'block' : 'none'};">
                               ⚠️ Min order: ${row.minOrderQty}
@@ -2310,9 +2243,9 @@ function renderPOWizardStep3Html() {
                           </td>
                         </tr>
                       `;
-                    }).join('')}
+    }).join('')}
                   `;
-                }).join('')}
+  }).join('')}
               </tbody>
             </table>
           </div>
@@ -2320,7 +2253,7 @@ function renderPOWizardStep3Html() {
       </div>
 
       <!-- Prominent Grand Total & Order Summary Box -->
-      <div class="po-summary-box" style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius); padding:16px 20px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; box-shadow:var(--shadow-sm);">
+      <div class="po-summary-box" style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius); padding:16px 20px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; box-shadow:var(--shadow-sm);">
         <div style="display:flex; gap:24px; flex-wrap:wrap;">
           <div>
             <div class="muted small" style="text-transform:uppercase; font-size:11px; font-weight:700; letter-spacing:0.03em;">Total Products</div>
@@ -2359,8 +2292,8 @@ function renderPOWizardStep3Html() {
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:10px;">
         <div style="font-size:12.5px; color:var(--ink-soft);">
           ${isAdmin
-            ? '✅ As Administrator, this order will be automatically approved and marked as <b>Ordered</b>.'
-            : '⏳ As Inventory Staff, this order will be submitted as <b>Pending Approval</b> for the Administrator to review.'}
+      ? '✅ As Administrator, this order will be automatically approved and marked as <b>Ordered</b>.'
+      : '⏳ As Inventory Staff, this order will be submitted as <b>Pending Approval</b> for the Administrator to review.'}
         </div>
         <div style="display:flex; gap:10px; align-items:center;">
           <button type="button" class="btn secondary" onclick="poWizardGoToStep(2)">← Back to Supplier</button>
@@ -2674,13 +2607,13 @@ function openManageProductSuppliersModal(productId = null, defaultSize = null) {
     <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin-bottom:16px;">
       <div>
         <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:4px;">Select Product</label>
-        <select id="mps-product-select" onchange="openManageProductSuppliersModal(this.value)" style="width:100%; font-size:13px; padding:7px 10px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#fff;">
+        <select id="mps-product-select" onchange="openManageProductSuppliersModal(this.value)" style="width:100%; font-size:13px; padding:7px 10px; border-radius:var(--radius-sm); border:1px solid var(--line); background:var(--surface);">
           ${prods.map(pr => `<option value="${pr.id}" ${pr.id === targetPid ? 'selected' : ''}>${escapeHtml(pr.name)} (${escapeHtml(pr.brand || '')})</option>`).join('')}
         </select>
       </div>
       <div>
         <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:4px;">Filter Size</label>
-        <select id="mps-filter-size" onchange="openManageProductSuppliersModal('${targetPid}', this.value)" style="width:100%; font-size:13px; padding:7px 10px; border-radius:var(--radius-sm); border:1px solid var(--line); background:#fff;">
+        <select id="mps-filter-size" onchange="openManageProductSuppliersModal('${targetPid}', this.value)" style="width:100%; font-size:13px; padding:7px 10px; border-radius:var(--radius-sm); border:1px solid var(--line); background:var(--surface);">
           <option value="">All Sizes</option>
           ${sizes.map(sz => `<option value="${sz}" ${sz === targetSize ? 'selected' : ''}>${fmtSize(sz)}</option>`).join('')}
         </select>
@@ -2691,14 +2624,14 @@ function openManageProductSuppliersModal(productId = null, defaultSize = null) {
     <div style="margin-bottom:20px;">
       <h4 style="margin:0 0 8px 0; font-size:14px;">Current Supplier Relationships (${existingRels.length})</h4>
       ${existingRels.length === 0 ? `
-        <div style="padding:16px; background:#FAF8F5; border:1px dashed var(--line); border-radius:var(--radius-sm); text-align:center; color:var(--ink-soft); font-size:12.5px;">
+        <div style="padding:16px; background:var(--surface-2); border:1px dashed var(--line); border-radius:var(--radius-sm); text-align:center; color:var(--ink-soft); font-size:12.5px;">
           No suppliers linked yet for this product. Use the form below to add suppliers.
         </div>
       ` : `
         <div style="border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden;">
           <table class="table" style="margin:0; width:100%; border-collapse:collapse; font-size:12.5px;">
             <thead>
-              <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+              <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
                 <th style="padding:8px 10px; text-align:left;">Supplier</th>
                 <th style="padding:8px 10px; text-align:left;">Size</th>
                 <th style="padding:8px 10px; text-align:right;">Purchase Cost</th>
@@ -2731,36 +2664,36 @@ function openManageProductSuppliersModal(productId = null, defaultSize = null) {
     </div>
 
     <!-- Add New Supplier Relationship Form -->
-    <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:16px;">
+    <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:16px;">
       <h4 style="margin:0 0 12px 0; font-size:13.5px; color:var(--ink);">+ Link New Supplier / Update Cost</h4>
       <div style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:10px; margin-bottom:10px;">
         <div>
           <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Supplier *</label>
-          <select id="mps-supplier" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+          <select id="mps-supplier" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:var(--surface);">
             ${allSuppliers.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
           </select>
         </div>
         <div>
           <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Container Size</label>
-          <select id="mps-size" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+          <select id="mps-size" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:var(--surface);">
             ${sizes.map(sz => `<option value="${sz}" ${sz === targetSize ? 'selected' : ''}>${fmtSize(sz)}</option>`).join('')}
             <option value="0">All Container Sizes</option>
           </select>
         </div>
         <div>
           <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Purchase Cost (₱) *</label>
-          <input type="number" id="mps-cost" step="0.01" min="0" placeholder="0.00" value="${(p.price * 0.85).toFixed(2)}" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+          <input type="number" id="mps-cost" step="0.01" min="0" placeholder="0.00" value="${(p.price * 0.85).toFixed(2)}" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:var(--surface);">
         </div>
       </div>
 
       <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; align-items:flex-end;">
         <div>
           <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Min. Order Qty (MOQ)</label>
-          <input type="number" id="mps-moq" min="1" step="1" value="10" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+          <input type="number" id="mps-moq" min="1" step="1" value="10" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:var(--surface);">
         </div>
         <div>
           <label style="font-size:11px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:3px;">Availability</label>
-          <select id="mps-avail" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:#fff;">
+          <select id="mps-avail" style="width:100%; font-size:12.5px; padding:6px 8px; border-radius:4px; border:1px solid var(--line); background:var(--surface);">
             <option value="available">🟢 In Stock / Available</option>
             <option value="out_of_stock">🔴 Out of Stock</option>
             <option value="lead_time">🟠 Limited / Lead Time</option>
@@ -2778,7 +2711,7 @@ function openManageProductSuppliersModal(productId = null, defaultSize = null) {
 
 window.openManageProductSuppliersModal = openManageProductSuppliersModal;
 
-window.removeProductSupplierInModal = async function(relId, productId, targetSize) {
+window.removeProductSupplierInModal = async function (relId, productId, targetSize) {
   deleteProductSupplierRelationship(relId);
   await saveDB();
   openManageProductSuppliersModal(productId, targetSize);
@@ -2786,7 +2719,7 @@ window.removeProductSupplierInModal = async function(relId, productId, targetSiz
   showToast('Supplier link removed.', 'ok');
 };
 
-window.submitProductSupplierInModal = async function(productId, targetSize) {
+window.submitProductSupplierInModal = async function (productId, targetSize) {
   const supplierId = document.getElementById('mps-supplier').value;
   const containerSize = Number(document.getElementById('mps-size').value) || 0;
   const purchaseCost = Number(document.getElementById('mps-cost').value) || 0;
@@ -2933,10 +2866,6 @@ function newPORow(productId = '', containerSize = null, supplierId = '', qty = 0
 function renderPOItemRows() {
   // handled by wizard
 }
-function updatePOGrandTotalDisplay() {
-  // handled by wizard
-}
-
 
 /* ============================================================
    DIRECT PO CREATION FROM LOW-STOCK PRODUCTS
@@ -3173,7 +3102,7 @@ function openMultiSupplierPOPickerModal(supplierGroups, targetSize = null) {
       ${groups.map((g, idx) => {
     const prodNames = g.products.map(p => escapeHtml(p.name)).join(', ');
     return `
-          <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; display:flex; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; display:flex; justify-content:space-between; align-items:center; gap:12px;">
             <div>
               <div style="font-weight:700; color:var(--teal-dark); font-size:14px;">${escapeHtml(g.supplier.name)}</div>
               <div class="muted small" style="margin-top:2px;"><b>${g.products.length}</b> product(s): ${prodNames}</div>
@@ -3388,38 +3317,6 @@ function closePOProductPicker() {
   document.querySelectorAll('.po-product-picker-btn.active').forEach(b => b.classList.remove('active'));
 }
 
-function renderPOProductPickerTrigger(index, product) {
-  if (product) {
-    const hex = getProductHex(product);
-    return `
-      <div class="po-product-picker-trigger-wrap">
-        <button type="button" class="po-product-picker-btn selected ${poPickerOpenIndex === index ? 'active' : ''}"
-          onclick="togglePOProductPicker(${index}, this, event)"
-          title="Click to search or switch paint product">
-          <span class="po-picker-avatar" style="background-color:${hex};"></span>
-          <div class="po-picker-info">
-            <div class="po-picker-title">${escapeHtml(product.name)}</div>
-            <div class="po-picker-sub">${escapeHtml(product.brand || '')}${product.color && product.color !== '-' ? ' · ' + escapeHtml(product.color) : ''} · <span style="font-weight:600; color:${productHasLowStock(product) ? '#C1443D' : 'var(--teal-dark)'};">Stock: ${formatLiters(product.stock)}</span></div>
-          </div>
-          <span class="po-picker-arrow">▾</span>
-        </button>
-        <button type="button" class="po-picker-reset-btn" onclick="clearPOProductRow(${index}, event)" title="Change / remove product">✕</button>
-      </div>`;
-  }
-
-  return `
-    <button type="button" class="po-product-picker-btn empty ${poPickerOpenIndex === index ? 'active' : ''}"
-      onclick="togglePOProductPicker(${index}, this, event)"
-      title="Click to select paint product">
-      <span class="po-picker-avatar-placeholder">🎨</span>
-      <div class="po-picker-info">
-        <div class="po-picker-title" style="color:var(--ink-soft); font-weight:600;">Select paint product…</div>
-        <div class="po-picker-sub">Search paint name, color swatch, brand, or SKU</div>
-      </div>
-      <span class="po-picker-arrow">▾</span>
-    </button>`;
-}
-
 function togglePOProductPicker(index, btnEl, event) {
   if (event) {
     event.stopPropagation();
@@ -3549,7 +3446,7 @@ function renderPOProductPickerContent(index, suppliedProducts, currentProductId)
               <div class="po-picker-item-name">
                 <span>${escapeHtml(p.name)}</span>
                 ${p.color && p.color !== '-' ? `<span class="po-picker-item-color">(${escapeHtml(p.color)})</span>` : ''}
-                ${isLinked ? `<span class="badge" style="background:#EAF4F3; color:var(--teal-dark); font-size:9.5px; padding:1px 5px;">Linked</span>` : ''}
+                ${isLinked ? `<span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); font-size:9.5px; padding:1px 5px;">Linked</span>` : ''}
               </div>
               <div class="po-picker-item-sub">
                 ${escapeHtml(p.brand || '')}${p.type ? ' · ' + escapeHtml(p.type) : ''} · Purchase Cost: ${costPerL}
@@ -3557,7 +3454,7 @@ function renderPOProductPickerContent(index, suppliedProducts, currentProductId)
             </div>
             <div class="po-picker-item-right">
               ${otherRow
-          ? `<span class="badge" style="background:#F0EDED; color:var(--ink-soft); font-size:10px;">Row #${otherRow}</span>`
+          ? `<span class="badge" style="background:var(--surface-3); color:var(--ink-soft); font-size:10px;">Row #${otherRow}</span>`
           : (isLow
             ? `<span class="badge low" title="${escapeHtml(lowSummary)}">⚠️ ${escapeHtml(lowSummary) || 'Low'}</span>`
             : `<span class="badge ok">🥫 ${formatStock(p.stock)}L</span>`

@@ -166,6 +166,23 @@ try {
                     $bySize[$sid] = [
                         'nonExpiredQty' => 0,
                         'expiredQty' => 0,
+                        'discountedQty' => 0,
+                        'regularQty' => 0,
+                        'discountedBatches' => [],
+                        'regularBatches' => [],
+                        'bestDiscountPct' => 0.0,
+                        'bestDiscountAmount' => 0.0,
+                        'bestOriginalPrice' => null,
+                        'bestDiscountedPrice' => null,
+                        'bestDiscountBatchId' => null,
+                        'bestDiscountBatchNumber' => null,
+                        'bestDiscountExpiryDate' => null,
+                        'bestDiscountDaysRemaining' => null,
+                        'bestRegularBatchId' => null,
+                        'bestRegularBatchNumber' => null,
+                        'bestRegularExpiryDate' => null,
+                        'bestRegularDaysRemaining' => null,
+                        'bestRegularQty' => 0,
                         'fifoBatchId' => null,
                         'fifoBatchNumber' => null,
                         'fifoExpiryStatus' => null,
@@ -183,12 +200,57 @@ try {
                     continue;
                 }
                 $bySize[$sid]['nonExpiredQty'] += $rem;
+                $days = batchDaysRemaining($exp);
+                $st = batchExpirationStatus($days, $thresholds);
+                $pricePerCan = isset($r['price_per_can']) ? round((float)$r['price_per_can'], 2) : null;
+                $rule = $discountRules[(string)$r['batch_id']] ?? null;
+                $dc = batchComputeDiscount($days, $rem, $pricePerCan, $discountSettings, $rule);
+
+                if ($dc['discountPct'] > 0 && $dc['discountStatus'] === 'active') {
+                    $bySize[$sid]['discountedQty'] += $rem;
+                    $bySize[$sid]['discountedBatches'][] = [
+                        'batchId' => $r['batch_id'],
+                        'batchNumber' => $r['batch_number'],
+                        'remainingQty' => $rem,
+                        'expirationDate' => $exp,
+                        'daysRemaining' => $days,
+                        'expiryStatus' => $st,
+                        'originalPrice' => $pricePerCan,
+                        'discountPct' => $dc['discountPct'],
+                        'discountAmount' => $dc['discountAmount'],
+                        'discountedPrice' => $dc['discountedPrice'],
+                    ];
+                    if ($bySize[$sid]['bestDiscountBatchId'] === null) {
+                        $bySize[$sid]['bestDiscountPct'] = $dc['discountPct'];
+                        $bySize[$sid]['bestDiscountAmount'] = $dc['discountAmount'];
+                        $bySize[$sid]['bestOriginalPrice'] = $pricePerCan;
+                        $bySize[$sid]['bestDiscountedPrice'] = $dc['discountedPrice'];
+                        $bySize[$sid]['bestDiscountBatchId'] = $r['batch_id'];
+                        $bySize[$sid]['bestDiscountBatchNumber'] = $r['batch_number'];
+                        $bySize[$sid]['bestDiscountExpiryDate'] = $exp;
+                        $bySize[$sid]['bestDiscountDaysRemaining'] = $days;
+                    }
+                } else {
+                    $bySize[$sid]['regularQty'] += $rem;
+                    $bySize[$sid]['regularBatches'][] = [
+                        'batchId' => $r['batch_id'],
+                        'batchNumber' => $r['batch_number'],
+                        'remainingQty' => $rem,
+                        'expirationDate' => $exp,
+                        'daysRemaining' => $days,
+                        'expiryStatus' => $st,
+                        'originalPrice' => $pricePerCan,
+                    ];
+                    if ($bySize[$sid]['bestRegularBatchId'] === null) {
+                        $bySize[$sid]['bestRegularBatchId'] = $r['batch_id'];
+                        $bySize[$sid]['bestRegularBatchNumber'] = $r['batch_number'];
+                        $bySize[$sid]['bestRegularExpiryDate'] = $exp;
+                        $bySize[$sid]['bestRegularDaysRemaining'] = $days;
+                        $bySize[$sid]['bestRegularQty'] = $rem;
+                    }
+                }
+
                 if ($bySize[$sid]['fifoBatchId'] === null) {
-                    $days = batchDaysRemaining($exp);
-                    $st = batchExpirationStatus($days, $thresholds);
-                    $pricePerCan = isset($r['price_per_can']) ? round((float)$r['price_per_can'], 2) : null;
-                    $rule = $discountRules[(string)$r['batch_id']] ?? null;
-                    $dc = batchComputeDiscount($days, $rem, $pricePerCan, $discountSettings, $rule);
                     $bySize[$sid]['fifoBatchId'] = $r['batch_id'];
                     $bySize[$sid]['fifoBatchNumber'] = $r['batch_number'];
                     $bySize[$sid]['fifoExpiryStatus'] = $st;
@@ -291,7 +353,7 @@ try {
         $row = $st->get_result()->fetch_assoc();
         $st->close();
         if (!$row) bx_fail(404, 'Batch not found.');
-        $batch = bx_shape($row, $thresholds);
+        $batch = bx_shape($row, $thresholds, $discountSettings, $discountRules[$bid] ?? null);
 
         // Product info
         $st = $conn->prepare("SELECT p.*, ps.price_per_liter, ps.price_per_can, ps.minimum_stock FROM product_sizes ps JOIN products p ON p.id = ps.product_id WHERE ps.size_id = ? LIMIT 1");
@@ -498,7 +560,7 @@ try {
         $st2->execute();
         $updatedRow = $st2->get_result()->fetch_assoc();
         $st2->close();
-        $updatedBatch = $updatedRow ? bx_shape($updatedRow, $thresholds, $discountSettings) : null;
+        $updatedBatch = $updatedRow ? bx_shape($updatedRow, $thresholds, $discountSettings, $discountRules[$bid] ?? null) : null;
 
         echo json_encode(['success' => true, 'changes' => $summaryTxt, 'batch' => $updatedBatch]);
         exit;
@@ -644,6 +706,9 @@ try {
         $oldComputed = batchComputeDiscount($daysRem, (int)$batchRow['remaining_qty'], isset($batchRow['price_per_can']) ? (float)$batchRow['price_per_can'] : null, $discountSettings, $oldRule);
         $oldPctStr = number_format((float)$oldComputed['discountPct'], 2) . '%';
         $pctToKeep = $oldRule ? (float)$oldRule['discountPct'] : (float)$oldComputed['discountPct'];
+        if ($isActive === 1 && $pctToKeep <= 0) {
+            bx_fail(422, 'Please configure a discount percentage greater than 0% before activating this batch discount.');
+        }
         $daysBefore = $oldRule ? $oldRule['daysBeforeExpiry'] : null;
         $notes = $oldRule ? ($oldRule['notes'] !== '' ? $oldRule['notes'] : null) : null;
 

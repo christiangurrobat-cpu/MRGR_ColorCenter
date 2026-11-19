@@ -6,6 +6,7 @@ function navItemsFor(role) {
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'approvals', label: 'Pending Approvals', icon: '⏳' },
     { id: 'inventory', label: 'Inventory', icon: '📦' },
+    { id: 'colorLibrary', label: 'Color Library', icon: '🎨' },
     { id: 'alerts', label: 'Low-Stock Alerts', icon: '⚠️' },
     { id: 'expiration', label: 'Expiration Tracking', icon: '🗓️' },
     { id: 'purchaseOrders', label: 'Purchase Orders', icon: '📋' },
@@ -17,11 +18,13 @@ function navItemsFor(role) {
   if (role === 'cashier') return [
     { id: 'pos', label: 'Point of Sale', icon: '🛒' },
     { id: 'inventory', label: 'Inventory (view)', icon: '📦' },
+    { id: 'colorLibrary', label: 'Color Library', icon: '🎨' },
     { id: 'sales', label: 'Sales History', icon: '🧾' },
   ];
   return [ // staff
     { id: 'staffDashboard', label: 'Dashboard', icon: '📊' },
     { id: 'inventory', label: 'Inventory', icon: '📦' },
+    { id: 'colorLibrary', label: 'Color Library', icon: '🎨' },
     { id: 'alerts', label: 'Low-Stock Alerts', icon: '⚠️' },
     { id: 'expiration', label: 'Expiration Tracking', icon: '🗓️' },
     { id: 'purchaseOrders', label: 'Purchase Orders', icon: '📋' },
@@ -276,13 +279,18 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function renderApp() {
+  if (typeof applyTheme === 'function' && typeof getActiveTheme === 'function') {
+    applyTheme(getActiveTheme(), { persist: false, animate: false });
+  }
   const app = document.getElementById('app');
   if (!currentUser) {
     stopLiveClock();
     app.innerHTML = loginScreen();
+    if (typeof updateThemeToggleButtons === 'function') updateThemeToggleButtons();
     return;
   }
   app.innerHTML = shell();
+  if (typeof updateThemeToggleButtons === 'function') updateThemeToggleButtons();
   renderPage();
   updateNavBadges();
   if (typeof refreshColorMixPresetAvailabilityUI === 'function') {
@@ -360,6 +368,7 @@ function shell() {
       </div>
     </div>
     <div class="topbar-actions">
+      ${typeof renderThemeToggleButton === 'function' ? renderThemeToggleButton() : ''}
       <div class="user-badge-wrap">
         <div class="user-avatar">${userInitial}</div>
         <div class="user-badge-info">
@@ -377,15 +386,16 @@ function shell() {
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard', approvals: 'Pending Approvals Hub', pos: 'Point of Sale', products: 'Inventory', inventory: 'Inventory',
+  colorLibrary: 'Color Library',
   sales: 'Sales History', reports: 'Reports', suppliers: 'Suppliers', users: 'User Management', auditLog: 'Audit Log',
   staffDashboard: 'Dashboard', receiving: 'Stock Receiving / Adjustments', suppliersView: 'Supplier Directory', alerts: 'Low-Stock Alerts',
-  purchaseOrders: 'Purchase Orders', expiration: 'Expiration Tracking',
+  purchaseOrders: 'Purchase Orders', expiration: 'Expiration Tracking', discounts: 'Near-Expiry Discounts',
 };
 
 const ROLE_ALLOWED_PAGES = {
-  admin: ['dashboard', 'approvals', 'inventory', 'alerts', 'expiration', 'discounts', 'purchaseOrders', 'suppliers', 'reports', 'auditLog', 'users', 'pos', 'sales'],
-  cashier: ['pos', 'inventory', 'discounts', 'sales'],
-  staff: ['staffDashboard', 'inventory', 'alerts', 'expiration', 'discounts', 'purchaseOrders', 'receiving', 'suppliers', 'reports']
+  admin: ['dashboard', 'approvals', 'inventory', 'colorLibrary', 'alerts', 'expiration', 'discounts', 'purchaseOrders', 'suppliers', 'reports', 'auditLog', 'users', 'pos', 'sales'],
+  cashier: ['pos', 'inventory', 'colorLibrary', 'discounts', 'sales'],
+  staff: ['staffDashboard', 'inventory', 'colorLibrary', 'alerts', 'expiration', 'discounts', 'purchaseOrders', 'receiving', 'suppliers', 'reports']
 };
 
 const PAGE_ALIASES = {
@@ -403,6 +413,9 @@ const PAGE_ALIASES = {
   'point_of_sale': 'pos',
   'products': 'inventory',
   'inventory': 'inventory',
+  'colorlibrary': 'colorLibrary',
+  'color-library': 'colorLibrary',
+  'color_library': 'colorLibrary',
   'sales': 'sales',
   'sales-history': 'sales',
   'sales_history': 'sales',
@@ -492,13 +505,45 @@ function getNavStateKey(userId) {
   return NAV_STATE_STORAGE_PREFIX + uidStr;
 }
 
+const DEFAULT_PRODUCT_CATEGORIES = ['House Paint', 'Automotive Paint', 'Specialty Paint'];
+
+function getProductCategories() {
+  const result = [];
+  const seenLower = new Set();
+  const addCat = (raw) => {
+    const c = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!c) return;
+    const low = c.toLowerCase();
+    if (low === 'accessory' || low === '__add_category__') return;
+    if (!seenLower.has(low)) {
+      seenLower.add(low);
+      result.push(c);
+    }
+  };
+
+  DEFAULT_PRODUCT_CATEGORIES.forEach(addCat);
+
+  const stored = (typeof db !== 'undefined' && db && db.settings && Array.isArray(db.settings.product_categories))
+    ? db.settings.product_categories
+    : [];
+  stored.forEach(addCat);
+
+  const products = (typeof db !== 'undefined' && db && Array.isArray(db.products)) ? db.products : [];
+  products.forEach(p => {
+    if (!p) return;
+    addCat(p.type || p.category);
+  });
+
+  return result;
+}
+
 function syncActiveDomInputsToState() {
   try {
     if (currentPage === 'inventory') {
       const s = document.getElementById('inv-search');
       if (s && typeof invSearchQuery !== 'undefined') invSearchQuery = s.value;
       const t = document.getElementById('inv-type-filter');
-      if (t && typeof invTypeFilter !== 'undefined') invTypeFilter = t.value;
+      if (t && typeof invTypeFilter !== 'undefined' && t.value !== '__add_category__') invTypeFilter = t.value;
       const sz = document.getElementById('inv-size-filter');
       if (sz && typeof invSizeFilter !== 'undefined') invSizeFilter = sz.value;
       const st = document.getElementById('inv-status-filter');
@@ -1214,7 +1259,10 @@ function applyURLParamsToModuleState(page, params) {
 
   if (page === 'inventory') {
     if (typeof invSearchQuery !== 'undefined') invSearchQuery = params.get('q') || '';
-    if (typeof invTypeFilter !== 'undefined') invTypeFilter = params.get('type') || '';
+    if (typeof invTypeFilter !== 'undefined') {
+      const tParam = params.get('type') || '';
+      invTypeFilter = tParam === '__add_category__' ? '' : tParam;
+    }
     if (typeof invSizeFilter !== 'undefined') invSizeFilter = params.get('size') || '';
     if (typeof invStatusFilter !== 'undefined') invStatusFilter = params.get('status') || '';
     if (typeof invSortField !== 'undefined') {
@@ -1655,6 +1703,7 @@ function renderPage() {
     pos: typeof posPage === 'function' ? posPage : () => '',
     products: typeof inventoryPage === 'function' ? inventoryPage : () => '',
     inventory: typeof inventoryPage === 'function' ? inventoryPage : () => '',
+    colorLibrary: typeof colorLibraryPage === 'function' ? colorLibraryPage : () => '',
     sales: typeof salesHistoryPage === 'function' ? salesHistoryPage : () => '',
     reports: typeof reportsPage === 'function' ? reportsPage : () => '',
     suppliers: typeof suppliersPage === 'function' ? suppliersPage : () => '',
@@ -1672,7 +1721,11 @@ function renderPage() {
   const fn = renderers[currentPage] || fallbackFn;
   try {
     target.innerHTML = fn();
-    if (currentPage === 'pos') renderPosProductList();
+    if (currentPage === 'pos') {
+      renderPosProductList();
+      if (typeof updateCheckoutButtonState === 'function') updateCheckoutButtonState();
+    }
+    if ((currentPage === 'inventory' || currentPage === 'products') && typeof initInventoryPage === 'function') initInventoryPage();
     if (currentPage === 'purchaseOrders') initPOPage();
     if (currentPage === 'expiration' && typeof initExpirationPage === 'function') initExpirationPage();
     if (currentPage === 'discounts' && typeof initDiscountsPage === 'function') initDiscountsPage();
@@ -1684,11 +1737,11 @@ function renderPage() {
   } catch (err) {
     console.error('Error rendering page:', err);
     target.innerHTML = `
-      <div class="panel" style="padding:48px 24px; text-align:center; max-width:600px; margin:30px auto; border:1px solid #F0C4BF; background:#FFF8F7; border-radius:10px;">
+      <div class="panel" style="padding:48px 24px; text-align:center; max-width:600px; margin:30px auto; border:1px solid var(--danger-border); background:var(--danger-bg); border-radius:10px;">
         <div style="font-size:36px; margin-bottom:12px;">⚠️</div>
         <h3 style="margin:0 0 8px; color:var(--danger,#C1443D);">Failed to Load ${escapeHtml(PAGE_TITLES[currentPage] || 'Page')}</h3>
         <p class="muted" style="margin:0 0 16px; font-size:13.5px;">A technical error occurred while displaying this section. The application shell remains active.</p>
-        <div style="background:#fff; border:1px solid #F0ECE1; border-radius:6px; padding:10px 14px; font-family:monospace; font-size:12px; color:#A83232; text-align:left; margin-bottom:18px; overflow-x:auto;">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-family:monospace; font-size:12px; color:var(--danger-text); text-align:left; margin-bottom:18px; overflow-x:auto;">
           ${escapeHtml(err.message || 'Unknown error')}
         </div>
         <div style="display:flex; justify-content:center; gap:10px;">
@@ -1727,6 +1780,9 @@ function loginScreen() {
   </div>
 </div>
 <div class="login-form-side">
+  <div class="login-theme-toggle-wrap">
+    ${typeof renderThemeToggleButton === 'function' ? renderThemeToggleButton() : ''}
+  </div>
   <div class="login-card">
     <div class="login-card-header">
       <img src="assets/images/logo.png" alt="MRGR Color Center" class="login-card-logo" width="68" height="68">
@@ -1956,12 +2012,12 @@ function productSizeStatus(p, size) {
 /* Status badge for a container size: Good (green), Low Stock (amber), Out of Stock (red) */
 function containerSizeStatusBadge(st) {
   if (st === 'out') {
-    return `<span class="badge out" style="background:#FDE8E8; color:#9B1C1C; border:1px solid #F8B4B4; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#E02424;"></span>Out of Stock</span>`;
+    return `<span class="badge out" style="background:var(--danger-bg); color:var(--danger-text); border:1px solid var(--danger-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#E02424;"></span>Out of Stock</span>`;
   }
   if (st === 'low') {
-    return `<span class="badge low" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#D97706;"></span>Low Stock</span>`;
+    return `<span class="badge low" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#D97706;"></span>Low Stock</span>`;
   }
-  return `<span class="badge ok" style="background:#DEF7EC; color:#03543F; border:1px solid #BCF0DA; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#0E9F6E;"></span>Good</span>`;
+  return `<span class="badge ok" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#0E9F6E;"></span>Good</span>`;
 }
 
 /* Returns the list of sizes for product `p` that are low or out of stock (legacy / dashboard watchlist) */
@@ -1997,11 +2053,6 @@ function productOutOfStockSizes(p) {
 /**
  * Returns container sizes of product p that are In Stock (available > threshold).
  */
-function productInStockSizes(p) {
-  if (!p) return [];
-  return productSizes(p).filter(s => productCanCount(p, s) > productSizeThreshold(p, s));
-}
-
 /**
  * A product is Out of Stock if all its container sizes have zero available quantity
  * AND its total stock is 0.
@@ -2167,21 +2218,21 @@ function productSizeThresholdBadgesHtml(p, options = {}) {
     const canWord = thresh === 1 ? 'unit' : 'units';
     const liters = formatLiters(thresh * s);
 
-    let bg = '#F7F4EE';
-    let border = '#E7DFD0';
+    let bg = 'var(--surface-2)';
+    let border = 'var(--line)';
     let color = 'var(--ink)';
     let statusLabel = '';
 
     if (options.highlightStatus !== false) {
       if (st === 'out') {
-        bg = '#FDE8E8';
-        border = '#F8B4B4';
-        color = '#9B1C1C';
+        bg = 'var(--danger-bg)';
+        border = 'var(--danger-border)';
+        color = 'var(--danger-text)';
         statusLabel = ' · Out';
       } else if (st === 'low') {
-        bg = '#FEF3C7';
-        border = '#FCD34D';
-        color = '#92400E';
+        bg = 'var(--warning-bg)';
+        border = 'var(--warning-border)';
+        color = 'var(--warning-text)';
         statusLabel = ' · Low';
       }
     }
@@ -2195,18 +2246,6 @@ function productSizeThresholdBadgesHtml(p, options = {}) {
 }
 
 /* Renders the Threshold table cell with accurate total liters and clearly formatted per-liter can thresholds */
-function productThresholdCellHtml(p) {
-  const totalLiters = productTotalThresholdLiters(p) || Number(p.threshold) || 0;
-  return `
-    <div style="font-weight:700; font-size:13.5px; color:var(--ink); line-height:1.2;">
-      ${formatLiters(totalLiters)} <span style="font-size:11px; font-weight:500; color:var(--ink-soft);">(Total)</span>
-    </div>
-    <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:3px; margin-top:4px; max-width:280px; margin-left:auto;">
-      ${productSizeThresholdBadgesHtml(p)}
-    </div>
-  `;
-}
-
 /* A product has low stock if ANY individual container size is at or below its separate threshold,
    or if it is out of stock. Evaluates stock status independently for each product size. */
 function productHasLowStock(p) {
@@ -2615,25 +2654,6 @@ function consumeProductForColorMix(p, litersNeeded, preferredCanSize = 0) {
 }
 
 /* Opened / Used badge(s): one line per can size that has leftover */
-function openedStockBadgeHtml(p) {
-  const entries = productOpenedEntries(p);
-  if (!entries.length) {
-    return `<span class="muted" style="opacity:.45;">0 L</span>`;
-  }
-  return `
-    <div style="display:inline-flex; flex-direction:column; align-items:flex-end; gap:4px; line-height:1.25;">
-      ${entries.map(e => `
-      <div style="display:inline-flex; flex-direction:column; align-items:flex-end; gap:1px;">
-        <span class="badge" style="background:#FDF4E3; color:#9A6216; border:1px solid #F0D9B5; font-family:'Space Grotesk',sans-serif; font-weight:700;">
-          🫙 ${formatLiters(e.left)} left <span style="opacity:0.85; font-weight:600;">(${fmtSize(e.size)} container)</span>
-        </span>
-        <span style="font-size:11px; color:#8A5A24; font-weight:600; font-family:'Space Grotesk',sans-serif;">
-          Used: ${formatLiters(e.used)} of ${fmtSize(e.size)}
-        </span>
-      </div>`).join('')}
-    </div>`;
-}
-
 function formatMixConsumptionNote(plan) {
   if (!plan) return '';
   const parts = [];
@@ -2664,6 +2684,7 @@ function productById(id) {
    PRODUCT ID & SIZE ID GENERATION AND LOOKUP HELPERS
    ============================================================ */
 let _maxIssuedSizeNum = 0;
+let _maxIssuedInventoryNum = 0;
 
 function nextProductId() {
   let max = 0;
@@ -2709,7 +2730,7 @@ function nextSizeId() {
 }
 
 function nextInventoryId() {
-  let max = 0;
+  let max = _maxIssuedInventoryNum || 0;
   (db && Array.isArray(db.products) ? db.products : []).forEach(p => {
     (p.sizesData || []).forEach(v => {
       const rawId = v.inventoryId || '';
@@ -2726,7 +2747,8 @@ function nextInventoryId() {
       if (!isNaN(num) && num > max) max = num;
     }
   });
-  return `INV-${String(max + 1).padStart(3, '0')}`;
+  _maxIssuedInventoryNum = max + 1;
+  return `INV-${String(_maxIssuedInventoryNum).padStart(3, '0')}`;
 }
 
 function productSizeVariants(p) {
@@ -2781,8 +2803,10 @@ function syncProductVariants(p) {
   if (p.canStock && typeof p.canStock === 'object') {
     Object.keys(p.canStock).forEach(k => { if ((Number(p.canStock[k]) || 0) > 0) extraNumericSizes.push(Number(k)); });
   }
-  const allNeededSizes = sanitizeSizeList([...currentNumericSizes, ...extraNumericSizes, ...p.sizesData.map(v => v.containerSize)]);
+  const baseSizes = currentNumericSizes.length ? currentNumericSizes : p.sizesData.map(v => v.containerSize);
+  const allNeededSizes = sanitizeSizeList([...baseSizes, ...extraNumericSizes]);
   if (!allNeededSizes.length) allNeededSizes.push(1);
+  p.sizesData = p.sizesData.filter(v => allNeededSizes.includes(normalizeCanSize(v.containerSize)));
 
   const price = Number(p.price) || 0;
   const canStock = (p.canStock && typeof p.canStock === 'object' && !Array.isArray(p.canStock)) ? p.canStock : {};
@@ -2841,12 +2865,9 @@ function syncProductVariants(p) {
 
 function formatProductIdBadge(productId) {
   if (!productId) return '';
-  return `<span class="badge prod-id-badge" style="background:#EBF5FB; color:#1B4F72; border:1px solid #AED6F1; font-family:'Space Grotesk',monospace; font-weight:700; font-size:11px; padding:2px 7px; border-radius:4px; display:inline-flex; align-items:center;" title="Product ID: ${escapeHtml(productId)}">${escapeHtml(productId)}</span>`;
+  return `<span class="badge prod-id-badge" style="background:var(--info-bg); color:var(--info-text); border:1px solid var(--info-border); font-family:'Space Grotesk',monospace; font-weight:700; font-size:11px; padding:2px 7px; border-radius:4px; display:inline-flex; align-items:center;" title="Product ID: ${escapeHtml(productId)}">${escapeHtml(productId)}</span>`;
 }
 
-function formatSizeIdBadge(sizeId) {
-  return '';
-}
 function productOptionLabel(p) {
   const hex = getProductHex(p);
   const hexStr = hex ? ` (${hex})` : '';
@@ -2913,7 +2934,7 @@ function getProductSuppliers(productId, containerSize = null) {
       .map(ps => Number(ps.containerSize || ps.container_size))
       .filter(sz => sz > 0);
 
-    const availableSizes = allSizesForSupplier.length > 0 ? [...new Set(allSizesForSupplier)].sort((a,b) => a - b) : activeSizes;
+    const availableSizes = allSizesForSupplier.length > 0 ? [...new Set(allSizesForSupplier)].sort((a, b) => a - b) : activeSizes;
 
     results.push({
       id: rel.id,
@@ -3080,14 +3101,6 @@ function movementsBetween(fromISO, toISO) {
     return true;
   });
 }
-function purchaseOrdersBetween(fromISO, toISO) {
-  return (db.purchaseOrders || []).filter(o => {
-    const d = String(o.orderDate || '').slice(0, 10);
-    if (fromISO && d < fromISO) return false;
-    if (toISO && d > toISO) return false;
-    return true;
-  });
-}
 function sumSales(list) {
   return (list || []).reduce((t, s) => {
     if (!s) return t;
@@ -3132,18 +3145,6 @@ function movementSizeInfo(note, mObj = null) {
 }
 
 /* Qty cell text: "+3 × 16L (+48 L)" for sized movements, "-1.5 L (Opened)" for opened stock, or signed liters. */
-function movementLineQtyText(l) {
-  if (l.size) {
-    const sign = l.qty > 0 ? '+' : (l.qty < 0 ? '-' : '');
-    const literSign = l.qty > 0 ? '+' : '';
-    return `${sign}${l.units} × ${l.size}L (${literSign}${formatStock(l.qty)} L)`;
-  }
-  if (l.openedLiters > 0) {
-    return `-${formatStock(l.openedLiters)} L (Opened${l.openedCanSize ? ' ' + l.openedCanSize + 'L' : ''})`;
-  }
-  return (l.qty > 0 ? '+' : '') + formatStock(l.qty) + ' L';
-}
-
 function movementBalanceTrail(noteStr, size = null) {
   if (!noteStr) return '';
   const str = String(noteStr);
@@ -3193,6 +3194,7 @@ function groupStockMovements(movesList) {
       openedLiters: sz.openedLiters,
       openedCanSize: sz.openedCanSize,
       balanceTrail: balanceTrail,
+      batchNumber: String(m.batchNumber || (m.batch && m.batch.batchNumber) || '').trim(),
       note: noteStr,
       rawMovement: m
     };
@@ -3206,15 +3208,6 @@ function groupStockMovements(movesList) {
     }
   });
   return grouped;
-}
-
-function movementNoteHtml(m) {
-  if (m.type === 'colormix') {
-    const rc = (String((m.lines && m.lines[0] ? m.lines[0].note : m.note) || '').match(/Receipt:\s*(\S+)/) || [])[1];
-    return rc ? `Color mix ingredients · Receipt: ${escapeHtml(rc)}` : escapeHtml((m.lines && m.lines[0] ? m.lines[0].note : m.note) || '');
-  }
-  const notes = (m.lines ? m.lines.map(l => l.note) : [m.note || '']).map(n => String(n || '').replace(/\s*\(SZ-\d+\)/gi, '').replace(/\s*\[(?:SZ|PRD)-\d+\]/gi, ''));
-  return (new Set(notes).size === 1 ? [notes[0]] : notes).map(escapeHtml).join('<br>');
 }
 
 function movementTypeBadge(type) {
@@ -3435,7 +3428,12 @@ function renderStockMovementsTable(moves, options = {}) {
               <div class="movement-item-paired-row">
                 <div class="movement-item-left">
                   <span class="movement-item-name">${escapeHtml(l.label)}</span>
-                  ${l.balanceTrail ? `<div class="movement-balance-trail"><span class="trail-icon">📦</span> ${escapeHtml(l.balanceTrail)}</div>` : ''}
+                  ${(l.balanceTrail || l.batchNumber) ? `
+                    <div class="movement-item-meta">
+                      ${l.balanceTrail ? `<span class="movement-balance-trail"><span class="trail-icon">📦</span> ${escapeHtml(l.balanceTrail)}</span>` : ''}
+                      ${l.batchNumber ? `<span class="movement-batch-lot" title="Batch / Lot Number">🏷️ ${escapeHtml(l.batchNumber)}</span>` : ''}
+                    </div>
+                  ` : ''}
                 </div>
                 <span class="movement-item-delta">${movementLineDeltaBadge(l)}</span>
               </div>
@@ -3448,7 +3446,12 @@ function renderStockMovementsTable(moves, options = {}) {
       itemsTdHtml = `
         <td class="movement-product-td">
           <div class="movement-prod-name">${escapeHtml(singleLine.label)}</div>
-          ${singleLine.balanceTrail ? `<div class="movement-balance-trail"><span class="trail-icon">📦</span> ${escapeHtml(singleLine.balanceTrail)}</div>` : ''}
+          ${(singleLine.balanceTrail || singleLine.batchNumber) ? `
+            <div class="movement-item-meta">
+              ${singleLine.balanceTrail ? `<span class="movement-balance-trail"><span class="trail-icon">📦</span> ${escapeHtml(singleLine.balanceTrail)}</span>` : ''}
+              ${singleLine.batchNumber ? `<span class="movement-batch-lot" title="Batch / Lot Number">🏷️ ${escapeHtml(singleLine.batchNumber)}</span>` : ''}
+            </div>
+          ` : ''}
         </td>
         <td class="right movement-qty-td">
           ${movementLineDeltaBadge(singleLine)}
@@ -3582,18 +3585,6 @@ function lowStockProductsNeedingPO() {
 /**
  * Low stock products that already have a pending or ordered purchase order en route.
  */
-function lowStockProductsOnOrder() {
-  return lowStockProducts().filter(p => {
-    const sizes = productSizes(p);
-    return sizes.some(s => {
-      const st = productSizeStatus(p, s);
-      if (st !== 'low' && st !== 'out') return false;
-      const variant = productSizeVariantBySize(p, s);
-      return productSizeHasOpenPO(p.id, s, variant ? variant.sizeId : null);
-    });
-  });
-}
-
 function openPODetail(poId) {
   if (typeof poViewMode !== 'undefined') poViewMode = 'detail';
   if (typeof poDetailId !== 'undefined') poDetailId = poId;
@@ -3739,28 +3730,28 @@ const LowStockService = {
   // 2. Consistent Status Badges
   renderStockBadge(st) {
     if (st === 'out') {
-      return `<span class="badge out" style="background:#FDE8E8; color:#9B1C1C; border:1px solid #F8B4B4; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#E02424;"></span>Out of Stock</span>`;
+      return `<span class="badge out" style="background:var(--danger-bg); color:var(--danger-text); border:1px solid var(--danger-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#E02424;"></span>Out of Stock</span>`;
     }
     if (st === 'low') {
-      return `<span class="badge low" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#D97706;"></span>Low Stock</span>`;
+      return `<span class="badge low" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#D97706;"></span>Low Stock</span>`;
     }
-    return `<span class="badge ok" style="background:#DEF7EC; color:#03543F; border:1px solid #BCF0DA; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#0E9F6E;"></span>In Stock</span>`;
+    return `<span class="badge ok" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#0E9F6E;"></span>In Stock</span>`;
   },
 
   renderPOBadge(poSt) {
     if (poSt && poSt.status === 'on_order') {
       const poNum = poSt.poNumber || (poSt.primaryPO && poSt.primaryPO.poNumber) || 'PO';
       const poId = poSt.primaryPO ? poSt.primaryPO.id : '';
-      return `<a href="#" onclick="openPODetail('${escapeAttr(poId)}'); return false;" class="badge onorder" style="background:#EBF5FB; color:#1B4F72; border:1px solid #AED6F1; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px; text-decoration:none;" title="Click to view Purchase Order ${escapeAttr(poNum)}">
+      return `<a href="#" onclick="openPODetail('${escapeAttr(poId)}'); return false;" class="badge onorder" style="background:var(--info-bg); color:var(--info-text); border:1px solid var(--info-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px; text-decoration:none;" title="Click to view Purchase Order ${escapeAttr(poNum)}">
         <span>🚚</span> On Order (${escapeHtml(poNum)})
       </a>`;
     }
     if (poSt && poSt.status === 'needs_po') {
-      return `<span class="badge needspo" style="background:#FEF2F2; color:#991B1B; border:1px solid #FCA5A5; font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;">
+      return `<span class="badge needspo" style="background:var(--danger-bg); color:var(--danger-text); border:1px solid var(--danger-border); font-weight:700; padding:3px 10px; border-radius:12px; font-size:11.5px; display:inline-flex; align-items:center; gap:4px;">
         <span>⚠️</span> Needs PO
       </span>`;
     }
-    return `<span class="muted small" style="color:#94A3B8; font-size:11.5px;">—</span>`;
+    return `<span class="muted small" style="color:var(--ink-soft); font-size:11.5px;">—</span>`;
   },
 
   // 3. Centralized Restock Summary
@@ -4210,7 +4201,7 @@ const LowStockService = {
       let groupSubtotal = 0;
       g.items.forEach(it => { groupSubtotal += it.suggestedQty * it.unitCost; });
       return `
-            <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:14px;">
+            <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:14px;">
               <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px; border-bottom:1px solid var(--line); padding-bottom:8px;">
                 <div>
                   <span style="font-weight:700; color:var(--teal-dark); font-size:14px;">🏢 Supplier: ${escapeHtml(g.supplier.name)}</span>
@@ -4225,7 +4216,7 @@ const LowStockService = {
               <div class="table-scroll" style="overflow-x:auto;">
                 <table class="table-grouped-product" style="width:100%; font-size:12px;">
                   <thead>
-                    <tr style="background:#F2EDE4;">
+                    <tr style="background:var(--surface-3);">
                       <th style="text-align:left;">Product Name</th>
                       <th style="text-align:left;">Color Variant</th>
                       <th style="text-align:center;">Container Size</th>
@@ -4240,7 +4231,7 @@ const LowStockService = {
                     ${g.items.map((it, itIdx) => {
         const lineTotal = Number((it.suggestedQty * it.unitCost).toFixed(2));
         return `
-                        <tr style="border-bottom:1px solid #EFEAE0;" id="po-modal-row-${escapeAttr(it.key)}">
+                        <tr style="border-bottom:1px solid var(--line);" id="po-modal-row-${escapeAttr(it.key)}">
                           <td style="font-weight:700; color:var(--ink);">
                             ${escapeHtml(it.productName)}
                             <div class="muted small" style="font-weight:400; font-size:11px;">${escapeHtml(it.brand)}</div>
@@ -4249,13 +4240,13 @@ const LowStockService = {
                             <div style="display:inline-flex; align-items:center; gap:5px;">
                               <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${it.colorHex}; border:1px solid rgba(0,0,0,0.2);"></span>
                               <span style="font-weight:600; font-size:11.5px;">${escapeHtml(it.color)}</span>
-                              <code style="font-size:10px; color:var(--teal);">(${it.colorHex})</code>
+                              <code style="font-size:10px; color:var(--teal-text);">(${it.colorHex})</code>
                             </div>
                           </td>
                           <td style="text-align:center;">
-                            <span class="badge" style="background:#FFF; border:1px solid #DDD; font-weight:700; padding:2px 7px;">${fmtSize(it.size)}</span>
+                            <span class="badge" style="background:var(--surface); border:1px solid var(--line); font-weight:700; padding:2px 7px;">${fmtSize(it.size)}</span>
                           </td>
-                          <td style="text-align:right; font-weight:700; color:${it.stock <= 0 ? 'var(--danger)' : '#B45309'};">
+                          <td style="text-align:right; font-weight:700; color:${it.stock <= 0 ? 'var(--danger)' : 'var(--warning-text)'};">
                             ${it.stock} unit${it.stock === 1 ? '' : 's'}
                             <div class="muted small" style="font-weight:400; font-size:10px;">Min: ${it.threshold}</div>
                           </td>
@@ -4273,7 +4264,7 @@ const LowStockService = {
                                    data-unit-cost="${it.unitCost}"
                                    oninput="LowStockService.updateModalTotals()"
                                    onkeydown="if(['-','e','E','+','.'].includes(event.key)){event.preventDefault();}"
-                                   style="width:75px; padding:4px 6px; text-align:right; font-weight:700; font-size:12.5px; border:1px solid var(--line); border-radius:4px; background:#fff;">
+                                   style="width:75px; padding:4px 6px; text-align:right; font-weight:700; font-size:12.5px; border:1px solid var(--line); border-radius:4px; background:var(--surface);">
                             <div id="po-modal-qty-err-${escapeAttr(it.key)}" class="po-qty-validation-msg" style="display:none; margin-top:3px;">Minimum order quantity is 10 units.</div>
                           </td>
                           <td style="text-align:right; font-family:'Space Grotesk',sans-serif; font-weight:600; color:var(--ink);">
@@ -4311,7 +4302,7 @@ const LowStockService = {
       <div style="display:flex; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap; gap:12px;">
         <div style="font-size:13px;">
           <span class="muted">Total Order Amount:</span>
-          <b style="font-size:16px; color:var(--teal); margin-left:4px;" id="po-confirm-grand-total">${peso(grandTotal)}</b>
+          <b style="font-size:16px; color:var(--teal-text); margin-left:4px;" id="po-confirm-grand-total">${peso(grandTotal)}</b>
           <span class="muted small" style="margin-left:6px;">(${groups.length} PO${groups.length === 1 ? '' : 's'}, ${validatedItems.length} Sizes)</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">

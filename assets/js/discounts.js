@@ -290,10 +290,10 @@ function discRenderCards() {
     </div>`;
 
   el.innerHTML =
-    card(eligible.length, 'all', '📦', 'Eligible Batches', 'In-stock with expiration date', 'exp-card-total', '#F4EFE6', 'var(--ink)') +
-    card(active.length, 'active', '🏷️', 'Active Discounts', `${unitsDiscounted} unit(s) discounted in POS`, 'exp-card-good', '#ECFDF5', '#065F46') +
-    card(scheduled.length, 'scheduled', '🕒', 'Scheduled', 'Waiting for threshold window', 'exp-card-soon', '#FDF3E3', '#94690F') +
-    card(inactive.length, 'inactive', '⏸️', 'Inactive / None', 'No active discount applied', 'exp-card-none', '#EEEAE3', '#6B6259');
+    card(eligible.length, 'all', '📦', 'Eligible Batches', 'In-stock with expiration date', 'exp-card-total', 'var(--surface-3)', 'var(--ink)') +
+    card(active.length, 'active', '🏷️', 'Active Discounts', `${unitsDiscounted} unit(s) discounted in POS`, 'exp-card-good', 'var(--success-bg)', 'var(--success-text)') +
+    card(scheduled.length, 'scheduled', '🕒', 'Scheduled', 'Waiting for threshold window', 'exp-card-soon', 'var(--warning-bg)', 'var(--warning-text)') +
+    card(inactive.length, 'inactive', '⏸️', 'Inactive / None', 'No active discount applied', 'exp-card-none', 'var(--surface-3)', 'var(--ink-soft)');
 
   if (ban && DISC.data) {
     const ds = DISC.data.discountSettings || { enabled: false, tiers: [] };
@@ -360,7 +360,7 @@ function discRenderTable() {
     const origPrice = b.pricePerCan !== null ? peso(b.pricePerCan) : '—';
     const discPrice = b.discountedPrice !== null ? peso(b.discountedPrice) : '—';
     const pctHtml = b.discountPct > 0
-      ? `<strong style="color:#065F46;">${b.discountPct}%</strong>${b.discountAmount > 0 ? `<div class="exp-sub">-${peso(b.discountAmount)}</div>` : ''}`
+      ? `<strong style="color:var(--success-text);">${b.discountPct}%</strong>${b.discountAmount > 0 ? `<div class="exp-sub">-${peso(b.discountAmount)}</div>` : ''}`
       : `<span class="muted">0%</span>`;
 
     const actionsHtml = canManage
@@ -374,7 +374,7 @@ function discRenderTable() {
         <td><div class="exp-prod"><span class="exp-dot" style="background:${escapeAttr(b.colorHex || '#CCC')};"></span><div><div class="exp-prod-name">${escapeHtml(b.productName)}</div><div class="exp-sub">${escapeHtml(b.category || '')}</div></div></div></td>
         <td>${escapeHtml(b.brand || '—')}</td>
         <td>${escapeHtml(b.color || '—')}</td>
-        <td class="center"><span class="badge" style="background:#F4EFE6; color:#6B6259; font-weight:700;">🥫 ${b.containerSize !== null ? fmtSize(b.containerSize) : '—'}</span></td>
+        <td class="center"><span class="badge" style="background:var(--surface-3); color:var(--ink-soft); font-weight:700;">🥫 ${b.containerSize !== null ? fmtSize(b.containerSize) : '—'}</span></td>
         <td><code class="exp-code">${escapeHtml(b.batchNumber)}</code>${hasCustomRule ? '<div class="exp-sub">custom rule</div>' : ''}</td>
         <td>${escapeHtml(b.supplierName || '—')}</td>
         <td>${expFmtDate(b.dateReceived)}</td>
@@ -383,7 +383,7 @@ function discRenderTable() {
         <td class="right"><b>${b.remainingQty}</b></td>
         <td class="right">${origPrice}</td>
         <td class="right">${pctHtml}</td>
-        <td class="right">${b.discountPct > 0 ? `<strong style="color:#065F46;">${discPrice}</strong>` : origPrice}</td>
+        <td class="right">${b.discountPct > 0 ? `<strong style="color:var(--success-text);">${discPrice}</strong>` : origPrice}</td>
         <td>${discStatusBadge(b.discountStatus)}</td>
         <td class="exp-actions" onclick="event.stopPropagation()">${actionsHtml}</td>
       </tr>`;
@@ -438,7 +438,7 @@ function discOpenViewModal(batchId) {
         ${kv('Original Unit Price', b.pricePerCan !== null ? peso(b.pricePerCan) : '—')}
         ${kv('Discount Percentage', `${b.discountPct}%`)}
         ${kv('Discount Amount', peso(b.discountAmount || 0))}
-        ${kv('Discounted Unit Price', b.discountedPrice !== null ? `<span style="color:#065F46;">${peso(b.discountedPrice)}</span>` : '—')}
+        ${kv('Discounted Unit Price', b.discountedPrice !== null ? `<span style="color:var(--success-text);">${peso(b.discountedPrice)}</span>` : '—')}
         ${kv('Discount Status', discStatusBadge(b.discountStatus))}
         ${kv('Rule Source', b.discountSource === 'batch' ? 'Batch-specific rule' : (b.discountSource === 'schedule' ? 'Global expiration schedule' : 'None'))}
         ${b.discountRule && b.discountRule.daysBeforeExpiry !== null ? kv('Starts At', `≤ ${b.discountRule.daysBeforeExpiry} days before expiry`) : ''}
@@ -462,7 +462,7 @@ function discRulePreview(origPrice) {
   }
   const amt = Number((origPrice * (pct / 100)).toFixed(2));
   const fin = Number(Math.max(0, origPrice - amt).toFixed(2));
-  el.innerHTML = `Original: <b>${peso(origPrice)}</b> &nbsp;−&nbsp; Discount (${pct}%): <b style="color:var(--danger);">${peso(amt)}</b> &nbsp;=&nbsp; Discounted Price: <b style="color:#065F46;">${peso(fin)}</b>`;
+  el.innerHTML = `Original: <b>${peso(origPrice)}</b> &nbsp;−&nbsp; Discount (${pct}%): <b style="color:var(--danger);">${peso(amt)}</b> &nbsp;=&nbsp; Discounted Price: <b style="color:var(--success-text);">${peso(fin)}</b>`;
 }
 
 function discOpenRuleModal(batchId) {
@@ -543,6 +543,7 @@ async function discSaveRule(batchId) {
       }
     });
     closeModal();
+    if (typeof posBatchStatusLoadedAt !== 'undefined') posBatchStatusLoadedAt = 0;
     showToast('✓ Batch discount rule saved.', 'ok');
     await discLoad(true);
   } catch (e) {
@@ -558,6 +559,11 @@ function discConfirmToggle(batchId) {
   const b = discFindBatch(batchId);
   if (!b) return;
   const willActivate = b.discountStatus !== 'active';
+  const existingPct = b.discountRule ? Number(b.discountRule.discountPct || 0) : Number(b.discountPct || 0);
+  if (willActivate && existingPct <= 0) {
+    discOpenRuleModal(batchId);
+    return;
+  }
   const verb = willActivate ? 'Activate' : 'Deactivate';
   const body = `
     <div class="exp-form-note">Are you sure you want to <b>${verb.toLowerCase()}</b> the near-expiry discount for <b>${escapeHtml(b.productName)}</b> · Batch <code class="exp-code">${escapeHtml(b.batchNumber)}</code>?</div>
@@ -578,6 +584,7 @@ async function discExecToggle(batchId, isActive) {
   if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
   try {
     await discApi('toggle_discount_rule', { body: { batchId, isActive, reason } });
+    if (typeof posBatchStatusLoadedAt !== 'undefined') posBatchStatusLoadedAt = 0;
     closeModal();
     showToast(`✓ Batch discount ${isActive ? 'activated' : 'deactivated'}.`, 'ok');
     await discLoad(true);
@@ -610,6 +617,7 @@ async function discExecDelete(batchId) {
   if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
   try {
     await discApi('delete_discount_rule', { body: { batchId, reason } });
+    if (typeof posBatchStatusLoadedAt !== 'undefined') posBatchStatusLoadedAt = 0;
     closeModal();
     showToast('✓ Custom discount rule deleted.', 'ok');
     await discLoad(true);

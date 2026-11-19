@@ -1,169 +1,107 @@
 /* ============================================================
    COLOR MIXING & AUTOMATIC COLOR DETECTION ENGINE
+   Single Source of Truth: color-library.js (getColorLibraryList)
+   Mixing Model: Spectral-Overlap Kubelka-Munk (K/S) Approximation
    ============================================================ */
 
+/* --- 1. RGB / HEX / Linear Color Space Utilities (Separate from Pigment Math) --- */
+
+// Mixed-color-only dictionary (standard/common base colors live in Color Library)
 const PAINT_COLOR_DICTIONARY = [
-  // Whites & Creams
-  { name: 'Pure White', hex: '#FFFFFF', r: 255, g: 255, b: 255, family: 'White' },
-  { name: 'Super White', hex: '#FDFDFD', r: 253, g: 253, b: 253, family: 'White' },
-  { name: 'Pearl White', hex: '#F8F6F0', r: 248, g: 246, b: 240, family: 'White' },
-  { name: 'Warm White', hex: '#F5F2EB', r: 245, g: 242, b: 235, family: 'White' },
-  { name: 'Off White', hex: '#F2EDE4', r: 242, g: 237, b: 228, family: 'White' },
-  { name: 'Cream', hex: '#FFFDE5', r: 255, g: 253, b: 229, family: 'Cream' },
-  { name: 'Ivory', hex: '#FFFFF0', r: 255, g: 255, b: 240, family: 'Cream' },
-  { name: 'Alabaster', hex: '#F2F0EB', r: 242, g: 240, b: 235, family: 'White' },
-  { name: 'Cream', hex: '#FFFDD0', r: 255, g: 253, b: 208, family: 'Cream' },
-  { name: 'Vanilla', hex: '#F3E5AB', r: 243, g: 229, b: 171, family: 'Cream' },
-  { name: 'Antique Linen', hex: '#FAF0E6', r: 250, g: 240, b: 230, family: 'Cream' },
-  { name: 'Eggshell', hex: '#F0EAD6', r: 240, g: 234, b: 214, family: 'Cream' },
-
-  // Yellows & Golds
-  { name: 'Lemon Custard', hex: '#FFFCCA', r: 255, g: 252, b: 202, family: 'Yellow' },
-  { name: 'Buttercup Yellow', hex: '#FCE883', r: 252, g: 232, b: 131, family: 'Yellow' },
-  { name: 'Lemon Yellow', hex: '#FFF44F', r: 255, g: 244, b: 79, family: 'Yellow' },
-  { name: 'Canary Yellow', hex: '#FFEF00', r: 255, g: 239, b: 0, family: 'Yellow' },
-  { name: 'Pastel Yellow', hex: '#FFF9A6', r: 255, g: 249, b: 166, family: 'Yellow' },
-  { name: 'Golden Sun', hex: '#FDB813', r: 253, g: 184, b: 19, family: 'Yellow' },
-  { name: 'Goldenrod', hex: '#DAA520', r: 218, g: 165, b: 32, family: 'Yellow' },
-  { name: 'Mustard Yellow', hex: '#E1AD01', r: 225, g: 173, b: 1, family: 'Yellow' },
-  { name: 'Marigold', hex: '#EAA221', r: 234, g: 162, b: 33, family: 'Yellow' },
-  { name: 'Amber Gold', hex: '#FFBF00', r: 255, g: 191, b: 0, family: 'Yellow' },
-  { name: 'Ochre', hex: '#CC7722', r: 204, g: 119, b: 34, family: 'Yellow' },
-  { name: 'Metallic Gold', hex: '#D4AF37', r: 212, g: 175, b: 55, family: 'Yellow' },
-
-  // Oranges & Corals
-  { name: 'Tangerine', hex: '#FF8500', r: 255, g: 133, b: 0, family: 'Orange' },
-  { name: 'Bright Orange', hex: '#FF5F00', r: 255, g: 95, b: 0, family: 'Orange' },
-  { name: 'Sunset Orange', hex: '#FD5E53', r: 253, g: 94, b: 83, family: 'Orange' },
-  { name: 'Safety Orange', hex: '#FF6700', r: 255, g: 103, b: 0, family: 'Orange' },
-  { name: 'Peach', hex: '#FFE5B4', r: 255, g: 229, b: 180, family: 'Orange' },
-  { name: 'Apricot', hex: '#FBCEB1', r: 251, g: 206, b: 177, family: 'Orange' },
-  { name: 'Coral', hex: '#FF7F50', r: 255, g: 127, b: 80, family: 'Orange' },
-  { name: 'Salmon', hex: '#FA8072', r: 250, g: 128, b: 114, family: 'Orange' },
-  { name: 'Terracotta', hex: '#E2725B', r: 226, g: 114, b: 91, family: 'Orange' },
-  { name: 'Burnt Orange', hex: '#CC5500', r: 204, g: 85, b: 0, family: 'Orange' },
-  { name: 'Rust', hex: '#B7410E', r: 183, g: 65, b: 14, family: 'Orange' },
-
-  // Reds & Maroons
-  { name: 'Signal Red', hex: '#E32636', r: 227, g: 38, b: 54, family: 'Red' },
-  { name: 'Bright Red', hex: '#FF0000', r: 255, g: 0, b: 0, family: 'Red' },
-  { name: 'Crimson Red', hex: '#DC143C', r: 220, g: 20, b: 60, family: 'Red' },
-  { name: 'Ruby Red', hex: '#9B111E', r: 155, g: 17, b: 30, family: 'Red' },
-  { name: 'Scarlet', hex: '#FF2400', r: 255, g: 36, b: 0, family: 'Red' },
-  { name: 'Cherry Red', hex: '#D2042D', r: 210, g: 4, b: 45, family: 'Red' },
-  { name: 'Cardinal Red', hex: '#C41E3A', r: 196, g: 30, b: 58, family: 'Red' },
-  { name: 'Brick Red', hex: '#CB4154', r: 203, g: 65, b: 84, family: 'Red' },
-  { name: 'Maroon', hex: '#800000', r: 128, g: 0, b: 0, family: 'Red' },
-  { name: 'Burgundy', hex: '#800020', r: 128, g: 0, b: 32, family: 'Red' },
-  { name: 'Wine Red', hex: '#722F37', r: 114, g: 47, b: 55, family: 'Red' },
-  { name: 'Oxblood', hex: '#4A0000', r: 74, g: 0, b: 0, family: 'Red' },
-
-  // Pinks & Magentas
-  { name: 'Pastel Rose', hex: '#F7B9BE', r: 247, g: 185, b: 190, family: 'Pink' },
-  { name: 'Rose Pink', hex: '#FF66CC', r: 255, g: 102, b: 204, family: 'Pink' },
-  { name: 'Blush Pink', hex: '#DE5D83', r: 222, g: 93, b: 131, family: 'Pink' },
-  { name: 'Flamingo Pink', hex: '#F4A3A9', r: 244, g: 163, b: 169, family: 'Pink' },
-  { name: 'Flamingo Pink', hex: '#F18D95', r: 241, g: 141, b: 149, family: 'Pink' },
-  { name: 'Flamingo Pink', hex: '#FC8EAC', r: 252, g: 142, b: 172, family: 'Pink' },
-  { name: 'Coral Pink', hex: '#F88379', r: 248, g: 131, b: 121, family: 'Pink' },
-  { name: 'Sunset Coral', hex: '#F89B72', r: 248, g: 155, b: 114, family: 'Orange' },
-  { name: 'Magenta', hex: '#FF00FF', r: 255, g: 0, b: 255, family: 'Pink' },
-  { name: 'Fuchsia', hex: '#C154C1', r: 193, g: 84, b: 193, family: 'Pink' },
-  { name: 'Hot Pink', hex: '#FF69B4', r: 255, g: 105, b: 180, family: 'Pink' },
-  { name: 'Pale Rose', hex: '#FADADD', r: 250, g: 218, b: 221, family: 'Pink' },
-  { name: 'Bubblegum', hex: '#FFC1CC', r: 255, g: 193, b: 204, family: 'Pink' },
-
-  // Violets & Purples
-  { name: 'Lavender Mist', hex: '#C5BFC2', r: 197, g: 191, b: 194, family: 'Purple' },
-  { name: 'Lavender Mist', hex: '#CAB0E7', r: 202, g: 176, b: 231, family: 'Purple' },
-  { name: 'Lilac', hex: '#C8A2C8', r: 200, g: 162, b: 200, family: 'Purple' },
-  { name: 'Lavender', hex: '#E6E6FA', r: 230, g: 230, b: 250, family: 'Purple' },
-  { name: 'Wisteria', hex: '#C9A0DC', r: 201, g: 160, b: 220, family: 'Purple' },
-  { name: 'Orchid', hex: '#DA70D6', r: 218, g: 112, b: 214, family: 'Purple' },
-  { name: 'Violet', hex: '#8F00FF', r: 143, g: 0, b: 255, family: 'Purple' },
-  { name: 'Royal Purple', hex: '#7851A9', r: 120, g: 81, b: 169, family: 'Purple' },
-  { name: 'Amethyst', hex: '#9966CC', r: 153, g: 102, b: 204, family: 'Purple' },
-  { name: 'Plum', hex: '#8E4585', r: 142, g: 69, b: 133, family: 'Purple' },
-  { name: 'Deep Violet', hex: '#4B0082', r: 75, g: 0, b: 130, family: 'Purple' },
-  { name: 'Eggplant', hex: '#614051', r: 97, g: 64, b: 81, family: 'Purple' },
-  { name: 'Mauve', hex: '#E0B0FF', r: 224, g: 176, b: 255, family: 'Purple' },
-
-  // Blues & Cyans
-  { name: 'Ocean Aqua', hex: '#A0CDF5', r: 160, g: 205, b: 245, family: 'Blue' },
-  { name: 'Baby Blue', hex: '#89C1F2', r: 137, g: 193, b: 242, family: 'Blue' },
-  { name: 'Baby Blue', hex: '#CEE6FA', r: 206, g: 230, b: 250, family: 'Blue' },
-  { name: 'Sky Blue', hex: '#87CEEB', r: 135, g: 206, b: 235, family: 'Blue' },
-  { name: 'Powder Blue', hex: '#B0E0E6', r: 176, g: 224, b: 230, family: 'Blue' },
-  { name: 'Ice Blue', hex: '#AFEEEE', r: 175, g: 238, b: 238, family: 'Blue' },
-  { name: 'Cyan Blue', hex: '#00E5FF', r: 0, g: 229, b: 255, family: 'Blue' },
-  { name: 'Turquoise', hex: '#40E0D0', r: 64, g: 224, b: 208, family: 'Blue' },
-  { name: 'Teal Blue', hex: '#008080', r: 0, g: 128, b: 128, family: 'Blue' },
-  { name: 'Cerulean', hex: '#007BA7', r: 0, g: 123, b: 167, family: 'Blue' },
-  { name: 'Ocean Blue', hex: '#006994', r: 0, g: 105, b: 148, family: 'Blue' },
-  { name: 'Royal Blue', hex: '#4169E1', r: 65, g: 105, b: 225, family: 'Blue' },
-  { name: 'Cobalt Blue', hex: '#0047AB', r: 0, g: 71, b: 171, family: 'Blue' },
-  { name: 'Sapphire Blue', hex: '#0F52BA', r: 15, g: 82, b: 186, family: 'Blue' },
-  { name: 'Navy Blue', hex: '#000080', r: 0, g: 0, b: 128, family: 'Blue' },
-  { name: 'Midnight Blue', hex: '#191970', r: 25, g: 25, b: 112, family: 'Blue' },
-  { name: 'Steel Blue', hex: '#4682B4', r: 70, g: 130, b: 180, family: 'Blue' },
-  { name: 'Denim Blue', hex: '#1560BD', r: 21, g: 96, b: 189, family: 'Blue' },
-  { name: 'Slate Blue', hex: '#6A5ACD', r: 106, g: 90, b: 205, family: 'Blue' },
-
-  // Greens & Olives
-  { name: 'Sage Meadow', hex: '#BBE19D', r: 187, g: 225, b: 157, family: 'Green' },
-  { name: 'Mint Green', hex: '#98FF98', r: 152, g: 255, b: 152, family: 'Green' },
-  { name: 'Seafoam Green', hex: '#93E9BE', r: 147, g: 233, b: 190, family: 'Green' },
-  { name: 'Pistachio', hex: '#93C572', r: 147, g: 197, b: 114, family: 'Green' },
-  { name: 'Lime Green', hex: '#32CD32', r: 50, g: 205, b: 50, family: 'Green' },
-  { name: 'Chartreuse', hex: '#7FFF00', r: 127, g: 255, b: 0, family: 'Green' },
-  { name: 'Apple Green', hex: '#8DB600', r: 141, g: 182, b: 0, family: 'Green' },
-  { name: 'Emerald Green', hex: '#50C878', r: 80, g: 200, b: 120, family: 'Green' },
-  { name: 'Kelly Green', hex: '#4CBB17', r: 76, g: 187, b: 23, family: 'Green' },
-  { name: 'Leaf Green', hex: '#355E3B', r: 53, g: 94, b: 59, family: 'Green' },
-  { name: 'Forest Green', hex: '#228B22', r: 34, g: 139, b: 34, family: 'Green' },
-  { name: 'Hunter Green', hex: '#2E5B37', r: 46, g: 91, b: 55, family: 'Green' },
-  { name: 'Pine Green', hex: '#01796F', r: 1, g: 121, b: 111, family: 'Green' },
-  { name: 'Olive Green', hex: '#808000', r: 128, g: 128, b: 0, family: 'Green' },
-  { name: 'Olive Grove', hex: '#D1CE98', r: 209, g: 206, b: 152, family: 'Green' },
-  { name: 'Army Green', hex: '#4B5320', r: 75, g: 83, b: 32, family: 'Green' },
-  { name: 'Sage Green', hex: '#9DC183', r: 157, g: 193, b: 131, family: 'Green' },
-  { name: 'Celadon', hex: '#ACE1AF', r: 172, g: 225, b: 175, family: 'Green' },
-
-  // Browns & Earth Tones
-  { name: 'Creamy Latte', hex: '#D3BFAB', r: 211, g: 191, b: 171, family: 'Brown' },
-  { name: 'Tan', hex: '#D2B48C', r: 210, g: 180, b: 140, family: 'Brown' },
-  { name: 'Sand', hex: '#C2B280', r: 194, g: 178, b: 128, family: 'Brown' },
-  { name: 'Caramel', hex: '#FFD59A', r: 255, g: 213, b: 154, family: 'Brown' },
-  { name: 'Beige', hex: '#F5F5DC', r: 245, g: 245, b: 220, family: 'Brown' },
-  { name: 'Warm Taupe', hex: '#B38B6D', r: 179, g: 139, b: 109, family: 'Brown' },
-  { name: 'Chestnut Brown', hex: '#954535', r: 149, g: 69, b: 53, family: 'Brown' },
-  { name: 'Mocha', hex: '#967969', r: 150, g: 121, b: 105, family: 'Brown' },
-  { name: 'Walnut', hex: '#773F1A', r: 119, g: 63, b: 26, family: 'Brown' },
-  { name: 'Chocolate Brown', hex: '#3D2314', r: 61, g: 35, b: 20, family: 'Brown' },
-  { name: 'Espresso', hex: '#2B1700', r: 43, g: 23, b: 0, family: 'Brown' },
-
-  // Grays, Silvers & Blacks
-  { name: 'Modern Slate', hex: '#A6AAAE', r: 166, g: 170, b: 174, family: 'Gray' },
-  { name: 'Pure Black', hex: '#000000', r: 0, g: 0, b: 0, family: 'Black' },
-  { name: 'Jet Black', hex: '#1B1B1B', r: 27, g: 27, b: 27, family: 'Black' },
-  { name: 'Charcoal Gray', hex: '#36454F', r: 54, g: 69, b: 79, family: 'Gray' },
-  { name: 'Slate Gray', hex: '#708090', r: 112, g: 128, b: 144, family: 'Gray' },
-  { name: 'Gunmetal Gray', hex: '#2A3439', r: 42, g: 52, b: 57, family: 'Gray' },
-  { name: 'Dark Gray', hex: '#5A5A5A', r: 90, g: 90, b: 90, family: 'Gray' },
-  { name: 'Medium Gray', hex: '#808080', r: 128, g: 128, b: 128, family: 'Gray' },
-  { name: 'Silver Gray', hex: '#C0C0C0', r: 192, g: 192, b: 192, family: 'Gray' },
-  { name: 'Light Gray', hex: '#D3D3D3', r: 211, g: 211, b: 211, family: 'Gray' },
-  { name: 'Smoke Gray', hex: '#726E6D', r: 114, g: 110, b: 109, family: 'Gray' },
-  { name: 'Ash Gray', hex: '#B2BEB5', r: 178, g: 190, b: 181, family: 'Gray' }
+  { name: 'Cream', hex: '#FFFFD4', r: 255, g: 255, b: 212, family: 'Cream' },
+  { name: 'Warm Vanilla', hex: '#FFEFAE', r: 255, g: 239, b: 174, family: 'Cream' },
+  { name: 'Soft Eggshell', hex: '#F2DBCE', r: 242, g: 219, b: 206, family: 'Cream' },
+  { name: 'Golden Sand', hex: '#EDCEBD', r: 237, g: 206, b: 189, family: 'Yellow' },
+  { name: 'Warm Champagne', hex: '#E9C4B1', r: 233, g: 196, b: 177, family: 'Cream' },
+  { name: 'Honey Wheat', hex: '#E6BCA8', r: 230, g: 188, b: 168, family: 'Yellow' },
+  { name: 'Medium Rose', hex: '#D28888', r: 210, g: 136, b: 136, family: 'Pink' },
+  { name: 'Terracotta Rose', hex: '#C5706E', r: 197, g: 112, b: 110, family: 'Pink' },
+  { name: 'Soft Blush Rose', hex: '#D19395', r: 209, g: 147, b: 149, family: 'Pink' },
+  { name: 'Muted Berry Rose', hex: '#C88386', r: 200, g: 131, b: 134, family: 'Pink' },
+  { name: 'Dusty Rose', hex: '#CA868C', r: 202, g: 134, b: 140, family: 'Pink' },
+  { name: 'Pale Orchid', hex: '#EECCED', r: 238, g: 204, b: 237, family: 'Purple' },
+  { name: 'Berry Blush', hex: '#BA6A89', r: 186, g: 106, b: 137, family: 'Pink' },
+  { name: 'Rosewood Tint', hex: '#B86D72', r: 184, g: 109, b: 114, family: 'Pink' },
+  { name: 'Light Orchid', hex: '#E7B9E6', r: 231, g: 185, b: 230, family: 'Purple' },
+  { name: 'Sunset Coral', hex: '#FF6A24', r: 255, g: 106, b: 36, family: 'Orange' },
+  { name: 'Warm Buttercream', hex: '#FFEAA0', r: 255, g: 234, b: 160, family: 'Yellow' },
+  { name: 'Pale Vanilla Cream', hex: '#FFF4C3', r: 255, g: 244, b: 195, family: 'Cream' },
+  { name: 'Coral Blush', hex: '#FFA472', r: 255, g: 164, b: 114, family: 'Orange' },
+  { name: 'Terracotta Clay', hex: '#CC6542', r: 204, g: 101, b: 66, family: 'Orange' },
+  { name: 'Burnt Sienna', hex: '#C75E3C', r: 199, g: 94, b: 60, family: 'Orange' },
+  { name: 'Copper Ochre', hex: '#CE7924', r: 206, g: 121, b: 36, family: 'Orange' },
+  { name: 'Melon Sorbet', hex: '#FFC194', r: 255, g: 193, b: 148, family: 'Orange' },
+  { name: 'Spiced Amber', hex: '#D47923', r: 212, g: 121, b: 35, family: 'Orange' },
+  { name: 'Burnt Rust', hex: '#AC3E26', r: 172, g: 62, b: 38, family: 'Orange' },
+  { name: 'Dark Bronze', hex: '#7B4535', r: 123, g: 69, b: 53, family: 'Brown' },
+  { name: 'Rust Brown', hex: '#974433', r: 151, g: 68, b: 51, family: 'Brown' },
+  { name: 'Copper Brown', hex: '#984432', r: 152, g: 68, b: 50, family: 'Brown' },
+  { name: 'Cinnamon Orange', hex: '#BE5032', r: 190, g: 80, b: 50, family: 'Orange' },
+  { name: 'Bright Lemon', hex: '#FFFF7C', r: 255, g: 255, b: 124, family: 'Yellow' },
+  { name: 'Buttercup Tint', hex: '#FFE085', r: 255, g: 224, b: 133, family: 'Yellow' },
+  { name: 'Honey Gold', hex: '#DCB02F', r: 220, g: 176, b: 47, family: 'Yellow' },
+  { name: 'Mustard Ochre', hex: '#DAAB30', r: 218, g: 171, b: 48, family: 'Yellow' },
+  { name: 'Saffron Gold', hex: '#DEB357', r: 222, g: 179, b: 87, family: 'Yellow' },
+  { name: 'Sunlit Straw', hex: '#FFE38C', r: 255, g: 227, b: 140, family: 'Yellow' },
+  { name: 'Aqua Mint', hex: '#3BC06A', r: 59, g: 192, b: 106, family: 'Green' },
+  { name: 'Rich Leaf Green', hex: '#42CA2C', r: 66, g: 202, b: 44, family: 'Green' },
+  { name: 'Deep Forest', hex: '#5B763C', r: 91, g: 118, b: 60, family: 'Green' },
+  { name: 'Soft Mint', hex: '#8FE5C9', r: 143, g: 229, b: 201, family: 'Green' },
+  { name: 'Bright Seafoam', hex: '#83E3B6', r: 131, g: 227, b: 182, family: 'Green' },
+  { name: 'Spring Leaf', hex: '#5BD383', r: 91, g: 211, b: 131, family: 'Green' },
+  { name: 'Fresh Mint', hex: '#5FD39A', r: 95, g: 211, b: 154, family: 'Green' },
+  { name: 'Vibrant Meadow Green', hex: '#64DF40', r: 100, g: 223, b: 64, family: 'Green' },
+  { name: 'Celadon Jade', hex: '#B6F5C7', r: 182, g: 245, b: 199, family: 'Green' },
+  { name: 'Dark Moss', hex: '#516931', r: 81, g: 105, b: 49, family: 'Green' },
+  { name: 'Eucalyptus', hex: '#0E8882', r: 14, g: 136, b: 130, family: 'Green' },
+  { name: 'Charcoal Pine', hex: '#2D5844', r: 45, g: 88, b: 68, family: 'Green' },
+  { name: 'Rich Avocado', hex: '#828D38', r: 130, g: 141, b: 56, family: 'Green' },
+  { name: 'Baby Blue', hex: '#64BEFF', r: 100, g: 190, b: 255, family: 'Blue' },
+  { name: 'Pale Sky Blue', hex: '#B6E8FF', r: 182, g: 232, b: 255, family: 'Blue' },
+  { name: 'Clear Sky Blue', hex: '#8FD7FF', r: 143, g: 215, b: 255, family: 'Blue' },
+  { name: 'Light Powder Blue', hex: '#9EDFFF', r: 158, g: 223, b: 255, family: 'Blue' },
+  { name: 'Cobalt Blue', hex: '#03797A', r: 3, g: 121, b: 122, family: 'Blue' },
+  { name: 'Ocean Blue', hex: '#037B6F', r: 3, g: 123, b: 111, family: 'Blue' },
+  { name: 'Steel Denim', hex: '#115D95', r: 17, g: 93, b: 149, family: 'Blue' },
+  { name: 'Slate Cobalt', hex: '#145B85', r: 20, g: 91, b: 133, family: 'Blue' },
+  { name: 'Bright Sky Blue', hex: '#5FBAFF', r: 95, g: 186, b: 255, family: 'Blue' },
+  { name: 'Midnight Charcoal', hex: '#36385F', r: 54, g: 56, b: 95, family: 'Gray' },
+  { name: 'Aegean Blue', hex: '#17597A', r: 23, g: 89, b: 122, family: 'Blue' },
+  { name: 'Lavender', hex: '#807CCC', r: 128, g: 124, b: 204, family: 'Purple' },
+  { name: 'Soft Lilac', hex: '#E2ACE1', r: 226, g: 172, b: 225, family: 'Purple' },
+  { name: 'Wisteria Bloom', hex: '#DEA1DD', r: 222, g: 161, b: 221, family: 'Purple' },
+  { name: 'Dusty Plum', hex: '#5D3C56', r: 93, g: 60, b: 86, family: 'Purple' },
+  { name: 'Charcoal Slate', hex: '#6C596C', r: 108, g: 89, b: 108, family: 'Gray' },
+  { name: 'Bright Orchid', hex: '#D48AD3', r: 212, g: 138, b: 211, family: 'Purple' },
+  { name: 'Mulberry', hex: '#5F295E', r: 95, g: 41, b: 94, family: 'Purple' },
+  { name: 'Medium Orchid', hex: '#CC7ACB', r: 204, g: 122, b: 203, family: 'Purple' },
+  { name: 'Mustard Gold', hex: '#CF9167', r: 207, g: 145, b: 103, family: 'Yellow' },
+  { name: 'Warm Wheat', hex: '#E3B6A0', r: 227, g: 182, b: 160, family: 'Yellow' },
+  { name: 'Golden Ochre', hex: '#D1927A', r: 209, g: 146, b: 122, family: 'Yellow' },
+  { name: 'Dark Olive', hex: '#6C594D', r: 108, g: 89, b: 77, family: 'Green' },
+  { name: 'Sunlit Ochre', hex: '#E6C18D', r: 230, g: 193, b: 141, family: 'Yellow' },
+  { name: 'Honey Tan', hex: '#E0B09A', r: 224, g: 176, b: 154, family: 'Brown' },
+  { name: 'Cinnamon Clay', hex: '#B4674C', r: 180, g: 103, b: 76, family: 'Brown' },
+  { name: 'Caramel Cocoa', hex: '#A25339', r: 162, g: 83, b: 57, family: 'Brown' },
+  { name: 'Deep Umber', hex: '#523C31', r: 82, g: 60, b: 49, family: 'Brown' },
+  { name: 'Spiced Mustard', hex: '#DEAB94', r: 222, g: 171, b: 148, family: 'Yellow' },
+  { name: 'Modern Slate', hex: '#4D5556', r: 77, g: 85, b: 86, family: 'Gray' },
+  { name: 'Charcoal Taupe', hex: '#565452', r: 86, g: 84, b: 82, family: 'Gray' },
+  { name: 'Medium Neutral Gray', hex: '#AAAAAA', r: 170, g: 170, b: 170, family: 'Gray' },
+  { name: 'Pale Olive', hex: '#B9C5B3', r: 185, g: 197, b: 179, family: 'Green' },
+  { name: 'Pewter Gray', hex: '#777777', r: 119, g: 119, b: 119, family: 'Gray' },
+  { name: 'Dark Neutral Gray', hex: '#6F6F6F', r: 111, g: 111, b: 111, family: 'Gray' },
+  { name: 'Deep Slate Gray', hex: '#2E3E40', r: 46, g: 62, b: 64, family: 'Gray' },
+  { name: 'Dark Graphite', hex: '#626262', r: 98, g: 98, b: 98, family: 'Gray' }
 ];
 
 function hexToRgb(hex) {
-  hex = String(hex || '').replace('#', '').trim();
-  if (hex.length === 3) {
-    hex = hex.split('').map(c => c + c).join('');
+  let raw = String(hex || '').replace('#', '').trim();
+  if (raw.length === 3) {
+    raw = raw.split('').map(c => c + c).join('');
   }
-  if (hex.length !== 6) return { r: 255, g: 255, b: 255 };
-  const num = parseInt(hex, 16);
+  if (!/^[0-9A-Fa-f]{6}$/.test(raw)) return { r: 255, g: 255, b: 255 };
+  const num = parseInt(raw, 16);
   return {
     r: (num >> 16) & 255,
     g: (num >> 8) & 255,
@@ -172,9 +110,20 @@ function hexToRgb(hex) {
 }
 
 function rgbToHex(r, g, b) {
-  const clamp = v => Math.max(0, Math.min(255, Math.round(v)));
+  const clamp = v => Math.max(0, Math.min(255, Math.round(Number(v) || 0)));
   const toHex = v => clamp(v).toString(16).padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
+
+function srgbChannelToLinear(c255) {
+  const c = Math.max(0, Math.min(1, (Number(c255) || 0) / 255));
+  return c <= 0.04045 ? (c / 12.92) : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function linearChannelToSrgb(lin) {
+  const c = Math.max(0, Math.min(1, Number(lin) || 0));
+  const s = c <= 0.0031308 ? (12.92 * c) : (1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+  return Math.max(0, Math.min(255, Math.round(s * 255)));
 }
 
 function isLightColor(hex) {
@@ -182,21 +131,45 @@ function isLightColor(hex) {
   return (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) > 165;
 }
 
+/* --- 2. Color Library Single-Source-of-Truth Resolution --- */
+
+function getMasterColorLibrary() {
+  if (typeof getColorLibraryList === 'function') {
+    return getColorLibraryList();
+  }
+  return [];
+}
+
 function getProductDefaultColor(product) {
   if (!product) return '#FFFFFF';
-  if (product.colorHex && /^#[0-9A-Fa-f]{6}$/i.test(product.colorHex)) {
-    return product.colorHex;
+  const cid = product.colorId || product.color_id;
+  if (cid && typeof findColorLibraryEntry === 'function') {
+    const libEntry = findColorLibraryEntry(cid);
+    if (libEntry && libEntry.hex) {
+      return (typeof normalizeHexCode === 'function' ? normalizeHexCode(libEntry.hex) : libEntry.hex.toUpperCase()) || '#FFFFFF';
+    }
   }
+  const directHex = typeof normalizeHexCode === 'function'
+    ? normalizeHexCode(product.colorHex || product.color_hex)
+    : ((product.colorHex && /^#[0-9A-Fa-f]{6}$/i.test(product.colorHex)) ? product.colorHex.toUpperCase() : '');
+  if (directHex) return directHex;
+  if (product.color && String(product.color).trim().startsWith('#')) {
+    const cHex = typeof normalizeHexCode === 'function' ? normalizeHexCode(product.color) : product.color.trim().toUpperCase();
+    if (cHex) return cHex;
+  }
+  const lib = getMasterColorLibrary();
   const str = `${product.color || ''} ${product.name || ''}`.toLowerCase();
-  if (product.color && product.color.startsWith('#') && (product.color.length === 4 || product.color.length === 7)) {
-    return product.color;
+  for (const item of lib) {
+    if (item.name && str.includes(item.name.toLowerCase())) {
+      return item.hex;
+    }
   }
   for (const item of PAINT_COLOR_DICTIONARY) {
     if (str.includes(item.name.toLowerCase())) {
       return item.hex;
     }
   }
-  // Keyword fallbacks
+  // Safe keyword fallbacks for unlinked legacy inventory items
   if (str.includes('black') || str.includes('noir')) return '#1B1B1B';
   if (str.includes('white') || str.includes('blanco')) return '#FFFFFF';
   if (str.includes('red') || str.includes('crimson') || str.includes('scarlet')) return '#E32636';
@@ -216,13 +189,25 @@ function getProductDefaultColor(product) {
 
 function getProductColorName(product) {
   if (!product) return 'Standard';
-  if (product.color && product.color !== '-' && !product.color.startsWith('#')) {
+  if (typeof resolveProductColor === 'function') {
+    const resolved = resolveProductColor(product);
+    if (resolved && resolved.isLinked && resolved.name && resolved.name !== '-') {
+      return resolved.name;
+    }
+  }
+  if (product.color && product.color !== '-' && !String(product.color).startsWith('#')) {
     return product.color;
   }
   if (product.colorName && product.colorName !== '-') {
     return product.colorName;
   }
   const str = `${product.name || ''}`.toLowerCase();
+  const lib = getMasterColorLibrary();
+  for (const item of lib) {
+    if (item.name && str.includes(item.name.toLowerCase())) {
+      return item.name;
+    }
+  }
   if (typeof PAINT_COLOR_DICTIONARY !== 'undefined') {
     for (const item of PAINT_COLOR_DICTIONARY) {
       if (str.includes(item.name.toLowerCase())) {
@@ -230,7 +215,7 @@ function getProductColorName(product) {
       }
     }
   }
-  if (product.color && product.color.startsWith('#') && typeof hexToRgb === 'function' && typeof detectMixedColorName === 'function') {
+  if (product.color && String(product.color).startsWith('#') && typeof hexToRgb === 'function' && typeof detectMixedColorName === 'function') {
     const rgb = hexToRgb(product.color);
     const det = detectMixedColorName(rgb.r, rgb.g, rgb.b);
     if (det && det.name) return det.name;
@@ -239,73 +224,295 @@ function getProductColorName(product) {
 }
 window.getProductColorName = getProductColorName;
 
+/* --- 3. Kubelka-Munk Spectral Paint & Pigment Mixing Engine --- */
+
+// Invertible 3x3 spectral-overlap matrix M (maps linear RGB -> 3 broad paint reflectance bands)
+// Allows Yellow + Blue -> Green, Red + Yellow -> Orange, Red + Blue -> Violet while preserving exact single-color identity.
+const KM_SPEC_M = [
+  [0.90, 0.08, 0.02],
+  [0.06, 0.76, 0.18],
+  [0.02, 0.04, 0.94]
+];
+
+// Exact inverse of KM_SPEC_M
+const KM_SPEC_M_INV = [
+  [1.1189873418, -0.1177215190, -0.0012658228],
+  [-0.0835443038, 1.3379746835, -0.2544303797],
+  [-0.0202531646, -0.0544303797, 1.0746835443]
+];
+
+function reflectanceToKS(R) {
+  const r = Math.max(0.004, Math.min(0.996, R));
+  return ((1 - r) * (1 - r)) / (2 * r);
+}
+
+function ksToReflectance(ks) {
+  const k = Math.max(0, ks);
+  return Math.max(0, Math.min(1, 1 + k - Math.sqrt(k * k + 2 * k)));
+}
+
 function subtractivePaintMix(components) {
-  if (!components || !components.length) return { r: 255, g: 255, b: 255, hex: '#FFFFFF' };
+  if (!Array.isArray(components) || !components.length) {
+    return {
+      r: 255, g: 255, b: 255, hex: '#FFFFFF',
+      rgbLabel: 'rgb(255, 255, 255)',
+      isDigitalApproximation: true,
+      modelName: 'Kubelka-Munk Spectral Approximation',
+      normalizedComponents: [],
+      totalPct: 0
+    };
+  }
 
-  const valid = components.filter(c => Number(c.pct) > 0);
-  if (!valid.length) return { r: 255, g: 255, b: 255, hex: '#FFFFFF' };
+  // Filter valid non-negative positive percentages
+  const valid = components
+    .map(c => ({ ...c, cleanPct: Math.max(0, Number(c.pct) || 0) }))
+    .filter(c => c.cleanPct > 0);
 
-  const totalPct = valid.reduce((sum, c) => sum + Number(c.pct), 0);
-  if (totalPct <= 0) return { r: 255, g: 255, b: 255, hex: '#FFFFFF' };
+  if (!valid.length) {
+    return {
+      r: 255, g: 255, b: 255, hex: '#FFFFFF',
+      rgbLabel: 'rgb(255, 255, 255)',
+      isDigitalApproximation: true,
+      modelName: 'Kubelka-Munk Spectral Approximation',
+      normalizedComponents: [],
+      totalPct: 0
+    };
+  }
 
-  // Subtractive CMYK Pigment Mix
-  let totalC = 0, totalM = 0, totalY = 0, totalK = 0;
+  const totalPct = valid.reduce((sum, c) => sum + c.cleanPct, 0);
+  if (totalPct <= 0) {
+    return {
+      r: 255, g: 255, b: 255, hex: '#FFFFFF',
+      rgbLabel: 'rgb(255, 255, 255)',
+      isDigitalApproximation: true,
+      modelName: 'Kubelka-Munk Spectral Approximation',
+      normalizedComponents: [],
+      totalPct: 0
+    };
+  }
 
-  valid.forEach(c => {
-    const weight = Number(c.pct) / totalPct;
-    const rgb = hexToRgb(c.hex || '#FFFFFF');
+  const hasPhysicalData = valid.every(c => c.pigmentData && Array.isArray(c.pigmentData.ks) && c.pigmentData.ks.length === 3);
+  let ksMix0 = 0, ksMix1 = 0, ksMix2 = 0;
 
-    // Normalize RGB to 0..1
-    const r = rgb.r / 255;
-    const g = rgb.g / 255;
-    const b = rgb.b / 255;
-
-    // Convert to CMYK
-    const k = 1 - Math.max(r, g, b);
-    let cyan = 0, magenta = 0, yellow = 0;
-    if (k < 1) {
-      cyan = (1 - r - k) / (1 - k);
-      magenta = (1 - g - k) / (1 - k);
-      yellow = (1 - b - k) / (1 - k);
+  const normalizedComponents = valid.map(c => {
+    const weight = c.cleanPct / totalPct;
+    let ks0, ks1, ks2;
+    if (c.pigmentData && Array.isArray(c.pigmentData.ks) && c.pigmentData.ks.length === 3) {
+      [ks0, ks1, ks2] = c.pigmentData.ks.map(Number);
+    } else {
+      const rgb = hexToRgb(c.hex || '#FFFFFF');
+      const lr = srgbChannelToLinear(rgb.r);
+      const lg = srgbChannelToLinear(rgb.g);
+      const lb = srgbChannelToLinear(rgb.b);
+      const s0 = KM_SPEC_M[0][0] * lr + KM_SPEC_M[0][1] * lg + KM_SPEC_M[0][2] * lb;
+      const s1 = KM_SPEC_M[1][0] * lr + KM_SPEC_M[1][1] * lg + KM_SPEC_M[1][2] * lb;
+      const s2 = KM_SPEC_M[2][0] * lr + KM_SPEC_M[2][1] * lg + KM_SPEC_M[2][2] * lb;
+      ks0 = reflectanceToKS(s0);
+      ks1 = reflectanceToKS(s1);
+      ks2 = reflectanceToKS(s2);
     }
 
-    totalC += cyan * weight;
-    totalM += magenta * weight;
-    totalY += yellow * weight;
-    totalK += k * weight;
+    ksMix0 += ks0 * weight;
+    ksMix1 += ks1 * weight;
+    ksMix2 += ks2 * weight;
+
+    return { ...c, weight };
   });
 
-  // Convert mixed CMYK back to RGB
-  const finalR = Math.round(255 * (1 - totalC) * (1 - totalK));
-  const finalG = Math.round(255 * (1 - totalM) * (1 - totalK));
-  const finalB = Math.round(255 * (1 - totalY) * (1 - totalK));
+  // Invert Kubelka-Munk K/S -> Spectral reflectance -> Linear RGB
+  const sm0 = ksToReflectance(ksMix0);
+  const sm1 = ksToReflectance(ksMix1);
+  const sm2 = ksToReflectance(ksMix2);
 
+  const linR = KM_SPEC_M_INV[0][0] * sm0 + KM_SPEC_M_INV[0][1] * sm1 + KM_SPEC_M_INV[0][2] * sm2;
+  const linG = KM_SPEC_M_INV[1][0] * sm0 + KM_SPEC_M_INV[1][1] * sm1 + KM_SPEC_M_INV[1][2] * sm2;
+  const linB = KM_SPEC_M_INV[2][0] * sm0 + KM_SPEC_M_INV[2][1] * sm1 + KM_SPEC_M_INV[2][2] * sm2;
+
+  const finalR = linearChannelToSrgb(linR);
+  const finalG = linearChannelToSrgb(linG);
+  const finalB = linearChannelToSrgb(linB);
   const hex = rgbToHex(finalR, finalG, finalB);
-  return { r: finalR, g: finalG, b: finalB, hex };
+
+  return {
+    r: finalR,
+    g: finalG,
+    b: finalB,
+    hex,
+    rgbLabel: `rgb(${finalR}, ${finalG}, ${finalB})`,
+    isDigitalApproximation: !hasPhysicalData,
+    modelName: hasPhysicalData ? 'Kubelka-Munk Physical Pigment Data' : 'Kubelka-Munk Spectral Approximation',
+    normalizedComponents,
+    totalPct
+  };
+}
+
+function computeColorMixVariations(baseHex) {
+  const clean = (typeof normalizeHexCode === 'function' ? normalizeHexCode(baseHex) : '') || '#FFFFFF';
+  const lighter = subtractivePaintMix([
+    { hex: clean, pct: 80 },
+    { hex: '#FFFFFF', pct: 20 }
+  ]);
+  const darker = subtractivePaintMix([
+    { hex: clean, pct: 85 },
+    { hex: '#1B1B1B', pct: 15 }
+  ]);
+  return { lighter, darker };
 }
 
 function cleanPresetColorName(rawName) {
   return String(rawName || '').replace(/^[\p{Emoji}\s]+/u, '').trim() || String(rawName || '').trim();
 }
 
+function rgbToLab(r, g, b) {
+  const lr = srgbChannelToLinear(r);
+  const lg = srgbChannelToLinear(g);
+  const lb = srgbChannelToLinear(b);
+
+  // sRGB D65 -> CIE XYZ (normalized to D65 white point)
+  const x = (0.4124564 * lr + 0.3575761 * lg + 0.1804375 * lb) / 0.95047;
+  const y = (0.2126729 * lr + 0.7151522 * lg + 0.0721750 * lb) / 1.00000;
+  const z = (0.0193339 * lr + 0.1191920 * lg + 0.9503041 * lb) / 1.08883;
+
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116));
+  const fx = f(x), fy = f(y), fz = f(z);
+  return {
+    L: 116 * fy - 16,
+    a: 500 * (fx - fy),
+    b: 200 * (fy - fz)
+  };
+}
+
+function perceptualLabDistance(rgb1, rgb2) {
+  const lab1 = rgbToLab(rgb1.r, rgb1.g, rgb1.b);
+  const lab2 = rgbToLab(rgb2.r, rgb2.g, rgb2.b);
+  const dL = lab1.L - lab2.L;
+  const da = lab1.a - lab2.a;
+  const db = lab1.b - lab2.b;
+  return Math.sqrt(dL * dL + da * da + db * db);
+}
+
+function getColorMatchConfidence(deltaE) {
+  const d = Number(deltaE) || 0;
+  const similarityPct = Math.max(0, Math.min(100, Math.round(100 - d * 1.6)));
+  if (d <= 2.3) {
+    return { deltaE: Math.round(d * 10) / 10, similarityPct, confidence: 'exact', matchLabel: 'Exact Match' };
+  }
+  if (d <= 8) {
+    return { deltaE: Math.round(d * 10) / 10, similarityPct, confidence: 'high', matchLabel: 'Close Match' };
+  }
+  if (d <= 18) {
+    return { deltaE: Math.round(d * 10) / 10, similarityPct, confidence: 'medium', matchLabel: 'Approximate Match' };
+  }
+  return { deltaE: Math.round(d * 10) / 10, similarityPct, confidence: 'low', matchLabel: 'Distant Match' };
+}
+
+function rgbToHsl(r, g, b) {
+  const rn = Math.max(0, Math.min(1, (Number(r) || 0) / 255));
+  const gn = Math.max(0, Math.min(1, (Number(g) || 0) / 255));
+  const bn = Math.max(0, Math.min(1, (Number(b) || 0) / 255));
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case rn: h = (gn - bn) / d + (gn < bn ? 6 : 0); break;
+      case gn: h = (bn - rn) / d + 2; break;
+      case bn: h = (rn - gn) / d + 4; break;
+    }
+    h *= 60;
+  }
+  return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+function enforceColorTheoryNamingRules(targetRgb, detected) {
+  if (!detected) return detected;
+  const hsl = rgbToHsl(targetRgb.r, targetRgb.g, targetRgb.b);
+  let name = String(detected.name || 'Custom Color');
+  let family = String(detected.family || 'Custom');
+
+  // Rule 4: Reserve "Mist", "Pale", and "Pastel" strictly for HSL Lightness >= 85%
+  if (hsl.l < 85 && /\b(Mist|Pale|Pastel)\b/i.test(name)) {
+    name = name.replace(/\b(Mist|Pale|Pastel)\b\s*/gi, '').trim();
+    if (!name) name = 'Medium Tone';
+  }
+
+  // Rule 1: Golden/yellow-ochre tones (Hue 40-55, high saturation) must not be labeled Taupe, Greige, Latte, or Linen
+  if (hsl.h >= 40 && hsl.h <= 55 && hsl.s >= 40 && /\b(Taupe|Greige|Latte|Linen)\b/i.test(name)) {
+    name = hsl.l >= 70 ? 'Warm Wheat' : 'Golden Ochre';
+    family = 'Yellow';
+  }
+
+  // Rule 2: Burnt orange / rust-brown colors (Hue 15-35) must not be labeled Crimson, Garnet, or Wineberry
+  if (hsl.h >= 15 && hsl.h <= 35 && /\b(Crimson|Garnet|Wineberry)\b/i.test(name)) {
+    name = hsl.l >= 45 ? 'Cinnamon Orange' : 'Rust Brown';
+    family = hsl.l >= 45 ? 'Orange' : 'Brown';
+  }
+
+  // Rule 3: Only use "Teal" or "Emerald" when green channel is clearly higher than blue channel;
+  // medium blues with higher blue values must be named Cobalt, Azure, or Ocean Blue
+  if (/\b(Teal|Emerald)\b/i.test(name) && !(targetRgb.g > targetRgb.b + 4)) {
+    name = targetRgb.b > targetRgb.g ? 'Ocean Blue' : 'Cobalt Blue';
+    family = 'Blue';
+  }
+
+  return { ...detected, name, family };
+}
+
 function detectDictionaryColorOnly(r, g, b) {
-  let closest = PAINT_COLOR_DICTIONARY[0];
-  let minDistance = Infinity;
+  const target = {
+    r: Math.max(0, Math.min(255, Number(r) || 0)),
+    g: Math.max(0, Math.min(255, Number(g) || 0)),
+    b: Math.max(0, Math.min(255, Number(b) || 0))
+  };
 
-  PAINT_COLOR_DICTIONARY.forEach(item => {
-    // Weighted Euclidean color distance (perceptual for human eye)
-    const dR = r - item.r;
-    const dG = g - item.g;
-    const dB = b - item.b;
-    const dist = Math.sqrt(2 * dR * dR + 4 * dG * dG + 3 * dB * dB);
+  // Search mixed-color-only candidates (PAINT_COLOR_DICTIONARY + saved mixed formulas) using perceptual CIELAB distance
+  const candidates = [];
+  if (Array.isArray(PAINT_COLOR_DICTIONARY)) {
+    PAINT_COLOR_DICTIONARY.forEach(item => candidates.push(item));
+  }
+  if (typeof COLOR_RECIPE_PRESETS !== 'undefined' && Array.isArray(COLOR_RECIPE_PRESETS)) {
+    COLOR_RECIPE_PRESETS.forEach(p => {
+      if (!p || !p.hex) return;
+      const cleanName = cleanPresetColorName(p.name);
+      if (candidates.some(c => c.name.toLowerCase() === cleanName.toLowerCase())) return;
+      const rgb = hexToRgb(p.hex);
+      candidates.push({
+        id: p.id || null,
+        name: cleanName,
+        hex: p.hex,
+        r: rgb.r,
+        g: rgb.g,
+        b: rgb.b,
+        family: p.family || 'Custom',
+        classification: 'Custom Colors'
+      });
+    });
+  }
 
-    if (dist < minDistance) {
-      minDistance = dist;
+  if (!candidates.length) {
+    const conf = getColorMatchConfidence(99);
+    return { id: null, name: 'Custom Color', hex: rgbToHex(target.r, target.g, target.b), r: target.r, g: target.g, b: target.b, family: 'Custom', ...conf };
+  }
+
+  let closest = candidates[0];
+  let minDeltaE = Infinity;
+
+  candidates.forEach(item => {
+    const dE = perceptualLabDistance(target, { r: item.r, g: item.g, b: item.b });
+    if (dE < minDeltaE) {
+      minDeltaE = dE;
       closest = item;
     }
   });
 
-  return closest;
+  const conf = getColorMatchConfidence(minDeltaE);
+  return enforceColorTheoryNamingRules(target, {
+    ...closest,
+    ...conf
+  });
 }
 
 function doesComponentsMatchPreset(preset, components) {
@@ -317,6 +524,9 @@ function doesComponentsMatchPreset(preset, components) {
     const samePct = Math.abs((Number(item.pct) || 0) - (Number(comp.pct) || 0)) < 0.1;
     if (!samePct) return false;
     if (item.productId && comp.productId && String(comp.productId) === String(item.productId)) {
+      return true;
+    }
+    if (item.colorId && comp.colorId && String(item.colorId) === String(comp.colorId)) {
       return true;
     }
     const hint = String(item.colorHint || item.name || '').replace(/paint/i, '').trim().toLowerCase();
@@ -337,6 +547,7 @@ function doesComponentsMatchPreset(preset, components) {
 
 function detectMixedColorName(r, g, b) {
   const closest = detectDictionaryColorOnly(r, g, b);
+  const lib = getMasterColorLibrary();
 
   // Ensure active or matching preset recipe always resolves to the exact preset name
   if (typeof colorMixStudioState !== 'undefined' && colorMixStudioState && Array.isArray(colorMixStudioState.components) && colorMixStudioState.components.length >= 2 && typeof COLOR_RECIPE_PRESETS !== 'undefined' && Array.isArray(COLOR_RECIPE_PRESETS)) {
@@ -348,13 +559,18 @@ function detectMixedColorName(r, g, b) {
         if (doesComponentsMatchPreset(selPreset, colorMixStudioState.components)) {
           const cleanName = cleanPresetColorName(selPreset.name);
           const dictEntry = PAINT_COLOR_DICTIONARY.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+          const libEntry = lib.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+          const presetConf = getColorMatchConfidence(0);
           return {
+            colorId: selPreset.colorId || (libEntry && libEntry.id) || null,
             name: cleanName,
             hex: studioMix.hex,
             r,
             g,
             b,
-            family: (dictEntry && dictEntry.family) || (closest && closest.family) || 'Custom'
+            family: (libEntry && (libEntry.colorFamily || libEntry.category)) || (dictEntry && dictEntry.family) || (closest && closest.family) || 'Custom',
+            classification: (libEntry && libEntry.classification) || (closest && closest.classification) || 'Custom Colors',
+            ...presetConf
           };
         } else {
           // User changed percentages or ingredients away from the selected preset
@@ -365,13 +581,18 @@ function detectMixedColorName(r, g, b) {
       if (matchedPreset) {
         const cleanName = cleanPresetColorName(matchedPreset.name);
         const dictEntry = PAINT_COLOR_DICTIONARY.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+        const libEntry = lib.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+        const presetConf = getColorMatchConfidence(0);
         return {
+          colorId: matchedPreset.colorId || (libEntry && libEntry.id) || null,
           name: cleanName,
           hex: studioMix.hex,
           r,
           g,
           b,
-          family: (dictEntry && dictEntry.family) || (closest && closest.family) || 'Custom'
+          family: (libEntry && (libEntry.colorFamily || libEntry.category)) || (dictEntry && dictEntry.family) || (closest && closest.family) || 'Custom',
+          classification: (libEntry && libEntry.classification) || (closest && closest.classification) || 'Custom Colors',
+          ...presetConf
         };
       }
     }
@@ -397,7 +618,10 @@ let colorMixStudioState = {
   pickerSearch: '',
   inlineSearchIdx: -1,
   inlineSearchQuery: '',
-  openCategories: {}
+  openCategories: {},
+  presetSearch: '',
+  recipeCategoryFilter: 'All',
+  selectedPresetIndex: -1
 };
 
 function colorMixAvailableProducts(filterByType = true) {
@@ -474,6 +698,7 @@ function initColorMixStudioState() {
       {
         id: uid('cmc'),
         productId: prod1 ? prod1.id : '',
+        colorId: prod1 ? (prod1.colorId || prod1.color_id || null) : null,
         name: prod1 ? prod1.name : 'Component A',
         brand: prod1 ? prod1.brand : '',
         colorName: prod1 ? getProductColorName(prod1) : 'White',
@@ -487,6 +712,7 @@ function initColorMixStudioState() {
       {
         id: uid('cmc'),
         productId: prod2 ? prod2.id : '',
+        colorId: prod2 ? (prod2.colorId || prod2.color_id || null) : null,
         name: prod2 ? prod2.name : (prod1 ? 'Select Component B' : 'Component B'),
         brand: prod2 ? prod2.brand : '',
         colorName: prod2 ? getProductColorName(prod2) : 'Blue',
@@ -511,8 +737,43 @@ function initColorMixStudioState() {
     pickerSearch: '',
     inlineSearchIdx: -1,
     inlineSearchQuery: '',
-    openCategories: {}
+    openCategories: {},
+    presetSearch: '',
+    recipeCategoryFilter: 'All',
+    selectedPresetIndex: -1,
+    selectedLibraryColorId: null,
+    selectedLibraryColorName: '',
+    selectedLibraryColorHex: '',
+    selectedLibraryColorCategory: ''
   };
+
+  if (typeof syncActiveColorRecipePresets === 'function') syncActiveColorRecipePresets();
+  if (typeof COLOR_RECIPE_PRESETS !== 'undefined' && Array.isArray(COLOR_RECIPE_PRESETS) && COLOR_RECIPE_PRESETS.length > 0) {
+    let pickIdx = COLOR_RECIPE_PRESETS.findIndex(p => evaluateRecipePresetAvailability(p, 1).available);
+    if (pickIdx < 0) pickIdx = 0;
+    const p = COLOR_RECIPE_PRESETS[pickIdx];
+    const check = evaluateRecipePresetAvailability(p, 1);
+    if (check && Array.isArray(check.resolvedItems) && check.resolvedItems.length >= 2) {
+      colorMixStudioState.components = check.resolvedItems.map(({ item, product }, idx) => ({
+        id: uid('cmc'),
+        productId: product ? product.id : (item.productId || ''),
+        colorId: item.colorId || (product ? (product.colorId || product.color_id || null) : null),
+        name: product ? product.name : (item.name || `Ingredient ${idx + 1}`),
+        brand: product ? (product.brand || '') : '',
+        colorName: product ? getProductColorName(product) : (item.name || ''),
+        color: product ? getProductColorName(product) : (item.name || ''),
+        stock: product ? product.stock : 0,
+        price: product ? product.price : 400,
+        hex: product ? getProductDefaultColor(product) : (item.hex || '#FFFFFF'),
+        pct: Number(item.pct) || 0,
+        preferredCanSize: 0
+      }));
+      colorMixStudioState.selectedPresetIndex = pickIdx;
+      colorMixStudioState.colorName = cleanPresetColorName(p.name);
+      const firstType = check.resolvedItems[0] && check.resolvedItems[0].product && check.resolvedItems[0].product.type;
+      if (firstType) colorMixStudioState.baseType = firstType;
+    }
+  }
 
   updateColorMixCalculation(true);
 }
@@ -526,6 +787,49 @@ function isBasePaintComponent(c, idx, components = []) {
   if (isBaseKeyword) return true;
   // If no explicit base keyword, slot 0 is the primary base paint slot
   return idx === 0;
+}
+
+function syncColorMixingWithLibrary(reason = 'update') {
+  syncActiveColorRecipePresets();
+
+  if (colorMixStudioState && Array.isArray(colorMixStudioState.components)) {
+    colorMixStudioState.components.forEach(c => {
+      const prod = (c.productId && typeof productById === 'function') ? productById(c.productId) : null;
+      const cid = (prod && (prod.colorId || prod.color_id)) || c.colorId || null;
+      if (cid && typeof findColorLibraryEntry === 'function') {
+        const entry = findColorLibraryEntry(cid);
+        if (entry) {
+          c.colorId = entry.id;
+          c.hex = entry.hex;
+          c.colorName = entry.name;
+          c.color = entry.name;
+        }
+      } else if (prod) {
+        c.hex = getProductDefaultColor(prod);
+        c.colorName = getProductColorName(prod);
+        c.color = c.colorName;
+      }
+    });
+
+    if (colorMixStudioState.selectedLibraryColorId && typeof findColorLibraryEntry === 'function') {
+      const selEntry = findColorLibraryEntry(colorMixStudioState.selectedLibraryColorId);
+      if (selEntry) {
+        colorMixStudioState.selectedLibraryColorName = selEntry.name;
+        colorMixStudioState.selectedLibraryColorHex = selEntry.hex;
+        colorMixStudioState.selectedLibraryColorCategory = selEntry.category || '';
+      } else {
+        colorMixStudioState.selectedLibraryColorId = null;
+      }
+    }
+  }
+
+  const studioRoot = document.getElementById('colormix-studio-root');
+  if (studioRoot) {
+    renderColorMixStudio();
+  }
+}
+if (typeof window !== 'undefined') {
+  window.syncColorMixingWithLibrary = syncColorMixingWithLibrary;
 }
 
 function calculateColorMixPriceBreakdown(s = colorMixStudioState) {
@@ -676,7 +980,7 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
 
   return `
     <!-- Card Header: Title, Volume & Ready Badge -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #E8DFD0;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid var(--line);">
       <div style="display:flex; align-items:center; gap:6px;">
         <span style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:var(--teal-dark);">💰 Price Breakdown</span>
         <span id="cm-grand-volume-label" class="muted" style="font-size:11px; font-weight:600;">(${s.totalLiters} Liter${s.totalLiters === 1 ? '' : 's'})</span>
@@ -687,13 +991,13 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
     </div>
 
     <!-- 1. BASE PAINT DETAILS SECTION -->
-    <div class="cm-breakdown-section" style="margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed #E0D6C5;">
+    <div class="cm-breakdown-section" style="margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed var(--line);">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
         <div style="display:flex; align-items:center; gap:5px;">
           <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--teal); flex-shrink:0;"></span>
           <span style="font-weight:700; font-size:11px; color:var(--teal-dark); text-transform:uppercase; letter-spacing:0.04em;">Base Paint</span>
           ${breakdown.basePaint ? `
-            <span class="badge" style="background:#EDF5F4; color:#1F6F6B; border:1px solid #C4DFDC; font-size:9.5px; padding:1px 5px; font-weight:600;">
+            <span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border); font-size:9.5px; padding:1px 5px; font-weight:600;">
               ${escapeHtml(breakdown.basePaint.type || s.baseType || 'Base Paint')}
             </span>
           ` : ''}
@@ -703,7 +1007,7 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
         </strong>
       </div>
       ${breakdown.basePaint ? `
-        <div style="padding-left:12px; font-size:10.5px; color:#5D5348; line-height:1.35;">
+        <div style="padding-left:12px; font-size:10.5px; color:var(--ink-soft); line-height:1.35;">
           <div style="font-weight:600; color:var(--ink);">
             ${escapeHtml(breakdown.basePaint.name)}
             ${breakdown.basePaint.brand ? `<span class="muted" style="font-weight:400;">(${escapeHtml(breakdown.basePaint.brand)})</span>` : ''}
@@ -714,24 +1018,24 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
               ${breakdown.basePaint.hex ? `<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${breakdown.basePaint.hex}; border:1px solid rgba(0,0,0,0.15); vertical-align:middle; margin-left:3px;"></span>` : ''}
               · Rate: ${peso(breakdown.basePaint.unitPrice)}/L
             </span>
-            <span id="cm-breakdown-base-qty" style="font-weight:700; font-family:'Space Grotesk',monospace; color:#3E2723;">
+            <span id="cm-breakdown-base-qty" style="font-weight:700; font-family:'Space Grotesk',monospace; color:var(--ink);">
               ${formatStock(breakdown.basePaint.liters)} L (${breakdown.basePaint.ml} mL) · ${breakdown.basePaint.pct}%
             </span>
           </div>
         </div>
       ` : `
-        <div style="padding-left:12px; font-size:10.5px; color:#8A8070; font-style:italic;">No base paint component in formula.</div>
+        <div style="padding-left:12px; font-size:10.5px; color:var(--ink-soft); font-style:italic;">No base paint component in formula.</div>
       `}
     </div>
 
     <!-- 2. INDIVIDUAL COLORANTS / INGREDIENTS SECTION -->
-    <div class="cm-breakdown-section" style="margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed #E0D6C5;">
+    <div class="cm-breakdown-section" style="margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed var(--line);">
       <details ${wasOpen ? 'open' : ''} id="cm-ingredients-details" class="cm-ingredients-details">
         <summary style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
           <div style="display:flex; align-items:center; gap:5px;">
             <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#8E24AA; flex-shrink:0;"></span>
-            <span style="font-weight:700; font-size:11px; color:#6A1B9A; text-transform:uppercase; letter-spacing:0.04em;">Colorants / Ingredients</span>
-            <span class="badge" style="background:#F3E5F5; color:#7B1FA2; border:1px solid #E1BEE7; font-size:9.5px; padding:1px 5px; font-weight:600;">
+            <span style="font-weight:700; font-size:11px; color:var(--purple-text); text-transform:uppercase; letter-spacing:0.04em;">Colorants / Ingredients</span>
+            <span class="badge" style="background:var(--purple-bg); color:var(--purple-text); border:1px solid var(--purple-border); font-size:9.5px; padding:1px 5px; font-weight:600;">
               ${breakdown.ingredients.length} item${breakdown.ingredients.length === 1 ? '' : 's'}
             </span>
             <span class="muted" style="font-size:9.5px; opacity:0.75;">▾</span>
@@ -742,9 +1046,9 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
         </summary>
 
         ${breakdown.ingredients.length > 0 ? `
-          <div id="cm-ingredients-list" style="padding-left:12px; display:flex; flex-direction:column; gap:4px; margin-top:5px;">
+          <div id="cm-price-ingredients-list" style="padding-left:12px; display:flex; flex-direction:column; gap:4px; margin-top:5px;">
             ${breakdown.ingredients.map(ing => `
-              <div class="cm-ingredient-item" style="background:#FAF8F5; border:1px solid #ECE4D8; border-radius:5px; padding:4px 7px; font-size:10.5px;">
+              <div class="cm-ingredient-item" style="background:var(--surface-2); border:1px solid var(--line); border-radius:5px; padding:4px 7px; font-size:10.5px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
                   <div style="display:flex; align-items:center; gap:5px; min-width:0; overflow:hidden;">
                     <span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${ing.hex || '#8E24AA'}; border:1px solid rgba(0,0,0,0.15); flex-shrink:0;"></span>
@@ -755,9 +1059,9 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
                     ${peso(ing.cost)}
                   </strong>
                 </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; color:#6B6259; font-size:10px; margin-top:1.5px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; color:var(--ink-soft); font-size:10px; margin-top:1.5px;">
                   <span>Type: <b>${escapeHtml(ing.colorName || 'Pigment')}</b> · Rate: ${peso(ing.unitPrice)}/L</span>
-                  <span style="font-family:'Space Grotesk',monospace; font-weight:600; color:#4E342E;">
+                  <span style="font-family:'Space Grotesk',monospace; font-weight:600; color:var(--ink);">
                     ${formatStock(ing.liters)} L (${ing.ml} mL) · ${ing.pct}%
                   </span>
                 </div>
@@ -765,13 +1069,13 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
             `).join('')}
 
             <!-- Total Colorant Quantity & Cost Summary -->
-            <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:#6A1B9A; font-weight:600; padding:2px 6px; background:#F8EEF8; border-radius:4px; margin-top:2px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:var(--purple-text); font-weight:600; padding:2px 6px; background:var(--purple-bg); border-radius:4px; margin-top:2px;">
               <span>Total Colorants: <b id="cm-breakdown-pigment-qty">${formatStock(breakdown.totalColorantLiters)} L (${breakdown.totalColorantMl} mL) · ${breakdown.totalColorantPct}%</b></span>
               <span>Total Cost: <b>${peso(breakdown.totalColorantCost)}</b></span>
             </div>
           </div>
         ` : `
-          <div style="padding-left:12px; font-size:10.5px; color:#8A8070; font-style:italic; margin-top:4px;">No additional colorants used in this formula.</div>
+          <div style="padding-left:12px; font-size:10.5px; color:var(--ink-soft); font-style:italic; margin-top:4px;">No additional colorants used in this formula.</div>
         `}
       </details>
     </div>
@@ -779,7 +1083,7 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
     <!-- 3. MATERIAL TOTAL & ADDITIONAL CHARGES -->
     <div class="cm-breakdown-section" style="margin-bottom:6px; font-size:11px;">
       <div class="cm-breakdown-line" style="display:flex; justify-content:space-between; align-items:center; padding:1.5px 0;">
-        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:#4E342E;">
+        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:var(--ink);">
           <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#2E7D32;"></span>
           <span style="font-weight:600;">Total Material Cost:</span>
           <span class="muted" style="font-size:9.5px;">(Base + Colorants)</span>
@@ -788,7 +1092,7 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
       </div>
 
       <div class="cm-breakdown-line" style="display:flex; justify-content:space-between; align-items:center; padding:1.5px 0;">
-        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:#4E342E;">
+        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:var(--ink);">
           <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#E65100;"></span>
           <span>Mixing Service Fee:</span>
           <span class="muted" style="font-size:9.5px;">(Standard Fee)</span>
@@ -797,7 +1101,7 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
       </div>
 
       <div id="cm-breakdown-other-row" class="cm-breakdown-line" style="display:flex; justify-content:space-between; align-items:center; padding:1.5px 0;">
-        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:#4E342E;">
+        <span class="cm-breakdown-label" style="display:flex; align-items:center; gap:5px; color:var(--ink);">
           <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#78909C;"></span>
           <span>Other Charges:</span>
           <span id="cm-breakdown-other-hint" class="muted" style="font-size:9.5px;">
@@ -809,14 +1113,14 @@ function renderColorMixPriceBreakdownHtml(s, breakdown, wasOpen = true) {
     </div>
 
     <!-- 4. GRAND TOTAL -->
-    <div style="border-top:1.5px dashed #D5C9B8; padding-top:6px; display:flex; justify-content:space-between; align-items:center;">
+    <div style="border-top:1.5px dashed var(--line); padding-top:6px; display:flex; justify-content:space-between; align-items:center;">
       <div>
         <div style="font-size:11.5px; font-weight:800; color:var(--teal-dark); text-transform:uppercase; letter-spacing:0.04em;">Grand Total</div>
         <div id="cm-breakdown-mat-service-hint" class="muted small" style="font-size:9.5px;">
           Materials: ${peso(breakdown.materialCost)} + Service: ${peso(breakdown.serviceFee)}${breakdown.otherCharges !== 0 ? ` + Other: ${peso(breakdown.otherCharges)}` : ''}
         </div>
       </div>
-      <div id="cm-grand-total" style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:800; color:var(--teal); letter-spacing:-0.02em;">
+      <div id="cm-grand-total" style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:800; color:var(--teal-text); letter-spacing:-0.02em;">
         ${peso(grandTotal)}
       </div>
     </div>
@@ -896,7 +1200,7 @@ function openColorMixModal(isPos = true) {
 `,
     'xl'
   );
-  if (typeof syncColorMixVisuals === 'function') syncColorMixVisuals();
+  if (typeof syncColorMixVisuals === 'function') syncColorMixVisuals(-1, true);
 }
 
 function cancelColorMixModal() {
@@ -934,52 +1238,221 @@ function renderColorMixStudio() {
       ? `+ Add ${totalLiters}L Mixed Color (${peso(grandTotal)}) to Sale`
       : `✓ Confirm & Log ${totalLiters}L Movement (${peso(grandTotal)})`;
   }
-  if (typeof syncColorMixVisuals === 'function') syncColorMixVisuals();
+  if (typeof syncColorMixVisuals === 'function') syncColorMixVisuals(-1, true);
 }
 
 
 const CUSTOM_COLOR_PRESETS_KEY = 'mrgr_custom_color_presets';
 
 const DEFAULT_COLOR_RECIPE_PRESETS = [
-  { name: '🌸 Pastel Rose', desc: 'Soft blush pink blend (70% White + 30% Red)', hex: '#F7D6DC', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 70 }, { name: 'Red Paint', colorHint: 'red', pct: 30 }] },
-  { name: '🌊 Ocean Aqua', desc: 'Fresh sky-blue tint (60% White + 40% Blue)', hex: '#4A90E2', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 60 }, { name: 'Blue Paint', colorHint: 'blue', pct: 40 }] },
-  { name: '🌿 Sage Meadow', desc: 'Soothing organic green (50% White + 30% Green + 20% Yellow)', hex: '#7E9F76', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 50 }, { name: 'Green Paint', colorHint: 'green', pct: 30 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 20 }] },
-  { name: '🌅 Sunset Coral', desc: 'Warm glowing earth tone (40% White + 35% Orange + 25% Red)', hex: '#DF6943', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 40 }, { name: 'Orange Paint', colorHint: 'orange', pct: 35 }, { name: 'Red Paint', colorHint: 'red', pct: 25 }] },
-  { name: '☕ Creamy Latte', desc: 'Warm cozy neutral (60% White + 30% Brown + 10% Yellow)', hex: '#A8896C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 60 }, { name: 'Brown Paint', colorHint: 'brown', pct: 30 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 10 }] },
-  { name: '🍋 Lemon Custard', desc: 'Sunny vibrant pastel (70% White + 30% Yellow)', hex: '#FDF289', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 70 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 30 }] },
-  { name: '🌙 Modern Slate', desc: 'Contemporary cool dark tone (60% White + 35% Black + 5% Blue)', hex: '#586A7A', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 60 }, { name: 'Black Paint', colorHint: 'black', pct: 35 }, { name: 'Blue Paint', colorHint: 'blue', pct: 5 }] },
-  { name: '🍇 Lavender Mist', desc: 'Delicate floral violet (65% White + 25% Purple + 10% Blue)', hex: '#B5A0CC', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 65 }, { name: 'Purple Paint', colorHint: 'purple', pct: 25 }, { name: 'Blue Paint', colorHint: 'blue', pct: 10 }] },
-  { name: '🫒 Olive Grove', desc: 'Refined deep olive (40% White + 40% Yellow + 20% Black)', hex: '#728038', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 40 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 40 }, { name: 'Black Paint', colorHint: 'black', pct: 20 }] },
-  { name: 'Cream', desc: 'Soft warm off-white blend (85% White + 15% Yellow)', hex: '#FFFDD0', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 85 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 15 }] },
-  { name: 'Flamingo Pink', desc: 'Delicate vibrant pink (60% White + 40% Red)', hex: '#FC8EAC', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 60 }, { name: 'Red Paint', colorHint: 'red', pct: 40 }] },
-  { name: 'Baby Blue', desc: 'Gentle pastel sky blend (50% White + 50% Blue)', hex: '#89C1F2', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 50 }, { name: 'Blue Paint', colorHint: 'blue', pct: 50 }] }
+  { name: 'Cream', desc: 'Cream (99% White Paint + 1% Yellow Paint)', hex: '#FFFFD4', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 99 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 1 }] },
+  { name: 'Warm Vanilla', desc: 'Warm Vanilla (98% White Paint + 2% Orange Paint)', hex: '#FFEFAE', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 98 }, { name: 'Orange Paint', colorHint: 'orange', pct: 2 }] },
+  { name: 'Soft Eggshell', desc: 'Soft Eggshell (99% White Paint + 1% Brown Paint)', hex: '#F2DBCE', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 99 }, { name: 'Brown Paint', colorHint: 'brown', pct: 1 }] },
+  { name: 'Golden Sand', desc: 'Golden Sand (98% White Paint + 2% Brown Paint)', hex: '#EDCEBD', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 98 }, { name: 'Brown Paint', colorHint: 'brown', pct: 2 }] },
+  { name: 'Warm Champagne', desc: 'Warm Champagne (97% White Paint + 3% Brown Paint)', hex: '#E9C4B1', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 97 }, { name: 'Brown Paint', colorHint: 'brown', pct: 3 }] },
+  { name: 'Honey Wheat', desc: 'Honey Wheat (96% White Paint + 4% Brown Paint)', hex: '#E6BCA8', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 96 }, { name: 'Brown Paint', colorHint: 'brown', pct: 4 }] },
+  { name: '🌸 Medium Rose', desc: 'Medium Rose (88% White Paint + 8% Purple Paint + 4% Red Paint)', hex: '#D28888', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 88 }, { name: 'Purple Paint', colorHint: 'purple', pct: 8 }, { name: 'Red Paint', colorHint: 'red', pct: 4 }] },
+  { name: 'Terracotta Rose', desc: 'Terracotta Rose (78% White Paint + 14% Purple Paint + 8% Red Paint)', hex: '#C5706E', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 78 }, { name: 'Purple Paint', colorHint: 'purple', pct: 14 }, { name: 'Red Paint', colorHint: 'red', pct: 8 }] },
+  { name: 'Soft Blush Rose', desc: 'Soft Blush Rose (88% White Paint + 8% Purple Paint + 4% Orange Paint)', hex: '#D19395', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 88 }, { name: 'Purple Paint', colorHint: 'purple', pct: 8 }, { name: 'Orange Paint', colorHint: 'orange', pct: 4 }] },
+  { name: 'Muted Berry Rose', desc: 'Muted Berry Rose (82% White Paint + 12% Purple Paint + 6% Orange Paint)', hex: '#C88386', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 82 }, { name: 'Purple Paint', colorHint: 'purple', pct: 12 }, { name: 'Orange Paint', colorHint: 'orange', pct: 6 }] },
+  { name: 'Dusty Rose', desc: 'Dusty Rose (84% White Paint + 11% Purple Paint + 5% Orange Paint)', hex: '#CA868C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 84 }, { name: 'Purple Paint', colorHint: 'purple', pct: 11 }, { name: 'Orange Paint', colorHint: 'orange', pct: 5 }] },
+  { name: 'Pale Orchid', desc: 'Pale Orchid (99% White Paint + 1% Purple Paint)', hex: '#EECCED', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 99 }, { name: 'Purple Paint', colorHint: 'purple', pct: 1 }] },
+  { name: 'Berry Blush', desc: 'Berry Blush (75% White Paint + 20% Purple Paint + 5% Orange Paint)', hex: '#BA6A89', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 75 }, { name: 'Purple Paint', colorHint: 'purple', pct: 20 }, { name: 'Orange Paint', colorHint: 'orange', pct: 5 }] },
+  { name: 'Rosewood Tint', desc: 'Rosewood Tint (69% White Paint + 21% Purple Paint + 10% Orange Paint)', hex: '#B86D72', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 69 }, { name: 'Purple Paint', colorHint: 'purple', pct: 21 }, { name: 'Orange Paint', colorHint: 'orange', pct: 10 }] },
+  { name: 'Light Orchid', desc: 'Light Orchid (98% White Paint + 2% Purple Paint)', hex: '#E7B9E6', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 98 }, { name: 'Purple Paint', colorHint: 'purple', pct: 2 }] },
+  { name: '🌅 Sunset Coral', desc: 'Sunset Coral (45% White Paint + 35% Orange Paint + 20% Red Paint)', hex: '#FF6A24', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 45 }, { name: 'Orange Paint', colorHint: 'orange', pct: 35 }, { name: 'Red Paint', colorHint: 'red', pct: 20 }] },
+  { name: 'Warm Buttercream', desc: 'Warm Buttercream (97% White Paint + 3% Orange Paint)', hex: '#FFEAA0', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 97 }, { name: 'Orange Paint', colorHint: 'orange', pct: 3 }] },
+  { name: 'Pale Vanilla Cream', desc: 'Pale Vanilla Cream (99% White Paint + 1% Orange Paint)', hex: '#FFF4C3', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 99 }, { name: 'Orange Paint', colorHint: 'orange', pct: 1 }] },
+  { name: 'Coral Blush', desc: 'Coral Blush (93% White Paint + 7% Red Paint)', hex: '#FFA472', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 93 }, { name: 'Red Paint', colorHint: 'red', pct: 7 }] },
+  { name: 'Terracotta Clay', desc: 'Terracotta Clay (63% White Paint + 19% Brown Paint + 18% Red Paint)', hex: '#CC6542', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 63 }, { name: 'Brown Paint', colorHint: 'brown', pct: 19 }, { name: 'Red Paint', colorHint: 'red', pct: 18 }] },
+  { name: 'Burnt Sienna', desc: 'Burnt Sienna (56% White Paint + 23% Brown Paint + 21% Red Paint)', hex: '#C75E3C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 56 }, { name: 'Brown Paint', colorHint: 'brown', pct: 23 }, { name: 'Red Paint', colorHint: 'red', pct: 21 }] },
+  { name: 'Copper Ochre', desc: 'Copper Ochre (52% Orange Paint + 31% Yellow Paint + 17% Brown Paint)', hex: '#CE7924', recipe: [{ name: 'Orange Paint', colorHint: 'orange', pct: 52 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 31 }, { name: 'Brown Paint', colorHint: 'brown', pct: 17 }] },
+  { name: 'Melon Sorbet', desc: 'Melon Sorbet (97% White Paint + 3% Red Paint)', hex: '#FFC194', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 97 }, { name: 'Red Paint', colorHint: 'red', pct: 3 }] },
+  { name: 'Spiced Amber', desc: 'Spiced Amber (68% Orange Paint + 19% White Paint + 13% Brown Paint)', hex: '#D47923', recipe: [{ name: 'Orange Paint', colorHint: 'orange', pct: 68 }, { name: 'White Paint', colorHint: 'white', pct: 19 }, { name: 'Brown Paint', colorHint: 'brown', pct: 13 }] },
+  { name: 'Burnt Rust', desc: 'Burnt Rust (55% Brown Paint + 45% Red Paint)', hex: '#AC3E26', recipe: [{ name: 'Brown Paint', colorHint: 'brown', pct: 55 }, { name: 'Red Paint', colorHint: 'red', pct: 45 }] },
+  { name: 'Dark Bronze', desc: 'Dark Bronze (98% Brown Paint + 2% Black Paint)', hex: '#7B4535', recipe: [{ name: 'Brown Paint', colorHint: 'brown', pct: 98 }, { name: 'Black Paint', colorHint: 'black', pct: 2 }] },
+  { name: 'Rust Brown', desc: 'Rust Brown (95% Brown Paint + 5% Red Paint)', hex: '#974433', recipe: [{ name: 'Brown Paint', colorHint: 'brown', pct: 95 }, { name: 'Red Paint', colorHint: 'red', pct: 5 }] },
+  { name: 'Copper Brown', desc: 'Copper Brown (93% Brown Paint + 7% Red Paint)', hex: '#984432', recipe: [{ name: 'Brown Paint', colorHint: 'brown', pct: 93 }, { name: 'Red Paint', colorHint: 'red', pct: 7 }] },
+  { name: 'Cinnamon Orange', desc: 'Cinnamon Orange (39% White Paint + 31% Brown Paint + 30% Red Paint)', hex: '#BE5032', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 39 }, { name: 'Brown Paint', colorHint: 'brown', pct: 31 }, { name: 'Red Paint', colorHint: 'red', pct: 30 }] },
+  { name: '🍋 Bright Lemon', desc: 'Bright Lemon (85% White Paint + 15% Yellow Paint)', hex: '#FFFF7C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 85 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 15 }] },
+  { name: 'Buttercup Tint', desc: 'Buttercup Tint (94% White Paint + 6% Orange Paint)', hex: '#FFE085', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 94 }, { name: 'Orange Paint', colorHint: 'orange', pct: 6 }] },
+  { name: 'Honey Gold', desc: 'Honey Gold (92% Yellow Paint + 8% Brown Paint)', hex: '#DCB02F', recipe: [{ name: 'Yellow Paint', colorHint: 'yellow', pct: 92 }, { name: 'Brown Paint', colorHint: 'brown', pct: 8 }] },
+  { name: 'Mustard Ochre', desc: 'Mustard Ochre (91% Yellow Paint + 9% Brown Paint)', hex: '#DAAB30', recipe: [{ name: 'Yellow Paint', colorHint: 'yellow', pct: 91 }, { name: 'Brown Paint', colorHint: 'brown', pct: 9 }] },
+  { name: 'Saffron Gold', desc: 'Saffron Gold (61% White Paint + 32% Yellow Paint + 7% Brown Paint)', hex: '#DEB357', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 61 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 32 }, { name: 'Brown Paint', colorHint: 'brown', pct: 7 }] },
+  { name: 'Sunlit Straw', desc: 'Sunlit Straw (95% White Paint + 5% Orange Paint)', hex: '#FFE38C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 95 }, { name: 'Orange Paint', colorHint: 'orange', pct: 5 }] },
+  { name: '🌊 Aqua Mint', desc: 'Aqua Mint (80% White Paint + 16% Blue Paint + 4% Green Paint)', hex: '#3BC06A', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 80 }, { name: 'Blue Paint', colorHint: 'blue', pct: 16 }, { name: 'Green Paint', colorHint: 'green', pct: 4 }] },
+  { name: '🌿 Rich Leaf Green', desc: 'Rich Leaf Green (75% White Paint + 15% Green Paint + 10% Yellow Paint)', hex: '#42CA2C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 75 }, { name: 'Green Paint', colorHint: 'green', pct: 15 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 10 }] },
+  { name: '🫒 Deep Forest', desc: 'Deep Forest (40% White Paint + 50% Yellow Paint + 5% Black Paint + 5% Green Paint)', hex: '#5B763C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 40 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 50 }, { name: 'Black Paint', colorHint: 'black', pct: 5 }, { name: 'Green Paint', colorHint: 'green', pct: 5 }] },
+  { name: 'Soft Mint', desc: 'Soft Mint (95% White Paint + 3% Blue Paint + 2% Yellow Paint)', hex: '#8FE5C9', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 95 }, { name: 'Blue Paint', colorHint: 'blue', pct: 3 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 2 }] },
+  { name: 'Bright Seafoam', desc: 'Bright Seafoam (92% White Paint + 4% Blue Paint + 4% Yellow Paint)', hex: '#83E3B6', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 92 }, { name: 'Blue Paint', colorHint: 'blue', pct: 4 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 4 }] },
+  { name: 'Spring Leaf', desc: 'Spring Leaf (74% White Paint + 16% Yellow Paint + 10% Blue Paint)', hex: '#5BD383', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 74 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 16 }, { name: 'Blue Paint', colorHint: 'blue', pct: 10 }] },
+  { name: 'Fresh Mint', desc: 'Fresh Mint (82% White Paint + 9% Blue Paint + 9% Yellow Paint)', hex: '#5FD39A', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 82 }, { name: 'Blue Paint', colorHint: 'blue', pct: 9 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 9 }] },
+  { name: 'Vibrant Meadow Green', desc: 'Vibrant Meadow Green (75% White Paint + 18% Yellow Paint + 7% Green Paint)', hex: '#64DF40', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 75 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 18 }, { name: 'Green Paint', colorHint: 'green', pct: 7 }] },
+  { name: 'Celadon Jade', desc: 'Celadon Jade (97% White Paint + 2% Yellow Paint + 1% Blue Paint)', hex: '#B6F5C7', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 97 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 2 }, { name: 'Blue Paint', colorHint: 'blue', pct: 1 }] },
+  { name: 'Dark Moss', desc: 'Dark Moss (87% Yellow Paint + 7% Black Paint + 6% Green Paint)', hex: '#516931', recipe: [{ name: 'Yellow Paint', colorHint: 'yellow', pct: 87 }, { name: 'Black Paint', colorHint: 'black', pct: 7 }, { name: 'Green Paint', colorHint: 'green', pct: 6 }] },
+  { name: 'Eucalyptus', desc: 'Eucalyptus (70% Blue Paint + 19% Yellow Paint + 11% White Paint)', hex: '#0E8882', recipe: [{ name: 'Blue Paint', colorHint: 'blue', pct: 70 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 19 }, { name: 'White Paint', colorHint: 'white', pct: 11 }] },
+  { name: 'Charcoal Pine', desc: 'Charcoal Pine (48% Yellow Paint + 43% Blue Paint + 9% Black Paint)', hex: '#2D5844', recipe: [{ name: 'Yellow Paint', colorHint: 'yellow', pct: 48 }, { name: 'Blue Paint', colorHint: 'blue', pct: 43 }, { name: 'Black Paint', colorHint: 'black', pct: 9 }] },
+  { name: 'Rich Avocado', desc: 'Rich Avocado (97% Yellow Paint + 3% Black Paint)', hex: '#828D38', recipe: [{ name: 'Yellow Paint', colorHint: 'yellow', pct: 97 }, { name: 'Black Paint', colorHint: 'black', pct: 3 }] },
+  { name: 'Baby Blue', desc: 'Baby Blue (92% White Paint + 8% Blue Paint)', hex: '#64BEFF', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 92 }, { name: 'Blue Paint', colorHint: 'blue', pct: 8 }] },
+  { name: 'Pale Sky Blue', desc: 'Pale Sky Blue (99% White Paint + 1% Blue Paint)', hex: '#B6E8FF', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 99 }, { name: 'Blue Paint', colorHint: 'blue', pct: 1 }] },
+  { name: 'Clear Sky Blue', desc: 'Clear Sky Blue (97% White Paint + 3% Blue Paint)', hex: '#8FD7FF', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 97 }, { name: 'Blue Paint', colorHint: 'blue', pct: 3 }] },
+  { name: 'Light Powder Blue', desc: 'Light Powder Blue (98% White Paint + 2% Blue Paint)', hex: '#9EDFFF', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 98 }, { name: 'Blue Paint', colorHint: 'blue', pct: 2 }] },
+  { name: 'Cobalt Blue', desc: 'Cobalt Blue (97% Blue Paint + 3% Green Paint)', hex: '#03797A', recipe: [{ name: 'Blue Paint', colorHint: 'blue', pct: 97 }, { name: 'Green Paint', colorHint: 'green', pct: 3 }] },
+  { name: 'Ocean Blue', desc: 'Ocean Blue (96% Blue Paint + 4% Green Paint)', hex: '#037B6F', recipe: [{ name: 'Blue Paint', colorHint: 'blue', pct: 96 }, { name: 'Green Paint', colorHint: 'green', pct: 4 }] },
+  { name: 'Steel Denim', desc: 'Steel Denim (98% Blue Paint + 2% Black Paint)', hex: '#115D95', recipe: [{ name: 'Blue Paint', colorHint: 'blue', pct: 98 }, { name: 'Black Paint', colorHint: 'black', pct: 2 }] },
+  { name: 'Slate Cobalt', desc: 'Slate Cobalt (97% Blue Paint + 3% Black Paint)', hex: '#145B85', recipe: [{ name: 'Blue Paint', colorHint: 'blue', pct: 97 }, { name: 'Black Paint', colorHint: 'black', pct: 3 }] },
+  { name: 'Bright Sky Blue', desc: 'Bright Sky Blue (91% White Paint + 9% Blue Paint)', hex: '#5FBAFF', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 91 }, { name: 'Blue Paint', colorHint: 'blue', pct: 9 }] },
+  { name: 'Midnight Charcoal', desc: 'Midnight Charcoal (60% Purple Paint + 34% Blue Paint + 6% Black Paint)', hex: '#36385F', recipe: [{ name: 'Purple Paint', colorHint: 'purple', pct: 60 }, { name: 'Blue Paint', colorHint: 'blue', pct: 34 }, { name: 'Black Paint', colorHint: 'black', pct: 6 }] },
+  { name: 'Aegean Blue', desc: 'Aegean Blue (96% Blue Paint + 4% Black Paint)', hex: '#17597A', recipe: [{ name: 'Blue Paint', colorHint: 'blue', pct: 96 }, { name: 'Black Paint', colorHint: 'black', pct: 4 }] },
+  { name: '🍇 Lavender', desc: 'Lavender (85% White Paint + 10% Purple Paint + 5% Blue Paint)', hex: '#807CCC', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 85 }, { name: 'Purple Paint', colorHint: 'purple', pct: 10 }, { name: 'Blue Paint', colorHint: 'blue', pct: 5 }] },
+  { name: 'Soft Lilac', desc: 'Soft Lilac (97% White Paint + 3% Purple Paint)', hex: '#E2ACE1', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 97 }, { name: 'Purple Paint', colorHint: 'purple', pct: 3 }] },
+  { name: 'Wisteria Bloom', desc: 'Wisteria Bloom (96% White Paint + 4% Purple Paint)', hex: '#DEA1DD', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 96 }, { name: 'Purple Paint', colorHint: 'purple', pct: 4 }] },
+  { name: 'Dusty Plum', desc: 'Dusty Plum (75% Purple Paint + 14% Red Paint + 11% Blue Paint)', hex: '#5D3C56', recipe: [{ name: 'Purple Paint', colorHint: 'purple', pct: 75 }, { name: 'Red Paint', colorHint: 'red', pct: 14 }, { name: 'Blue Paint', colorHint: 'blue', pct: 11 }] },
+  { name: 'Charcoal Slate', desc: 'Charcoal Slate (80% White Paint + 15% Purple Paint + 5% Black Paint)', hex: '#6C596C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 80 }, { name: 'Purple Paint', colorHint: 'purple', pct: 15 }, { name: 'Black Paint', colorHint: 'black', pct: 5 }] },
+  { name: 'Bright Orchid', desc: 'Bright Orchid (93% White Paint + 7% Purple Paint)', hex: '#D48AD3', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 93 }, { name: 'Purple Paint', colorHint: 'purple', pct: 7 }] },
+  { name: 'Mulberry', desc: 'Mulberry (95% Purple Paint + 5% Black Paint)', hex: '#5F295E', recipe: [{ name: 'Purple Paint', colorHint: 'purple', pct: 95 }, { name: 'Black Paint', colorHint: 'black', pct: 5 }] },
+  { name: 'Medium Orchid', desc: 'Medium Orchid (90% White Paint + 10% Purple Paint)', hex: '#CC7ACB', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 90 }, { name: 'Purple Paint', colorHint: 'purple', pct: 10 }] },
+  { name: '☕ Mustard Gold', desc: 'Mustard Gold (75% White Paint + 15% Brown Paint + 10% Yellow Paint)', hex: '#CF9167', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 75 }, { name: 'Brown Paint', colorHint: 'brown', pct: 15 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 10 }] },
+  { name: 'Warm Wheat', desc: 'Warm Wheat (95% White Paint + 5% Brown Paint)', hex: '#E3B6A0', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 95 }, { name: 'Brown Paint', colorHint: 'brown', pct: 5 }] },
+  { name: 'Golden Ochre', desc: 'Golden Ochre (86% White Paint + 14% Brown Paint)', hex: '#D1927A', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 86 }, { name: 'Brown Paint', colorHint: 'brown', pct: 14 }] },
+  { name: 'Dark Olive', desc: 'Dark Olive (65% White Paint + 30% Brown Paint + 5% Black Paint)', hex: '#6C594D', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 65 }, { name: 'Brown Paint', colorHint: 'brown', pct: 30 }, { name: 'Black Paint', colorHint: 'black', pct: 5 }] },
+  { name: 'Sunlit Ochre', desc: 'Sunlit Ochre (90% White Paint + 6% Yellow Paint + 4% Brown Paint)', hex: '#E6C18D', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 90 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 6 }, { name: 'Brown Paint', colorHint: 'brown', pct: 4 }] },
+  { name: 'Honey Tan', desc: 'Honey Tan (94% White Paint + 6% Brown Paint)', hex: '#E0B09A', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 94 }, { name: 'Brown Paint', colorHint: 'brown', pct: 6 }] },
+  { name: 'Cinnamon Clay', desc: 'Cinnamon Clay (50% White Paint + 41% Brown Paint + 9% Yellow Paint)', hex: '#B4674C', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 50 }, { name: 'Brown Paint', colorHint: 'brown', pct: 41 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 9 }] },
+  { name: 'Caramel Cocoa', desc: 'Caramel Cocoa (70% Brown Paint + 20% Yellow Paint + 10% White Paint)', hex: '#A25339', recipe: [{ name: 'Brown Paint', colorHint: 'brown', pct: 70 }, { name: 'Yellow Paint', colorHint: 'yellow', pct: 20 }, { name: 'White Paint', colorHint: 'white', pct: 10 }] },
+  { name: 'Deep Umber', desc: 'Deep Umber (90% Brown Paint + 10% Black Paint)', hex: '#523C31', recipe: [{ name: 'Brown Paint', colorHint: 'brown', pct: 90 }, { name: 'Black Paint', colorHint: 'black', pct: 10 }] },
+  { name: 'Spiced Mustard', desc: 'Spiced Mustard (93% White Paint + 7% Brown Paint)', hex: '#DEAB94', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 93 }, { name: 'Brown Paint', colorHint: 'brown', pct: 7 }] },
+  { name: '🌙 Modern Slate', desc: 'Modern Slate (85% White Paint + 10% Black Paint + 5% Blue Paint)', hex: '#4D5556', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 85 }, { name: 'Black Paint', colorHint: 'black', pct: 10 }, { name: 'Blue Paint', colorHint: 'blue', pct: 5 }] },
+  { name: 'Charcoal Taupe', desc: 'Charcoal Taupe (85% White Paint + 10% Black Paint + 5% Brown Paint)', hex: '#565452', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 85 }, { name: 'Black Paint', colorHint: 'black', pct: 10 }, { name: 'Brown Paint', colorHint: 'brown', pct: 5 }] },
+  { name: 'Medium Neutral Gray', desc: 'Medium Neutral Gray (99% White Paint + 1% Black Paint)', hex: '#AAAAAA', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 99 }, { name: 'Black Paint', colorHint: 'black', pct: 1 }] },
+  { name: 'Pale Olive', desc: 'Pale Olive (96% White Paint + 3% Brown Paint + 1% Blue Paint)', hex: '#B9C5B3', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 96 }, { name: 'Brown Paint', colorHint: 'brown', pct: 3 }, { name: 'Blue Paint', colorHint: 'blue', pct: 1 }] },
+  { name: 'Pewter Gray', desc: 'Pewter Gray (96% White Paint + 4% Black Paint)', hex: '#777777', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 96 }, { name: 'Black Paint', colorHint: 'black', pct: 4 }] },
+  { name: 'Dark Neutral Gray', desc: 'Dark Neutral Gray (95% White Paint + 5% Black Paint)', hex: '#6F6F6F', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 95 }, { name: 'Black Paint', colorHint: 'black', pct: 5 }] },
+  { name: 'Deep Slate Gray', desc: 'Deep Slate Gray (50% White Paint + 30% Blue Paint + 20% Black Paint)', hex: '#2E3E40', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 50 }, { name: 'Blue Paint', colorHint: 'blue', pct: 30 }, { name: 'Black Paint', colorHint: 'black', pct: 20 }] },
+  { name: 'Dark Graphite', desc: 'Dark Graphite (93% White Paint + 7% Black Paint)', hex: '#626262', recipe: [{ name: 'White Paint', colorHint: 'white', pct: 93 }, { name: 'Black Paint', colorHint: 'black', pct: 7 }] }
 ];
+
+function sanitizeMismatchedCustomPreset(preset) {
+  if (!preset || typeof preset !== 'object') return preset;
+  const cleanName = cleanPresetColorName(preset.name || '').toLowerCase();
+  const rec = Array.isArray(preset.recipe) ? preset.recipe : [];
+  if (cleanName === 'lavender' && rec.length >= 2) {
+    const hints = rec.map(r => `${r.colorHint || ''} ${r.name || ''}`.toLowerCase()).join(' ');
+    const hasBlue = hints.includes('blue');
+    const hasPurple = hints.includes('purple') || hints.includes('violet');
+    if (hasBlue && !hasPurple) {
+      return {
+        ...preset,
+        name: 'Vibrant Sky Blue',
+        desc: `Vibrant Sky Blue (${rec.map(c => `${c.pct}% ${c.name}`).join(' + ')})`,
+        _sanitized: true
+      };
+    }
+  }
+  return preset;
+}
 
 function loadSavedCustomColorPresets() {
   try {
+    if (typeof db !== 'undefined' && db && Array.isArray(db.colorFormulas) && db.colorFormulas.length > 0) {
+      return db.colorFormulas.map(f => {
+        const catMatch = String(f.sheen || '').match(/^cat:(.+)$/i);
+        return sanitizeMismatchedCustomPreset({
+          id: f.id,
+          colorId: f.colorId || null,
+          name: f.name,
+          desc: `${f.detectedName || f.name} (${(f.pigmentFormula || []).map(c => `${c.pct}% ${c.name}`).join(' + ')})`,
+          hex: f.hexReference || '#1F6F6B',
+          family: catMatch ? catMatch[1].trim() : (f.family || ''),
+          baseType: f.baseType || 'Automotive Paint',
+          sheen: catMatch ? '' : (f.sheen || ''),
+          notes: f.notes || '',
+          isCustom: true,
+          recipe: Array.isArray(f.pigmentFormula) ? f.pigmentFormula : []
+        });
+      });
+    }
     const raw = localStorage.getItem(CUSTOM_COLOR_PRESETS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    let changed = false;
+    const cleaned = parsed.map(item => {
+      const s = sanitizeMismatchedCustomPreset(item);
+      if (s && s._sanitized) {
+        changed = true;
+        delete s._sanitized;
+      }
+      return s;
+    });
+    if (changed) {
+      try { localStorage.setItem(CUSTOM_COLOR_PRESETS_KEY, JSON.stringify(cleaned)); } catch (e) { }
+    }
+    return cleaned;
   } catch (e) {
     return [];
   }
 }
 
+function enrichRecipeWithDictionary(recipeObj) {
+  if (!recipeObj || !Array.isArray(recipeObj.recipe) || recipeObj.recipe.length < 2) return null;
+  const sumPct = recipeObj.recipe.reduce((s, r) => s + (Number(r.pct) || 0), 0);
+  if (Math.abs(sumPct - 100) > 0.5) return null;
+  const cleanName = cleanPresetColorName(recipeObj.name);
+  const dictMatch = Array.isArray(PAINT_COLOR_DICTIONARY)
+    ? PAINT_COLOR_DICTIONARY.find(d => d.name.toLowerCase() === cleanName.toLowerCase())
+    : null;
+  const hex = (dictMatch && dictMatch.hex) || recipeObj.hex || '#1F6F6B';
+  const rgb = hexToRgb(hex);
+  const family = (dictMatch && dictMatch.family) || recipeObj.family || (detectDictionaryColorOnly(rgb.r, rgb.g, rgb.b).family) || 'Custom';
+  return {
+    ...recipeObj,
+    cleanName,
+    hex,
+    rgb,
+    family,
+    hasFormula: true
+  };
+}
+
 function getColorRecipePresets() {
   const custom = loadSavedCustomColorPresets();
-  const list = [...DEFAULT_COLOR_RECIPE_PRESETS];
-  custom.forEach(cp => {
-    const cpName = cleanPresetColorName(cp.name).toLowerCase();
-    const idx = list.findIndex(p => cleanPresetColorName(p.name).toLowerCase() === cpName);
-    if (idx < 0) {
-      list.push(cp);
-    }
+  const seen = new Set();
+  const list = [];
+  // 1. Add all saved recipes (ready-made + custom formulas), enriched with PAINT_COLOR_DICTIONARY
+  [...DEFAULT_COLOR_RECIPE_PRESETS, ...custom].forEach(raw => {
+    const enriched = enrichRecipeWithDictionary(raw);
+    if (!enriched) return;
+    const key = enriched.cleanName.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    list.push(enriched);
   });
+
+  // 2. Include all remaining mixed colors from PAINT_COLOR_DICTIONARY (marked hasFormula: false, no invented ratios)
+  if (Array.isArray(PAINT_COLOR_DICTIONARY)) {
+    PAINT_COLOR_DICTIONARY.forEach(d => {
+      if (!d || !d.name) return;
+      const key = d.name.trim().toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push({
+        name: d.name,
+        cleanName: d.name,
+        hex: d.hex,
+        rgb: { r: d.r, g: d.g, b: d.b },
+        family: d.family || 'Custom',
+        desc: `${d.name} (${d.hex}) — No saved mixing formula yet`,
+        hasFormula: false,
+        recipe: []
+      });
+    });
+  }
+
   return list;
 }
 
-const COLOR_RECIPE_PRESETS = getColorRecipePresets();
+const COLOR_RECIPE_PRESETS = [];
 
 function syncActiveColorRecipePresets() {
   const updated = getColorRecipePresets();
@@ -988,23 +1461,38 @@ function syncActiveColorRecipePresets() {
   return COLOR_RECIPE_PRESETS;
 }
 
-function saveMixedColorToPresets({ colorName, detectedName, hex, baseType, components }) {
+syncActiveColorRecipePresets();
+
+function saveMixedColorToPresets({ colorName, detectedName, hex, baseType, components, colorId = null, sheen = '', notes = '' }) {
   if (!colorName || !Array.isArray(components) || !components.length) return;
   const cleanName = colorName.trim();
-  const recipeDesc = components.map(c => `${c.percentage}% ${c.name}`).join(' + ');
+  const pigmentFormula = components.map(c => {
+    const prod = (c.productId && typeof productById === 'function') ? productById(c.productId) : null;
+    const compColorId = c.colorId || (prod && (prod.colorId || prod.color_id)) || null;
+    const libEntry = compColorId && typeof findColorLibraryEntry === 'function' ? findColorLibraryEntry(compColorId) : null;
+    return {
+      productId: c.productId || '',
+      colorId: libEntry ? libEntry.id : compColorId,
+      name: c.name || '',
+      colorName: (libEntry && libEntry.name) || c.colorName || c.color || '',
+      hex: (libEntry && libEntry.hex) || c.hex || '',
+      colorHint: ((libEntry && libEntry.name) || c.name || '').toLowerCase(),
+      pct: Number(c.percentage ?? c.pct) || 0,
+      preferredCanSize: Number(c.preferredCanSize) || 0
+    };
+  });
+  const recipeDesc = pigmentFormula.map(c => `${c.pct}% ${c.name}`).join(' + ');
+  const hexRef = (typeof normalizeHexCode === 'function' ? normalizeHexCode(hex) : '') || hex || '#1F6F6B';
   const newPreset = {
+    colorId: colorId || null,
     name: cleanName,
     desc: `${detectedName || cleanName} (${recipeDesc})`,
-    hex: hex || '#1F6F6B',
+    hex: hexRef,
     baseType: baseType || 'Automotive Paint',
+    sheen: sheen || '',
+    notes: notes || '',
     isCustom: true,
-    recipe: components.map(c => ({
-      productId: c.productId || '',
-      name: c.name || '',
-      hex: c.hex || '',
-      colorHint: (c.name || '').toLowerCase(),
-      pct: Number(c.percentage) || 0
-    }))
+    recipe: pigmentFormula
   };
 
   const existingIdx = COLOR_RECIPE_PRESETS.findIndex(
@@ -1016,76 +1504,190 @@ function saveMixedColorToPresets({ colorName, detectedName, hex, baseType, compo
     COLOR_RECIPE_PRESETS.push(newPreset);
   }
 
+  // Persist in db.colorFormulas & localStorage
+  if (typeof db !== 'undefined' && db) {
+    if (!Array.isArray(db.colorFormulas)) db.colorFormulas = [];
+    const fIdx = db.colorFormulas.findIndex(f => (f.name || '').trim().toLowerCase() === cleanName.toLowerCase());
+    const formulaRec = {
+      id: fIdx >= 0 ? db.colorFormulas[fIdx].id : ('cf_' + Date.now().toString(36)),
+      colorId: colorId || null,
+      name: cleanName,
+      hexReference: hexRef,
+      detectedName: detectedName || cleanName,
+      baseType: baseType || 'Automotive Paint',
+      sheen: sheen || '',
+      notes: notes || '',
+      pigmentFormula: pigmentFormula,
+      isCustom: true
+    };
+    if (fIdx >= 0) db.colorFormulas[fIdx] = formulaRec;
+    else db.colorFormulas.unshift(formulaRec);
+  }
+
   try {
     const customOnly = COLOR_RECIPE_PRESETS.filter(p => p.isCustom);
     localStorage.setItem(CUSTOM_COLOR_PRESETS_KEY, JSON.stringify(customOnly));
   } catch (e) {
     console.warn('Could not persist custom color presets', e);
   }
+
+  // Persist to local MySQL database offline
+  fetch('api/db.php?action=color_formula_save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      colorId: colorId || null,
+      name: cleanName,
+      hexReference: hexRef,
+      detectedName: detectedName || cleanName,
+      baseType: baseType || 'Automotive Paint',
+      sheen: sheen || '',
+      notes: notes || '',
+      pigmentFormula: pigmentFormula
+    })
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.success && Array.isArray(data.colorFormulas) && typeof db !== 'undefined' && db) {
+        db.colorFormulas = data.colorFormulas;
+        syncActiveColorRecipePresets();
+        const chipsEl = document.getElementById('cm-preset-chips-wrap');
+        if (chipsEl) chipsEl.innerHTML = renderColorMixPresetChipsHtml();
+      }
+    })
+    .catch(err => console.warn('Color formula DB save warning:', err));
+
   syncActiveColorRecipePresets();
 }
 
+let _cmProdIndexSig = '';
+let _cmProdIndexList = [];
+let _cmRecipeEvalCacheSig = '';
+const _cmRecipeEvalCache = new Map();
+
+function getColorMixInventorySignature() {
+  const prods = (typeof activeProducts === 'function' ? activeProducts() : []);
+  let stockSum = 0;
+  let openedSum = 0;
+  for (let i = 0; i < prods.length; i++) {
+    const p = prods[i];
+    if (!p) continue;
+    stockSum += Number(p.stock) || 0;
+    if (typeof productOpenedStock === 'function') openedSum += productOpenedStock(p);
+  }
+  const libLen = (typeof db !== 'undefined' && db && Array.isArray(db.colorLibrary)) ? db.colorLibrary.length : 0;
+  return `${prods.length}|${Math.round(stockSum * 100)}|${Math.round(openedSum * 100)}|${libLen}`;
+}
+
+function getColorMixProductIndex() {
+  const sig = getColorMixInventorySignature();
+  if (sig === _cmProdIndexSig && _cmProdIndexList.length > 0) {
+    return _cmProdIndexList;
+  }
+  const prods = (typeof activeProducts === 'function' ? activeProducts() : [])
+    .filter(p => p && p.status === 'active');
+  const libList = getMasterColorLibrary();
+  const libById = new Map(libList.map(c => [String(c.id), c]));
+
+  _cmProdIndexList = prods.map(prod => {
+    const cid = prod.colorId || prod.color_id;
+    const libEntry = cid ? libById.get(String(cid)) : null;
+    const hex = (libEntry && libEntry.hex) || getProductDefaultColor(prod);
+    const pColor = String(prod.color || '').trim().toLowerCase();
+    const pColorName = String((libEntry && libEntry.name) || prod.colorName || prod.color || '').trim().toLowerCase();
+    const pName = String(prod.name || '').trim().toLowerCase();
+    let libText = libEntry ? `${libEntry.name || ''} ${libEntry.category || ''} ${libEntry.colorFamily || ''}`.toLowerCase() : '';
+    if (!libText && hex && libList.length) {
+      const rgb = hexToRgb(hex);
+      if (rgb && typeof detectClosestLibraryColor === 'function') {
+        const libDet = detectClosestLibraryColor(rgb.r, rgb.g, rgb.b);
+        if (libDet) libText = `${libDet.name || ''} ${libDet.family || ''} ${libDet.category || ''}`.toLowerCase();
+      }
+    }
+    return {
+      product: prod,
+      idStr: String(prod.id),
+      hex,
+      searchText: `${pColor} ${pColorName} ${pName} ${libText}`,
+      usableStock: typeof productMixAvailableStock === 'function' ? productMixAvailableStock(prod) : (Number(prod.stock) || 0),
+      openedStock: typeof productOpenedStock === 'function' ? productOpenedStock(prod) : 0,
+      typeLower: String(prod.type || '').toLowerCase()
+    };
+  });
+  _cmProdIndexSig = sig;
+  _cmRecipeEvalCache.clear();
+  _cmRecipeEvalCacheSig = sig;
+  return _cmProdIndexList;
+}
+
 function findMatchingProductForRecipeItem(item, reqLiters = 0, excludeProductIds = new Set(), preferredType = '') {
-  const allActive = (typeof activeProducts === 'function' ? activeProducts() : [])
-    .filter(p => p && p.status === 'active' && !excludeProductIds.has(String(p.id)));
+  const index = getColorMixProductIndex();
 
   // 1. Exact productId match first (for saved custom mixes)
   if (item.productId && !excludeProductIds.has(String(item.productId))) {
-    const byId = allActive.find(p => String(p.id) === String(item.productId));
-    if (byId) return { product: byId, reason: null };
+    const byId = index.find(e => e.idStr === String(item.productId));
+    if (byId) return { product: byId.product, reason: null };
     const rawProd = typeof productById === 'function' ? productById(item.productId) : null;
     if (rawProd && rawProd.status === 'active') return { product: rawProd, reason: null };
   }
 
-  // 2. Match by colorHint or name
+  // 2. Match by colorHint or name using pre-indexed searchText (O(N) string check, zero library scans)
   const hint = String(item.colorHint || item.name || '').trim().toLowerCase();
   if (hint) {
-    const matchFn = prod => {
-      const pColor = String(prod.color || '').trim().toLowerCase();
-      const pName = String(prod.name || '').trim().toLowerCase();
-      if (pColor === hint || pColor.includes(hint) || pName.includes(hint)) return true;
-      const hex = getProductDefaultColor(prod);
-      if (hex) {
-        const rgb = hexToRgb(hex);
-        if (rgb) {
-          const det = detectMixedColorName(rgb.r, rgb.g, rgb.b);
-          if (det && det.family && det.family.toLowerCase() === hint) return true;
-          if (det && det.name && det.name.toLowerCase().includes(hint)) return true;
-        }
-      }
-      return false;
-    };
+    const prefLower = String(preferredType || '').toLowerCase();
+    const candidates = [];
+    for (let i = 0; i < index.length; i++) {
+      const e = index[i];
+      if (excludeProductIds.has(e.idStr)) continue;
+      if (e.searchText.includes(hint)) candidates.push(e);
+    }
 
-    const candidates = allActive.filter(matchFn);
     if (candidates.length > 0) {
-      // Sort candidates:
-      // Priority 1: Has enough usable stock (usableStock >= reqLiters)
-      // Priority 2: Matches preferredType (e.g. Latex, Automotive Paint)
-      // Priority 3: Prioritize usable opened-container leftovers
-      // Priority 4: Highest usable stock
       candidates.sort((a, b) => {
-        const aStock = productMixAvailableStock(a);
-        const bStock = productMixAvailableStock(b);
-        const aSufficient = reqLiters > 0 ? (aStock >= reqLiters ? 1 : 0) : (aStock > 0 ? 1 : 0);
-        const bSufficient = reqLiters > 0 ? (bStock >= reqLiters ? 1 : 0) : (bStock > 0 ? 1 : 0);
+        const aSufficient = reqLiters > 0 ? (a.usableStock >= reqLiters ? 1 : 0) : (a.usableStock > 0 ? 1 : 0);
+        const bSufficient = reqLiters > 0 ? (b.usableStock >= reqLiters ? 1 : 0) : (b.usableStock > 0 ? 1 : 0);
         if (aSufficient !== bSufficient) return bSufficient - aSufficient;
 
-        const aTypeMatch = preferredType && (a.type || '').toLowerCase() === preferredType.toLowerCase() ? 1 : 0;
-        const bTypeMatch = preferredType && (b.type || '').toLowerCase() === preferredType.toLowerCase() ? 1 : 0;
+        const aTypeMatch = prefLower && a.typeLower === prefLower ? 1 : 0;
+        const bTypeMatch = prefLower && b.typeLower === prefLower ? 1 : 0;
         if (aTypeMatch !== bTypeMatch) return bTypeMatch - aTypeMatch;
 
-        const aOpened = productOpenedStock(a) > 0 ? 1 : 0;
-        const bOpened = productOpenedStock(b) > 0 ? 1 : 0;
+        const aOpened = a.openedStock > 0 ? 1 : 0;
+        const bOpened = b.openedStock > 0 ? 1 : 0;
         if (aOpened !== bOpened) return bOpened - aOpened;
 
-        return bStock - aStock;
+        return b.usableStock - a.usableStock;
       });
 
-      return { product: candidates[0], reason: null };
+      return { product: candidates[0].product, reason: null };
     }
   }
 
   return { product: null, reason: `Missing ${item.name || item.colorHint || 'ingredient'} in inventory` };
+}
+
+function productMixNonExpiredAvailableStock(p) {
+  if (!p) return 0;
+  const opened = (typeof productOpenedStock === 'function') ? productOpenedStock(p) : (Number(p.openedStock) || 0);
+  if (typeof posBatchStatusBySize !== 'undefined' && posBatchStatusBySize && Object.keys(posBatchStatusBySize).length > 0 && Array.isArray(p.sizesData) && p.sizesData.length > 0) {
+    let nonExpiredSealedLiters = 0;
+    let matchedAnySize = false;
+    p.sizesData.forEach(sz => {
+      const sid = sz.sizeId || sz.size_id;
+      const cSize = Number(sz.containerSize || sz.container_size) || 0;
+      if (sid && posBatchStatusBySize[sid]) {
+        matchedAnySize = true;
+        const bInfo = posBatchStatusBySize[sid];
+        nonExpiredSealedLiters += (Number(bInfo.nonExpiredQty) || 0) * cSize;
+      } else {
+        nonExpiredSealedLiters += (Number(sz.sealedQuantity) || 0) * cSize;
+      }
+    });
+    if (matchedAnySize) {
+      return Number(Math.max(0, opened + nonExpiredSealedLiters).toFixed(2));
+    }
+  }
+  return (typeof productMixAvailableStock === 'function') ? productMixAvailableStock(p) : Number(Math.max(0, opened + (Number(p.stock) || 0)).toFixed(2));
 }
 
 function evaluateRecipePresetAvailability(preset, totalLiters = (colorMixStudioState && colorMixStudioState.totalLiters ? colorMixStudioState.totalLiters : 1)) {
@@ -1104,6 +1706,13 @@ function evaluateRecipePresetAvailability(preset, totalLiters = (colorMixStudioS
   const preferredType = (colorMixStudioState && colorMixStudioState.typeFilter && colorMixStudioState.typeFilter !== 'all')
     ? colorMixStudioState.typeFilter
     : (preset.baseType || '');
+
+  // Ensure product index & recipe evaluation cache are synchronized with current inventory stock
+  getColorMixProductIndex();
+  const recipeKey = `${preset.id || preset.cleanName || preset.name || ''}|${vol}|${preferredType}`;
+  if (_cmRecipeEvalCache.has(recipeKey)) {
+    return _cmRecipeEvalCache.get(recipeKey);
+  }
 
   const usedProductIds = new Set();
   const productTotalReqMap = new Map();
@@ -1155,7 +1764,7 @@ function evaluateRecipePresetAvailability(preset, totalLiters = (colorMixStudioS
 
     const openedStock = productOpenedStock(product);
     const sealedStock = Math.max(0, Number(product.stock) || 0);
-    const usableStock = productMixAvailableStock(product);
+    const usableStock = productMixNonExpiredAvailableStock(product);
     const totalReqForProduct = productTotalReqMap.get(String(product.id)) || reqLiters;
     const hasSufficient = usableStock >= totalReqForProduct && usableStock > 0;
     const shortageLiters = hasSufficient ? 0 : Number(Math.max(0, totalReqForProduct - usableStock).toFixed(2));
@@ -1194,7 +1803,7 @@ function evaluateRecipePresetAvailability(preset, totalLiters = (colorMixStudioS
   //
   // Shortage:
   // Red Paint needs 0.40 L but only 0.20 L is available.
-  let tooltip = `Preset: ${preset.name}\n\nRequired Ingredients:\n`;
+  let tooltip = `Mixed Color Catalog: ${preset.name}\n\nRequired Ingredients:\n`;
   ingredients.forEach(ing => {
     tooltip += `- ${ing.displayName}: ${formatStock(ing.reqLiters)} L — ${ing.isAvailable ? 'Available' : 'Insufficient'}\n`;
   });
@@ -1204,14 +1813,24 @@ function evaluateRecipePresetAvailability(preset, totalLiters = (colorMixStudioS
     tooltip += `\nStatus: Available (${vol} L mix)`;
   }
 
-  return {
+  const resolvedHex = (resolvedItems.length >= 2 && resolvedItems.every(r => r.product))
+    ? subtractivePaintMix(resolvedItems.map(r => ({
+      hex: getProductDefaultColor(r.product),
+      pct: Number(r.item.pct) || 0
+    }))).hex
+    : preset.hex;
+
+  const evalResult = {
     available: isAvailable,
     lackingReasons,
     shortageDescriptions,
     ingredients,
     resolvedItems,
+    resolvedHex,
     tooltip: tooltip.trim()
   };
+  _cmRecipeEvalCache.set(recipeKey, evalResult);
+  return evalResult;
 }
 
 function isPresetCurrentlyActive(preset, pIdx) {
@@ -1229,30 +1848,103 @@ function isPresetCurrentlyActive(preset, pIdx) {
   return doesComponentsMatchPreset(preset, colorMixStudioState.components);
 }
 
+function onColorMixPresetSearch(val) {
+  if (!colorMixStudioState) return;
+  colorMixStudioState.presetSearch = String(val || '');
+  const clrBtn = document.getElementById('cm-preset-search-clear');
+  if (clrBtn) clrBtn.style.display = colorMixStudioState.presetSearch.trim() ? 'inline-flex' : 'none';
+  const wrap = document.getElementById('cm-preset-chips-wrap');
+  if (wrap) wrap.innerHTML = renderColorMixPresetChipsHtml();
+}
+
+function clearColorMixPresetSearch() {
+  if (!colorMixStudioState) return;
+  colorMixStudioState.presetSearch = '';
+  const inp = document.getElementById('cm-preset-search');
+  if (inp) {
+    inp.value = '';
+    inp.focus();
+  }
+  const clrBtn = document.getElementById('cm-preset-search-clear');
+  if (clrBtn) clrBtn.style.display = 'none';
+  const wrap = document.getElementById('cm-preset-chips-wrap');
+  if (wrap) wrap.innerHTML = renderColorMixPresetChipsHtml();
+}
+
+function onColorMixRecipeCategoryChange(cat) {
+  if (!colorMixStudioState) return;
+  colorMixStudioState.recipeCategoryFilter = cat || 'All';
+  const wrap = document.getElementById('cm-preset-chips-wrap');
+  if (wrap) wrap.innerHTML = renderColorMixPresetChipsHtml();
+}
+
 function renderColorMixPresetChipsHtml() {
   const totalLiters = (colorMixStudioState && colorMixStudioState.totalLiters) || 1;
-  const presets = COLOR_RECIPE_PRESETS;
+  const recipes = COLOR_RECIPE_PRESETS;
+  const query = ((colorMixStudioState && colorMixStudioState.presetSearch) || '').trim().toLowerCase();
+  const activeCat = (colorMixStudioState && colorMixStudioState.recipeCategoryFilter) || 'All';
+
+  const families = ['All', ...Array.from(new Set(recipes.map(r => r.family || 'Custom').filter(Boolean)))];
+
+  let indexed = recipes.map((preset, pIdx) => ({ preset, pIdx }));
+  if (activeCat !== 'All') {
+    indexed = indexed.filter(({ preset }) => (preset.family || 'Custom') === activeCat);
+  }
+  if (query) {
+    indexed = indexed.filter(({ preset }) => {
+      const hay = `${preset.name || ''} ${preset.cleanName || ''} ${preset.hex || ''} ${preset.family || ''} ${preset.desc || ''}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }
+
+  const catBarHtml = `
+    <div class="cm-recipe-cat-bar">
+      ${families.map(f => `
+        <button type="button" class="cm-recipe-cat-pill ${activeCat === f ? 'active' : ''}" onclick="onColorMixRecipeCategoryChange('${escapeAttr(f)}')">${escapeHtml(f)}</button>
+      `).join('')}
+    </div>
+  `;
+
+  if (!indexed.length) {
+    return `${catBarHtml}<div class="cm-preset-empty">No Mixed Color Catalog entries match "${escapeHtml(colorMixStudioState.presetSearch || activeCat)}".</div>`;
+  }
+
   return `
-    <span class="muted small" style="font-size:11px; font-weight:600; margin-right:2px;">💡 Presets:</span>
-    ${presets.map((preset, pIdx) => {
-      const check = evaluateRecipePresetAvailability(preset, totalLiters);
-      const isAvailable = check.available;
-      const isActive = isAvailable && isPresetCurrentlyActive(preset, pIdx);
-      if (!isAvailable && colorMixStudioState && colorMixStudioState.selectedPresetIndex === pIdx) {
-        colorMixStudioState.selectedPresetIndex = -1;
-      }
-      return `
-        <button class="cm-preset-chip ${isAvailable ? ('available' + (isActive ? ' active' : '')) : 'lacking unavailable'}" 
-                type="button" 
-                ${!isAvailable ? 'aria-disabled="true" data-preset-disabled="true"' : ''}
-                onclick="handleRecipePresetClick(${pIdx})" 
-                title="${escapeHtml(check.tooltip)}">
-          <span class="cm-color-dot" style="background-color:${preset.hex}; ${!isAvailable ? 'filter:grayscale(0.6); opacity:0.6;' : ''}"></span>
-          <span>${escapeHtml(preset.name)}</span>
-          ${!isAvailable ? `<span class="cm-preset-tag-insufficient">Unavailable</span>` : ''}
-        </button>
-      `;
-    }).join('')}
+    ${catBarHtml}
+    <div class="cm-ready-recipes-grid">
+      ${indexed.map(({ preset, pIdx }) => {
+    const hasFormula = Boolean(preset.hasFormula && Array.isArray(preset.recipe) && preset.recipe.length >= 2);
+    const check = hasFormula ? evaluateRecipePresetAvailability(preset, totalLiters) : null;
+    const isAvailable = hasFormula && check && check.available;
+    const isActive = isAvailable && isPresetCurrentlyActive(preset, pIdx);
+    if (!isAvailable && colorMixStudioState && colorMixStudioState.selectedPresetIndex === pIdx) {
+      colorMixStudioState.selectedPresetIndex = -1;
+    }
+    const displayHex = (check && check.resolvedHex) || preset.hex;
+    const tooltipText = hasFormula
+      ? check.tooltip
+      : `${preset.cleanName || preset.name} (${displayHex}) — No saved mixing formula yet`;
+    return `
+          <button class="cm-ready-recipe-card ${hasFormula ? (isAvailable ? ('available' + (isActive ? ' active' : '')) : 'lacking unavailable') : 'no-formula'}"
+                  type="button"
+                  ${!isAvailable ? 'aria-disabled="true" data-preset-disabled="true"' : ''}
+                  onclick="handleRecipePresetClick(${pIdx})"
+                  title="${escapeHtml(tooltipText)}">
+            <span class="cm-ready-recipe-swatch" style="background-color:${escapeAttr(displayHex)}; ${hasFormula && !isAvailable ? 'filter:grayscale(0.5); opacity:0.65;' : ''}"></span>
+            <span class="cm-ready-recipe-info">
+              <span class="cm-ready-recipe-name">${escapeHtml(preset.cleanName || preset.name)}</span>
+              <span class="cm-ready-recipe-sub">
+                <code>${escapeHtml(displayHex)}</code>
+                <span>· ${escapeHtml(preset.family || 'Mix')}</span>
+              </span>
+            </span>
+            <span class="cm-ready-recipe-status ${hasFormula ? (isAvailable ? 'ok' : 'low') : 'none'}">
+              ${!hasFormula ? 'No Formula' : (isActive ? '✓ Selected' : (isAvailable ? 'Ready' : 'Low Stock'))}
+            </span>
+          </button>
+        `;
+  }).join('')}
+    </div>
   `;
 }
 
@@ -1261,6 +1953,10 @@ let currentShortagePresetIndex = -1;
 function handleRecipePresetClick(presetIndex) {
   const p = COLOR_RECIPE_PRESETS[presetIndex];
   if (!p) return;
+  if (!p.hasFormula || !Array.isArray(p.recipe) || p.recipe.length < 2) {
+    showToast(`"${p.cleanName || p.name}" (${p.hex}) has no saved mixing formula yet.`, 'info');
+    return;
+  }
   const totalLiters = (colorMixStudioState && colorMixStudioState.totalLiters) || 1;
   const check = evaluateRecipePresetAvailability(p, totalLiters);
 
@@ -1290,19 +1986,19 @@ function showPresetShortageAlert(preset, check, totalLiters) {
     <div class="cm-preset-shortage-box">
       <div class="row" style="justify-content:space-between; align-items:flex-start; gap:8px;">
         <div>
-          <div style="font-weight:700; font-size:13px; color:#B91C1C; display:flex; align-items:center; gap:6px;">
+          <div style="font-weight:700; font-size:13px; color:var(--danger-text); display:flex; align-items:center; gap:6px;">
             <span style="font-size:15px;">⚠️</span>
-            <span>Preset: <b>${escapeHtml(preset.name)}</b> — Insufficient Stock</span>
+            <span>Mixed Color Catalog: <b>${escapeHtml(preset.name)}</b> — Insufficient Stock</span>
           </div>
           <div class="muted small" style="margin-top:2px; font-size:11.5px;">
             Mixing Volume: <b>${vol} L</b>. Checked usable inventory across opened leftovers &amp; sealed stock:
           </div>
         </div>
-        <button type="button" class="btn ghost small" onclick="dismissPresetShortageAlert()" style="font-size:12px; padding:2px 7px; color:#6B7280;" title="Dismiss shortage alert">✕</button>
+        <button type="button" class="btn ghost small" onclick="dismissPresetShortageAlert()" style="font-size:12px; padding:2px 7px; color:var(--ink-soft);" title="Dismiss shortage alert">✕</button>
       </div>
 
-      <div style="margin-top:9px; background:#FFFFFF; border-radius:6px; padding:8px 12px; border:1px solid #FECACA;">
-        <div style="font-size:11.5px; font-weight:700; margin-bottom:5px; color:#374151;">Required Ingredients:</div>
+      <div style="margin-top:9px; background:var(--surface); border-radius:6px; padding:8px 12px; border:1px solid var(--danger-border);">
+        <div style="font-size:11.5px; font-weight:700; margin-bottom:5px; color:var(--ink);">Required Ingredients:</div>
         <div style="display:flex; flex-direction:column; gap:4px;">
           ${check.ingredients.map(ing => `
             <div class="row" style="justify-content:space-between; align-items:center; font-size:11.5px;">
@@ -1318,9 +2014,9 @@ function showPresetShortageAlert(preset, check, totalLiters) {
         </div>
       </div>
 
-      <div style="margin-top:9px; background:#FEF2F2; border-left:3px solid #EF4444; padding:6px 10px; border-radius:0 4px 4px 0;">
-        <div style="font-size:11.5px; font-weight:700; color:#991B1B;">Shortage:</div>
-        <div style="margin-top:2px; font-size:11.5px; color:#B91C1C;">
+      <div style="margin-top:9px; background:var(--danger-bg); border-left:3px solid #EF4444; padding:6px 10px; border-radius:0 4px 4px 0;">
+        <div style="font-size:11.5px; font-weight:700; color:var(--danger-text);">Shortage:</div>
+        <div style="margin-top:2px; font-size:11.5px; color:var(--danger-text);">
           ${check.shortageDescriptions.map(d => `<div>${escapeHtml(d)}</div>`).join('')}
         </div>
       </div>
@@ -1378,6 +2074,7 @@ function applyRecipePreset(presetIndex, preCheck = null) {
   const newComponents = check.resolvedItems.map(({ item, product }) => ({
     id: uid('cmc'),
     productId: product.id,
+    colorId: item.colorId || product.colorId || product.color_id || null,
     name: product.name,
     brand: product.brand,
     colorName: getProductColorName(product),
@@ -1391,6 +2088,7 @@ function applyRecipePreset(presetIndex, preCheck = null) {
 
   colorMixStudioState.components = newComponents;
   colorMixStudioState.selectedPresetIndex = presetIndex;
+  colorMixStudioState.selectedLibraryColorId = p.colorId || null;
   const invTypes = getInventoryBasePaintTypes();
   const firstProdType = (check.resolvedItems[0] && check.resolvedItems[0].product && check.resolvedItems[0].product.type)
     ? String(check.resolvedItems[0].product.type).trim()
@@ -1408,28 +2106,7 @@ function applyRecipePreset(presetIndex, preCheck = null) {
   colorMixStudioState.userCustomizedName = false;
   updateColorMixCalculation(true);
   renderColorMixStudio();
-  showToast(`Loaded recipe preset: ${p.name}!`, 'ok');
-}
-
-function adjustComponentPct(idx, delta) {
-  if (!colorMixStudioState.components[idx]) return;
-  let val = (Number(colorMixStudioState.components[idx].pct) || 0) + delta;
-  val = Math.max(0, Math.min(100, Math.round(val * 10) / 10));
-  colorMixStudioState.components[idx].pct = val;
-  const input = document.getElementById(`cm-pct-input-${idx}`);
-  if (input) input.value = val;
-  if (typeof syncColorMixVisuals === 'function') {
-    syncColorMixVisuals(idx);
-  } else {
-    updateColorMixCalculation();
-    renderColorMixStudio();
-  }
-}
-
-function resetColorMixToDefault() {
-  initColorMixStudioState();
-  renderColorMixStudio();
-  showToast('Reset mixing formula to default 60/40 blend.', 'ok');
+  showToast(`Loaded Mixed Color Catalog formula: ${p.name}!`, 'ok');
 }
 
 function copyHexToClipboard(hex) {
@@ -1559,36 +2236,52 @@ function colorMixStudioHtml() {
   const breakdown = calculateColorMixPriceBreakdown(s);
   const grandTotal = breakdown.grandTotal;
 
+  const activeRecipe = (Number(s.selectedPresetIndex) >= 0 && COLOR_RECIPE_PRESETS[s.selectedPresetIndex])
+    ? COLOR_RECIPE_PRESETS[s.selectedPresetIndex]
+    : null;
+  const recipeSearchVal = s.presetSearch || '';
+
   return `
-  <!-- Single Clean Top Toolbar: Quick Presets + Balance Status -->
-  <div class="cm-inspirations-bar" style="margin-bottom:12px; padding:10px 14px;">
-    <div class="row wrap" style="justify-content:flex-end; align-items:center; gap:8px; margin-bottom:8px;">
-      <div class="row" style="gap:6px; align-items:center;">
-        <span id="cm-balance-badge" class="badge ${isPctBalanced ? 'ok' : 'low'}" style="font-size:11px; padding:4px 10px;">
-          ${isPctBalanced ? '✓ 100% Balanced' : `⚠️ ${totalPctRounded}% (${totalPctRounded > 100 ? (Math.round((totalPctRounded - 100) * 10) / 10) + '% Over' : (Math.round((100 - totalPctRounded) * 10) / 10) + '% Needed'})`}
-        </span>
-        <span id="cm-autobalance-slot">
-          ${!isPctBalanced ? `<button class="btn ghost small" onclick="balanceColorMixTo100()" style="font-size:11px; padding:3px 8px; font-weight:700; color:var(--teal);">🎯 Auto-Balance</button>` : ''}
-        </span>
-        <button class="btn ghost small" onclick="resetColorMixToDefault()" style="font-size:11px; padding:2px 7px;">🔄 Reset</button>
+  <div class="cm-studio-layout">
+<!-- LEFT COLUMN (55%): A. Mixed Color Catalog + B. Selected Color Formula (Read-Only) -->
+<div class="cm-col-left">
+  <!-- A. Mixed Color Catalog -->
+  <div class="cm-card cm-ready-recipes-card">
+    <div class="cm-card-title cm-presets-header">
+      <div class="cm-title-group">
+        <span>🎨 Mixed Color Catalog</span>
+        <span class="cm-count-pill">${COLOR_RECIPE_PRESETS.length}</span>
+      </div>
+      <div class="cm-presets-toolbar">
+        <div class="cm-preset-search-wrap" style="min-width:190px;">
+          <span class="cm-preset-search-icon" aria-hidden="true">🔍</span>
+          <input id="cm-preset-search" type="text" class="cm-preset-search-input" style="width:100%;" value="${escapeHtml(recipeSearchVal)}" placeholder="Search color or HEX..." oninput="onColorMixPresetSearch(this.value)" aria-label="Search Mixed Color Catalog">
+          <button id="cm-preset-search-clear" type="button" class="cm-preset-search-clear" onclick="clearColorMixPresetSearch()" style="display:${recipeSearchVal.trim() ? 'inline-flex' : 'none'};" title="Clear search">&times;</button>
+        </div>
       </div>
     </div>
 
-    <!-- Quick Recipe Inspiration Chips -->
-    <div id="cm-preset-chips-wrap" class="row wrap" style="gap:5px; align-items:center;">
+    <div id="cm-preset-chips-wrap" class="cm-preset-chips-wrap">
       ${renderColorMixPresetChipsHtml()}
     </div>
     <div id="cm-preset-shortage-alert" style="display:none; margin-top:8px;"></div>
   </div>
 
-  <div class="cm-studio-layout">
-<!-- LEFT COLUMN: Formula Ingredients & Ratio Sliders -->
-<div>
+  <!-- B. Selected Color Formula (Read-Only Percentages) -->
   <div class="cm-card">
-    <div class="cm-card-title">
-      <span>📦 Formula Ingredients (${s.components.length} Paint${s.components.length === 1 ? '' : 's'})</span>
-      <button class="btn secondary small" style="font-size:11px; padding:3px 9px;" onclick="openColorMixPigmentDrawer('add')">+ Add Pigment</button>
+    <div class="cm-card-title" style="flex-wrap:wrap; gap:8px;">
+      <div class="cm-title-group">
+        <span>🧪 Selected Color Formula</span>
+        <span class="badge" style="background:var(--surface-3); color:var(--ink-soft); border:1px solid var(--line); font-size:10px; padding:2px 7px;">🔒 Read-Only</span>
+      </div>
     </div>
+
+    ${activeRecipe ? `
+      <div class="cm-selected-recipe-banner">
+        <span class="cm-color-dot" style="background:${escapeAttr(mixed.hex)}; width:14px; height:14px;"></span>
+        <span><b>${escapeHtml(activeRecipe.cleanName || activeRecipe.name)}</b> · <code>${escapeHtml(mixed.hex)}</code> · ${s.components.length} Ingredients (${totalPctRounded}%)</span>
+      </div>
+    ` : ''}
 
     <!-- Segmented Visual Recipe Bar -->
     <div id="cm-recipe-bar" class="cm-recipe-bar" title="Recipe Color Breakdown" style="margin-bottom:10px;">
@@ -1599,86 +2292,54 @@ function colorMixStudioHtml() {
       `).join('')}
     </div>
 
-    <!-- Clean Ingredient List -->
-    <div id="cm-ingredients-list">
+    <!-- Read-Only Ingredient Breakdown List -->
+    <div id="cm-ingredients-list" class="cm-ingredients-grid">
       ${s.components.map((c, idx) => {
     const reqLiters = Number(((s.totalLiters * (c.pct / 100)) || 0).toFixed(2));
+    const reqMl = Math.round((s.totalLiters * (c.pct / 100)) * 1000);
     const prodObj = c.productId ? productById(c.productId) : null;
+    const availStock = prodObj && typeof productMixAvailableStock === 'function' ? productMixAvailableStock(prodObj) : (Number(c.stock) || 0);
     const openedAvail = prodObj ? productOpenedStock(prodObj) : 0;
     const prefCan = Number(c.preferredCanSize) || 0;
     const mixPlan = prodObj ? previewColorMixConsumption(prodObj, reqLiters, prefCan) : null;
-    const hasStock = prodObj ? productMixAvailableStock(prodObj) >= reqLiters : c.stock >= reqLiters;
-    const fillPct = Math.max(0, Math.min(100, c.pct));
-    const isPickerOpen = s.openPickerIdx === idx;
+    const hasStock = prodObj ? availStock + 1e-6 >= reqLiters : c.stock >= reqLiters;
     const isDup = duplicateSlots.has(idx + 1);
     const isBase = isBasePaintComponent(c, idx, s.components);
     return `
-        <div class="cm-ingredient-item" id="cm-ing-item-${idx}" style="padding:10px 12px; margin-bottom:9px; ${isDup ? 'border:1.5px solid #FCA5A5; background:#FFFBFB;' : ''}">
-          <div class="cm-ing-grid">
-            <!-- Product Color Swatch (Clickable to open Sliding Color Card Drawer) -->
-            <div class="cm-swatch-display" id="cm-swatch-box-${idx}" onclick="openColorMixPigmentDrawer(${idx})" style="background-color:${c.hex || '#FFFFFF'}; cursor:pointer;" title="Click to change paint (${escapeHtml(c.name || 'Component')} · ${c.hex || '#FFFFFF'})">
+        <div class="cm-ingredient-item ${!hasStock ? 'is-low-stock' : ''}" id="cm-ing-item-${idx}" style="padding:10px 12px; margin-bottom:0; ${isDup ? 'border:1.5px solid var(--danger-border); background:var(--danger-bg);' : ''}">
+          <div class="cm-ing-grid" style="grid-template-columns: auto 1fr auto;">
+            <!-- Product Color Swatch -->
+            <div class="cm-swatch-display" id="cm-swatch-box-${idx}" style="background-color:${c.hex || '#FFFFFF'};" title="${escapeHtml(c.name || 'Ingredient')} · ${c.hex || '#FFFFFF'}">
               <span class="cm-swatch-shine"></span>
             </div>
 
-            <!-- Single Clean Clickable Paint Card (Opens Drawer with Avatar Search + Accordions + Color Cards) -->
-            <div class="cm-pigment-selector-box">
-              <button type="button" class="cm-pigment-card-btn ${isPickerOpen ? 'open' : ''}" onclick="openColorMixPigmentDrawer(${idx})" title="Click to choose paint using visual color cards, smart avatar search, or categories">
-                <div style="min-width:0; flex:1;">
-                  <div class="row" style="gap:6px; align-items:center; flex-wrap:wrap;">
-                    <span class="badge" style="background:${isBase ? 'var(--teal-dark)' : '#7B1FA2'}; color:#fff; font-size:9.5px; padding:1px 6px;">#${idx + 1} ${isBase ? 'Base' : 'Pigment'}</span>
-                    <strong style="font-size:13px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(prodObj ? prodObj.name : (c.name || 'Select Paint Product'))}</strong>
-                    <span class="badge" style="background:#EFECE6; color:var(--ink-soft); font-size:10px; padding:1px 6px;">${escapeHtml(prodObj && prodObj.type ? prodObj.type : 'Paint')}</span>
-                    ${isDup ? `<span class="badge already-selected-badge" style="font-size:9.5px; padding:1px 6px;">⚠️ Duplicate Selection</span>` : ''}
-                  </div>
-                  <div class="muted" style="font-size:11px; margin-top:2px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                    <span>${escapeHtml(prodObj ? prodObj.brand : (c.brand || 'No Brand'))} · ${peso(c.price)}/L</span>
-                    ${openedAvail > 0
-        ? `<span style="color:#9A6216; font-weight:600;">🫙 ${productOpenedSizesLabel(prodObj)} opened</span>`
-        : `<span id="cm-stock-badge-${idx}" class="${hasStock ? '' : 'low'}" style="color:${hasStock ? 'var(--teal-dark)' : 'var(--danger)'}; font-weight:600;">🥫 ${formatStock(c.stock)}L sealed</span>`}
-                  </div>
-                </div>
-                <span class="badge" style="background:#EAF4F3; color:var(--teal-dark); border:1px solid #C5DFDC; font-size:10.5px; padding:4px 9px; flex-shrink:0; font-weight:700;">
-                  🎨 Change Paint &rarr;
-                </span>
-              </button>
+            <!-- Read-Only Ingredient Info -->
+            <div style="min-width:0; flex:1;">
+              <div class="row" style="gap:6px; align-items:center; flex-wrap:wrap;">
+                <span class="badge" style="background:${isBase ? 'var(--teal)' : '#7B1FA2'}; color:#fff; font-size:9.5px; padding:1px 6px;">#${idx + 1} ${isBase ? 'Base' : 'Pigment'}</span>
+                <strong style="font-size:13px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(prodObj ? prodObj.name : (c.name || 'Missing Inventory Paint'))}</strong>
+                <span class="badge" style="background:var(--surface-3); color:var(--ink-soft); font-size:10px; padding:1px 6px;">${escapeHtml(prodObj && prodObj.type ? prodObj.type : 'Paint')}</span>
+              </div>
+              <div class="muted" style="font-size:11px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <span>${escapeHtml(prodObj ? prodObj.brand : (c.brand || 'No Brand'))} · ${peso(c.price)}/L</span>
+                ${openedAvail > 0
+        ? `<span style="color:var(--warning-text); font-weight:600;">🫙 ${productOpenedSizesLabel(prodObj)} opened</span>`
+        : `<span id="cm-stock-badge-${idx}" class="${hasStock ? '' : 'low'}" style="color:${hasStock ? 'var(--teal-dark)' : 'var(--danger)'}; font-weight:600;">${hasStock ? `🥫 ${formatStock(availStock)}L avail` : `⚠️ Low: ${formatStock(availStock)}L`}</span>`}
+              </div>
             </div>
 
-            <!-- Percentage Box with Live Input Typing (0 - 100 Limit) -->
-            <div class="cm-pct-input-wrap">
-              <input id="cm-pct-input-${idx}" type="number" min="0" max="100" step="any" value="${c.pct}" oninput="onColorMixPctLive(${idx}, this)" onchange="onColorMixPctChange(${idx}, this)" onkeydown="if(event.key === '-' || event.key === 'e' || event.key === 'E') event.preventDefault();" title="Type percentage number (0 to 100)">
-              <span style="font-weight:700; font-size:12.5px; color:var(--ink-soft);">%</span>
-            </div>
-
-            <!-- Remove Button -->
-            <div>
-              ${s.components.length > 2 ? `
-                <button class="cm-btn-remove-ing" onclick="removeColorMixIngredient(${idx})" title="Remove this ingredient">&times;</button>
-              ` : `<span style="width:28px; display:inline-block;"></span>`}
+            <!-- Read-Only Percentage & Quantity Pill -->
+            <div class="cm-readonly-pct-box" title="Locked recipe ratio (read-only)">
+              <div class="cm-readonly-pct-val">${c.pct}%</div>
+              <div class="cm-readonly-qty-val"><b id="cm-req-liters-${idx}">${formatStock(reqLiters)}L</b> (${reqMl} mL)</div>
             </div>
           </div>
 
-          <!-- Interactive Ratio Slider -->
-          <div class="cm-slider-row" style="margin-top:7px;">
-            <div class="cm-step-btn-group">
-              <button type="button" class="cm-step-btn" onclick="adjustComponentPct(${idx}, -5)" title="Decrease by 5%">-5%</button>
-            </div>
-            <input id="cm-slider-${idx}" type="range" class="cm-slider" min="0" max="100" step="0.5" value="${c.pct}" 
-              style="--thumb-color:${c.hex || '#1F6F6B'}; background:linear-gradient(to right, ${c.hex || '#1F6F6B'} 0%, ${c.hex || '#1F6F6B'} ${fillPct}%, #E6DFD3 ${fillPct}%, #E6DFD3 100%);"
-              oninput="onColorMixSliderLive(${idx}, this.value)" 
-              onchange="onColorMixSliderChange(${idx}, this.value)">
-            <span id="cm-slider-pct-pill-${idx}" class="cm-slider-pct-pill" style="background:${c.hex || '#1F6F6B'}; color:${isLightColor(c.hex || '#1F6F6B') ? '#1C1917' : '#FFFFFF'};">
-              ${c.pct}%
-            </span>
-            <div class="cm-step-btn-group">
-              <button type="button" class="cm-step-btn" onclick="adjustComponentPct(${idx}, 5)" title="Increase by 5%">+5%</button>
-            </div>
-          </div>
-
-          <!-- Compact Volume & Can Size Row -->
-          <div class="row" style="margin-top:6px; font-size:10.5px; color:var(--ink-soft); justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-            <span>Need: <b id="cm-req-liters-${idx}">${formatStock(reqLiters)}L</b> · <span id="cm-mix-source-${idx}" style="color:var(--teal-dark); font-weight:500;">${formatColorMixSourcePreview(mixPlan)}</span></span>
+          <!-- Compact Volume & Container Source Row -->
+          <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); font-size:10.5px; color:var(--ink-soft); justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <span id="cm-mix-source-${idx}" style="color:var(--teal-dark); font-weight:500;">${formatColorMixSourcePreview(mixPlan)}</span>
             <div class="row wrap" style="gap:3px; align-items:center;">
-              <span class="muted" style="font-size:10px;">Size:</span>
+              <span class="muted" style="font-size:10px;">Container:</span>
               <button type="button" class="cm-preset-btn ${prefCan === 0 ? 'active' : ''}" style="font-size:9.5px; padding:1px 5px;" onclick="setColorMixPreferredCanSize(${idx}, 0)" title="Automatically choose the best-fitting available container size">Auto</button>
               ${(prodObj ? productSizes(prodObj) : CAN_SIZES).map(sz => {
           const hasBd = prodObj ? productHasCanBreakdown(prodObj) : false;
@@ -1692,19 +2353,16 @@ function colorMixStudioHtml() {
   }).join('')}
     </div>
 
-    <!-- Quick Balance Tools -->
-    <div class="row wrap" style="gap:6px; margin-top:6px; justify-content:space-between; align-items:center;">
-      <div class="row wrap" style="gap:5px;">
-        <button class="cm-preset-btn" onclick="equalizeColorMixPcts()">⚖️ Equalize</button>
-        <button class="cm-preset-btn" onclick="balanceColorMixTo100()">🎯 Auto-Balance 100%</button>
-      </div>
-      <small class="muted" style="font-weight:600;">${isPctBalanced ? '✓ 100% Total' : `Remaining: ${Math.round((100 - totalPct) * 10) / 10}%`}</small>
+    <!-- Read-Only Formula Footer -->
+    <div class="row wrap" style="gap:6px; margin-top:10px; padding-top:8px; border-top:1px solid var(--line); justify-content:space-between; align-items:center;">
+      <small class="muted">Ingredient ratios are locked to preserve formula accuracy.</small>
+      <small id="cm-total-pct-summary" style="font-weight:700; color:${isPctBalanced ? 'var(--teal-dark)' : 'var(--danger)'};">${isPctBalanced ? '✓ 100% Total Formula' : `Total: ${totalPctRounded}%`}</small>
     </div>
   </div>
 </div>
 
-<!-- RIGHT COLUMN: Visual Glass Beaker, Detection Hero, Can Sizes & Specs -->
-<div>
+<!-- RIGHT COLUMN (45%): C. Color Preview + D. Finalize Mixed Color -->
+<div class="cm-col-right">
   <div class="cm-result-card">
     
     <!-- Interactive Glass Mixing Beaker / Canister Widget -->
@@ -1723,14 +2381,14 @@ function colorMixStudioHtml() {
       <div class="cm-beaker-summary">
         <div style="font-weight:700; color:var(--ink); font-size:12.5px; display:flex; align-items:center; justify-content:space-between;">
           <span>🧪 Liquid Pigment Blend</span>
-          <code id="cm-beaker-hex" style="font-weight:700; color:var(--teal); font-size:11px;">${mixed.hex}</code>
+          <code id="cm-beaker-hex" style="font-weight:700; color:var(--teal-text); font-size:11px;">${mixed.hex}</code>
         </div>
         <div class="muted">
           Volume: <b id="cm-beaker-volume">${s.totalLiters} Liter${s.totalLiters === 1 ? '' : 's'}</b> · Total Components: <b>${s.components.length}</b>
         </div>
         <div id="cm-beaker-chips" class="row wrap" style="gap:4px; margin-top:2px;">
           ${s.components.map((c, idx) => `
-            <span id="cm-beaker-pct-${idx}" class="badge" style="font-size:10px; padding:1px 5px; background:#fff; border:1px solid var(--line);">
+            <span id="cm-beaker-pct-${idx}" class="badge" style="font-size:10px; padding:1px 5px; background:var(--surface); border:1px solid var(--line);">
               <span class="cm-color-dot" style="background:${c.hex}; width:8px; height:8px; margin-right:3px;"></span>
               ${c.pct}%
             </span>
@@ -1745,25 +2403,29 @@ function colorMixStudioHtml() {
       <div class="cm-mixing-badge">
         <span style="display:inline-block; animation:spin 1s linear infinite;">🌀</span> Live Blending
       </div>
-      <div class="cm-detected-pill" id="cm-detected-pill">
-        <span>✨ Detected:</span>
-        <span id="cm-detected-pill-name">${escapeHtml(detected.name)}</span>
-      </div>
     </div>
 
     <!-- Detection & Specs Card -->
     <div class="cm-detected-box">
       <div class="cm-detected-header">
         <span>Color Identification &amp; Tone</span>
-        <button class="btn ghost small" onclick="copyHexToClipboard(colorMixStudioState.cachedHex || '${mixed.hex}')" style="font-size:10.5px; padding:1px 5px; color:var(--teal);" title="Copy Hex Code">📋 Copy Hex</button>
+        <span style="display:inline-flex; align-items:center; gap:6px;">
+          <code id="cm-detected-hex" style="font-size:11px; font-weight:700; color:var(--teal-dark); background:var(--teal-tint); padding:1px 6px; border-radius:5px;">${mixed.hex}</code>
+          <span id="cm-detected-rgb" class="muted" style="font-size:10.5px;">rgb(${mixed.r}, ${mixed.g}, ${mixed.b})</span>
+          <button class="btn ghost small" onclick="copyHexToClipboard(colorMixStudioState.cachedHex || '${mixed.hex}')" style="font-size:10.5px; padding:1px 5px; color:var(--teal-text);" title="Copy Hex Code">📋 Copy Hex</button>
+        </span>
       </div>
       <div class="cm-detected-title">
         <span id="cm-detected-dot" class="cm-color-dot" style="background:${mixed.hex}; width:16px; height:16px;"></span>
         <span id="cm-detected-title-text" style="flex:1;">${escapeHtml(detected.name)}</span>
-        <button class="cm-preset-btn" onclick="applyDetectedColorName()" style="font-size:11px; padding:2px 7px;" title="Use detected name for this formula">🪄 Use Color Name</button>
       </div>
-      <div id="cm-tone-info" class="muted small" style="margin-top:3px; font-size:11px;">
-        Tone Family: <b>${detected.family} Tone</b> · CMYK Pigment Model
+      <div id="cm-tone-info" class="muted small" style="margin-top:4px; font-size:11px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+        <span>Tone: <b>${detected.family}</b> · <span id="cm-approx-badge" style="color:var(--teal-dark); font-weight:600;">${mixed.isDigitalApproximation ? 'Digital Approx. (Kubelka-Munk)' : 'Physical Pigment Data'}</span></span>
+        ${typeof detected.similarityPct === 'number' ? `<span id="cm-match-confidence" class="badge ${detected.confidence === 'exact' || detected.confidence === 'high' ? 'ok' : (detected.confidence === 'medium' ? 'mid' : 'low')}" style="font-size:10px; padding:1px 6px;" title="Perceptual CIELAB ΔE = ${detected.deltaE}">${escapeHtml(detected.matchLabel)} (${detected.similarityPct}%)</span>` : ''}
+      </div>
+      <div class="cl-approx-note" style="margin-top:8px; padding:7px 10px; font-size:11px;">
+        <span style="flex-shrink:0;">ℹ️</span>
+        <span><strong>Reference Note:</strong> Screen preview and pigment ratios are digital approximations only. Actual physical paint color may vary by brand, base type, and tinting strength.</span>
       </div>
     </div>
 
@@ -1804,19 +2466,19 @@ function colorMixStudioHtml() {
       <div class="field">
         <label for="cm-price" style="font-size:12px; font-weight:700;">Price per Liter (₱)</label>
         <input id="cm-price" type="number" min="0" step="any" value="${s.pricePerLiter}" oninput="onColorMixPriceLive(this.value)" onchange="onColorMixPriceChange(this.value)" required>
-        <small id="cm-price-helper" class="muted" style="display:block; margin-top:2px; font-size:10.5px;">${s.userCustomizedPrice ? `Custom price applied · <a href="javascript:void(0)" onclick="resetColorMixPriceToAuto()" style="color:var(--teal); font-weight:600; text-decoration:underline;">Reset to auto</a>` : 'Auto-calculated base materials + ₱50 service fee'}</small>
+        <small id="cm-price-helper" class="muted" style="display:block; margin-top:2px; font-size:10.5px;">${s.userCustomizedPrice ? `Custom price applied · <a href="javascript:void(0)" onclick="resetColorMixPriceToAuto()" style="color:var(--teal-text); font-weight:600; text-decoration:underline;">Reset to auto</a>` : 'Auto-calculated base materials + ₱50 service fee'}</small>
       </div>
 
       <div class="field">
         <label for="cm-base-type" style="font-size:12px; font-weight:700;">Base Paint Type</label>
         <select id="cm-base-type" onchange="colorMixStudioState.baseType=this.value;">
           ${(() => {
-            const invTypes = getInventoryBasePaintTypes();
-            if (invTypes.length > 0 && !invTypes.includes(s.baseType)) {
-              s.baseType = invTypes[0];
-            }
-            return invTypes.map(bt => `<option value="${escapeHtml(bt)}" ${s.baseType === bt ? 'selected' : ''}>${escapeHtml(bt)}</option>`).join('');
-          })()}
+      const invTypes = getInventoryBasePaintTypes();
+      if (invTypes.length > 0 && !invTypes.includes(s.baseType)) {
+        s.baseType = invTypes[0];
+      }
+      return invTypes.map(bt => `<option value="${escapeHtml(bt)}" ${s.baseType === bt ? 'selected' : ''}>${escapeHtml(bt)}</option>`).join('');
+    })()}
         </select>
       </div>
 
@@ -1824,18 +2486,18 @@ function colorMixStudioHtml() {
         <label style="font-size:12px; font-weight:700;">Desired Finish / Sheen Tag:</label>
         <div class="row wrap" id="cm-sheen-btn-group" role="radiogroup" aria-label="Desired Finish / Sheen Tag" style="gap:4px; margin-bottom:4px;">
           ${(() => {
-            const activeSheen = getActiveColorMixSheen(s);
-            const sheenButtons = [
-              { key: 'High Gloss', label: '✨ High Gloss' },
-              { key: 'Semi-Gloss', label: '🌟 Semi-Gloss' },
-              { key: 'Satin', label: '🎨 Satin' },
-              { key: 'Matte', label: '🛡️ Matte' },
-              { key: 'Metallic', label: '💎 Metallic' }
-            ];
-            return sheenButtons.map(b => `
+      const activeSheen = getActiveColorMixSheen(s);
+      const sheenButtons = [
+        { key: 'High Gloss', label: '✨ High Gloss' },
+        { key: 'Semi-Gloss', label: '🌟 Semi-Gloss' },
+        { key: 'Satin', label: '🎨 Satin' },
+        { key: 'Matte', label: '🛡️ Matte' },
+        { key: 'Metallic', label: '💎 Metallic' }
+      ];
+      return sheenButtons.map(b => `
               <button class="cm-preset-btn cm-sheen-btn ${activeSheen === b.key ? 'active' : ''}" data-sheen="${b.key}" aria-pressed="${activeSheen === b.key ? 'true' : 'false'}" type="button" onclick="applyFinishPreset('${b.key}')">${b.label}</button>
             `).join('');
-          })()}
+    })()}
         </div>
         <input id="cm-note" type="text" value="${escapeHtml(s.note)}" oninput="onColorMixNoteInput(this.value)" placeholder="e.g. Matched to customer bumper, High Gloss finish">
       </div>
@@ -1848,14 +2510,14 @@ function colorMixStudioHtml() {
   </div>
 </div>
   </div>
-  ${renderColorMixOffcanvasDrawerHtml(colorMixModalProducts())}`;
+  ${s.openPickerIdx !== -1 ? renderColorMixOffcanvasDrawerHtml(colorMixModalProducts()) : ''}`;
 }
 
 // -----------------------------------------------------------------------------------
 // HIGH-PERFORMANCE REALTIME COLOR MIX SYNCHRONIZER
 // Updates swatches, sliders, inputs, beakers, meter and badges WITHOUT DOM teardown!
 // -----------------------------------------------------------------------------------
-function syncColorMixVisuals(activeIdx = -1) {
+function syncColorMixVisuals(activeIdx = -1, skipPresetRefresh = false) {
   updateColorMixCalculation(false);
   const s = colorMixStudioState;
   const mixed = subtractivePaintMix(s.components);
@@ -1893,8 +2555,32 @@ function syncColorMixVisuals(activeIdx = -1) {
   if (dot) dot.style.background = mixed.hex;
   const beakerHex = document.getElementById('cm-beaker-hex');
   if (beakerHex) beakerHex.textContent = mixed.hex;
+  const detectedHex = document.getElementById('cm-detected-hex');
+  if (detectedHex) detectedHex.textContent = mixed.hex;
+  const detectedRgb = document.getElementById('cm-detected-rgb');
+  if (detectedRgb) detectedRgb.textContent = `rgb(${mixed.r}, ${mixed.g}, ${mixed.b})`;
   const toneInfo = document.getElementById('cm-tone-info');
-  if (toneInfo) toneInfo.innerHTML = `Tone Family: <b>${detected.family} Tone</b> · CMYK Pigment Model`;
+  if (toneInfo) {
+    const confBadge = typeof detected.similarityPct === 'number'
+      ? `<span id="cm-match-confidence" class="badge ${detected.confidence === 'exact' || detected.confidence === 'high' ? 'ok' : (detected.confidence === 'medium' ? 'mid' : 'low')}" style="font-size:10px; padding:1px 6px;" title="Perceptual CIELAB ΔE = ${detected.deltaE}">${escapeHtml(detected.matchLabel)} (${detected.similarityPct}%)</span>`
+      : '';
+    toneInfo.innerHTML = `<span>Tone: <b>${detected.family}</b> · <span id="cm-approx-badge" style="color:var(--teal-dark); font-weight:600;">${mixed.isDigitalApproximation ? 'Digital Approx. (Kubelka-Munk)' : 'Physical Pigment Data'}</span></span>${confBadge}`;
+  }
+  const mixVarsEl = document.getElementById('cm-mix-variations');
+  if (mixVarsEl) {
+    const vars = computeColorMixVariations(mixed.hex);
+    mixVarsEl.innerHTML = `
+      <span class="muted" style="font-weight:600;">Variations:</span>
+      <span style="display:inline-flex; align-items:center; gap:4px; background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:2px 7px;" title="Lighter (+20% White Tint)">
+        <span style="width:11px; height:11px; border-radius:3px; background:${vars.lighter.hex}; border:1px solid rgba(0,0,0,0.18);"></span>
+        <span>Lighter <code>${vars.lighter.hex}</code></span>
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:4px; background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:2px 7px;" title="Darker (+15% Black Shade)">
+        <span style="width:11px; height:11px; border-radius:3px; background:${vars.darker.hex}; border:1px solid rgba(0,0,0,0.18);"></span>
+        <span>Darker <code>${vars.darker.hex}</code></span>
+      </span>
+    `;
+  }
 
   // 3. Formula name input (if not customized by user)
   if (!s.userCustomizedName) {
@@ -1911,7 +2597,7 @@ function syncColorMixVisuals(activeIdx = -1) {
   const priceHelper = document.getElementById('cm-price-helper');
   if (priceHelper) {
     priceHelper.innerHTML = s.userCustomizedPrice
-      ? `Custom price applied · <a href="javascript:void(0)" onclick="resetColorMixPriceToAuto()" style="color:var(--teal); font-weight:600; text-decoration:underline;">Reset to auto</a>`
+      ? `Custom price applied · <a href="javascript:void(0)" onclick="resetColorMixPriceToAuto()" style="color:var(--teal-text); font-weight:600; text-decoration:underline;">Reset to auto</a>`
       : 'Auto-calculated base materials + ₱50 service fee';
   }
 
@@ -1938,7 +2624,7 @@ function syncColorMixVisuals(activeIdx = -1) {
   }
   const autoSlot = document.getElementById('cm-autobalance-slot');
   if (autoSlot) {
-    autoSlot.innerHTML = !isPctBalanced ? `<button class="btn ghost small" onclick="balanceColorMixTo100()" style="font-size:11px; padding:3px 8px; font-weight:700; color:var(--teal);">🎯 Auto-Balance</button>` : '';
+    autoSlot.innerHTML = !isPctBalanced ? `<button class="btn ghost small" onclick="balanceColorMixTo100()" style="font-size:11px; padding:3px 8px; font-weight:700; color:var(--teal-text);">🎯 Auto-Balance</button>` : '';
   }
   const meterText = document.getElementById('cm-meter-text');
   if (meterText) {
@@ -1967,7 +2653,7 @@ function syncColorMixVisuals(activeIdx = -1) {
         slider.value = pct;
       }
       slider.style.setProperty('--thumb-color', c.hex || '#1F6F6B');
-      slider.style.background = `linear-gradient(to right, ${c.hex || '#1F6F6B'} 0%, ${c.hex || '#1F6F6B'} ${fillPct}%, #E6DFD3 ${fillPct}%, #E6DFD3 100%)`;
+      slider.style.background = `linear-gradient(to right, ${c.hex || '#1F6F6B'} 0%, ${c.hex || '#1F6F6B'} ${fillPct}%, var(--line) ${fillPct}%, var(--line) 100%)`;
     }
 
     // Number input (only update if NOT currently focused, preserving user typing cursor and input state!)
@@ -2029,12 +2715,14 @@ function syncColorMixVisuals(activeIdx = -1) {
   });
 
   // 8. Refresh preset chips dehighlight status when volume or filter changes
-  if (typeof refreshColorMixPresetAvailabilityUI === 'function') {
-    refreshColorMixPresetAvailabilityUI();
-  } else {
-    const presetWrap = document.getElementById('cm-preset-chips-wrap');
-    if (presetWrap && typeof renderColorMixPresetChipsHtml === 'function') {
-      presetWrap.innerHTML = renderColorMixPresetChipsHtml();
+  if (!skipPresetRefresh) {
+    if (typeof refreshColorMixPresetAvailabilityUI === 'function') {
+      refreshColorMixPresetAvailabilityUI();
+    } else {
+      const presetWrap = document.getElementById('cm-preset-chips-wrap');
+      if (presetWrap && typeof renderColorMixPresetChipsHtml === 'function') {
+        presetWrap.innerHTML = renderColorMixPresetChipsHtml();
+      }
     }
   }
 }
@@ -2050,14 +2738,6 @@ function onColorMixSliderLive(idx, val) {
     input.value = val;
   }
   syncColorMixVisuals(idx);
-}
-
-function onColorMixSliderChange(idx, val) {
-  onColorMixSliderLive(idx, val);
-}
-
-function onColorMixSliderInput(idx, val) {
-  onColorMixSliderLive(idx, val);
 }
 
 // Number input typing live handler (enforcing strict 0-100 limit in real-time)
@@ -2087,25 +2767,6 @@ function onColorMixPctLive(idx, inputOrVal) {
 }
 
 // Number input blur/commit handler
-function onColorMixPctChange(idx, inputOrVal) {
-  const input = (typeof inputOrVal === 'object' && inputOrVal !== null && 'value' in inputOrVal)
-    ? inputOrVal
-    : document.getElementById(`cm-pct-input-${idx}`);
-  const rawVal = input ? input.value : inputOrVal;
-
-  let val = Math.max(0, Math.min(100, Number(rawVal) || 0));
-  val = Math.round(val * 100) / 100;
-  if (colorMixStudioState.components[idx]) {
-    colorMixStudioState.components[idx].pct = val;
-  }
-  if (input) input.value = val;
-  syncColorMixVisuals(idx);
-}
-
-function onColorMixPctInput(idx, val) {
-  onColorMixPctLive(idx, val);
-}
-
 function setColorMixPreferredCanSize(idx, size) {
   if (!colorMixStudioState.components[idx]) return;
   colorMixStudioState.components[idx].preferredCanSize = Number(size) || 0;
@@ -2185,7 +2846,7 @@ function renderSmartAvatarSearchDropdownHtml(idx, prods, selectedProductId, sear
             <span class="badge already-selected-badge" style="font-size:9.5px; padding:1px 6px;">🚫 Already Selected${slotNum ? ` (#${slotNum})` : ''}</span>
           ` : `
             ${openLiters > 0
-        ? `<span class="badge" style="background:#FDF4E3; color:#9A6216; border:1px solid #F0D9B5; font-size:9.5px; padding:1px 6px;">🫙 ${productOpenedSizesLabel(p, false)}</span>`
+        ? `<span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-size:9.5px; padding:1px 6px;">🫙 ${productOpenedSizesLabel(p, false)}</span>`
         : `<span class="badge ok" style="font-size:9.5px; padding:1px 6px;">🥫 ${formatStock(p.stock)}L</span>`}
             ${isSel ? `<span class="badge ok" style="font-size:9.5px; padding:1px 5px;">✓</span>` : ''}
           `}
@@ -2193,28 +2854,6 @@ function renderSmartAvatarSearchDropdownHtml(idx, prods, selectedProductId, sear
       </button>
     `;
   }).join('');
-}
-
-function onColorMixInlineAvatarSearch(idx, val) {
-  colorMixStudioState.inlineSearchIdx = idx;
-  colorMixStudioState.inlineSearchQuery = val || '';
-  const prods = colorMixAvailableProducts();
-  const comp = colorMixStudioState.components[idx];
-  const dd = document.getElementById(`cm-avatar-dropdown-${idx}`);
-  if (dd) {
-    dd.style.display = 'block';
-    const slotMap = getColorMixSelectedProductSlotMap();
-    dd.innerHTML = renderSmartAvatarSearchDropdownHtml(idx, prods, comp ? comp.productId : '', colorMixStudioState.inlineSearchQuery, slotMap);
-  }
-}
-
-function closeColorMixInlineSearch(idx) {
-  if (colorMixStudioState.inlineSearchIdx === idx) {
-    colorMixStudioState.inlineSearchIdx = -1;
-    colorMixStudioState.inlineSearchQuery = '';
-  }
-  const dd = document.getElementById(`cm-avatar-dropdown-${idx}`);
-  if (dd) dd.style.display = 'none';
 }
 
 function matchesColorMixSearch(p, q) {
@@ -2241,9 +2880,10 @@ function matchesColorMixSearch(p, q) {
 function getProductCategoryKey(p) {
   const raw = (p.category || p.type || '').trim();
   if (!raw || raw === '-') return 'Specialty Paint';
-  if (/house/i.test(raw)) return 'House Paint';
-  if (/auto/i.test(raw)) return 'Automotive Paint';
-  if (/special/i.test(raw)) return 'Specialty Paint';
+  const low = raw.toLowerCase();
+  if (low === 'house paint') return 'House Paint';
+  if (low === 'automotive paint') return 'Automotive Paint';
+  if (low === 'specialty paint') return 'Specialty Paint';
   return raw;
 }
 
@@ -2275,21 +2915,21 @@ function renderColorMixOpenedContainersSectionHtml(idx, matchingProds, selectedP
     <div class="cm-opened-section ${isExpanded ? 'open' : 'collapsed'}">
       <button type="button" class="cm-opened-section-header" onclick="toggleColorMixOpenedSection()" title="${isExpanded ? 'Click to collapse opened containers' : 'Click to expand opened containers'}">
         <div>
-          <div style="font-size:14px; font-weight:700; color:#92400E; display:flex; align-items:center; gap:6px;">
+          <div style="font-size:14px; font-weight:700; color:var(--warning-text); display:flex; align-items:center; gap:6px;">
             <span>🫙</span> Opened / Used Containers
-            <span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #FDE68A; font-size:10px; padding:1px 6px;">
+            <span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-size:10px; padding:1px 6px;">
               ${openedList.length} container${openedList.length === 1 ? '' : 's'}
             </span>
           </div>
-          <div style="font-size:11.5px; color:#A16207; margin-top:2px;">
+          <div style="font-size:11.5px; color:var(--warning-text); margin-top:2px;">
             Previously opened containers with remaining paint.
           </div>
         </div>
         <div class="row" style="gap:8px; align-items:center;">
-          <span class="badge" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-size:10.5px; font-weight:700; padding:3px 9px;">
+          <span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-size:10.5px; font-weight:700; padding:3px 9px;">
             ⭐ Priority: Use Opened Containers First
           </span>
-          <span style="font-size:13px; color:#B45309; font-weight:700;">${isExpanded ? '▴' : '▾'}</span>
+          <span style="font-size:13px; color:var(--warning-text); font-weight:700;">${isExpanded ? '▴' : '▾'}</span>
         </div>
       </button>
 
@@ -2421,7 +3061,7 @@ function renderColorMixCardHtml(idx, p, selectedProductId, alreadySelectedSlotMa
   return `
     <button type="button" class="cm-color-card ${isSel ? 'selected' : ''} ${isAlreadySelected ? 'already-selected disabled' : ''} ${isOutOfStock ? 'out-of-stock' : ''}" ${disabledAttr} ${clickAttr} title="${titleText}">
       <div class="cm-color-card-swatch-bar" style="background-color:${hex};">
-        <code style="font-size:9.5px; font-weight:700; padding:1px 5px; border-radius:4px; background:${light ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.28)'}; color:${light ? '#1C1917' : '#FFFFFF'};">${hex}</code>
+        <code style="font-size:9.5px; font-weight:700; padding:1px 5px; border-radius:4px; background:${light ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.28)'}; color:${light ? 'var(--ink)' : '#FFFFFF'};">${hex}</code>
         ${isSel ? `<span class="badge ok" style="font-size:10px; padding:1px 6px; box-shadow:0 1px 4px rgba(0,0,0,0.15); font-weight:700;">✓ Selected</span>` : ''}
         ${isAlreadySelected ? `<span class="badge already-selected-badge" style="font-size:10px; padding:1px 6px; box-shadow:0 1px 4px rgba(0,0,0,0.1);">🚫 Already Selected${slotNum ? ` (#${slotNum})` : ''}</span>` : ''}
       </div>
@@ -2526,7 +3166,7 @@ function renderCategorizedAccordionMenusHtml(idx, prods, selectedProductId, sear
             <span style="font-size:13.5px; font-weight:700; color:var(--ink);">${escapeHtml(g.title)}</span>
           </div>
           <div class="row" style="gap:8px; align-items:center;">
-            <span class="badge" style="background:#EFECE6; color:var(--ink); font-size:11px; padding:2px 8px; font-weight:600;">
+            <span class="badge" style="background:var(--surface-3); color:var(--ink); font-size:11px; padding:2px 8px; font-weight:600;">
               ${g.items.length} product${g.items.length === 1 ? '' : 's'} available
             </span>
             <span style="font-size:12px; color:var(--teal-dark); font-weight:700;">${isExpanded ? '▴' : '▾'}</span>
@@ -2580,7 +3220,7 @@ function renderColorMixOffcanvasDrawerHtml(prods) {
                 ${isAddMode ? '🎨 Add New Pigment to Formula' : `🎨 Select Paint for Ingredient #${Number(idx) + 1}`}
               </div>
               <div class="muted" style="font-size:12px; margin-top:2px;">
-                ${comp && comp.name ? `Currently selected: <strong style="color:var(--ink);">${escapeHtml(comp.name)}</strong> · ${escapeHtml(comp.brand || '')} · <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:${comp.hex || '#fff'}; vertical-align:middle; border:1px solid #ccc;"></span> ${escapeHtml(comp.hex || '')}` : 'Choose an opened container or unopened paint product'}
+                ${comp && comp.name ? `Currently selected: <strong style="color:var(--ink);">${escapeHtml(comp.name)}</strong> · ${escapeHtml(comp.brand || '')} · <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:${comp.hex || '#fff'}; vertical-align:middle; border:1px solid var(--line);"></span> ${escapeHtml(comp.hex || '')}` : 'Choose an opened container or unopened paint product'}
               </div>
             </div>
             <button type="button" class="btn secondary small" onclick="closeColorMixPigmentDrawer()">✕ Close</button>
@@ -2606,7 +3246,7 @@ function renderColorMixOffcanvasDrawerHtml(prods) {
           ${q.trim() ? `
             <div class="cm-search-status-bar">
               <span>🔍 Showing results for "<strong>${escapeHtml(q)}</strong>"</span>
-              <button type="button" class="btn text small" style="color:#1E40AF; font-weight:700; padding:1px 6px;" onclick="clearColorMixDrawerSearch()">✕ Clear</button>
+              <button type="button" class="btn text small" style="color:var(--info-text); font-weight:700; padding:1px 6px;" onclick="clearColorMixDrawerSearch()">✕ Clear</button>
             </div>
           ` : ''}
           ${renderCategorizedAccordionMenusHtml(idx, modalProds, selectedProductId, q, selectedPrefCan)}
@@ -2614,15 +3254,6 @@ function renderColorMixOffcanvasDrawerHtml(prods) {
       </div>
     </div>
   `;
-}
-
-function openColorMixPigmentDrawer(idx) {
-  colorMixStudioState.openPickerIdx = idx;
-  colorMixStudioState.pickerSearch = '';
-  colorMixStudioState.inlineSearchIdx = -1;
-  renderColorMixStudio();
-  const input = document.getElementById('cm-drawer-search-input');
-  if (input) input.focus();
 }
 
 function closeColorMixPigmentDrawer() {
@@ -2655,7 +3286,7 @@ function onColorMixDrawerSearch(val) {
       ${q.trim() ? `
         <div class="cm-search-status-bar">
           <span>🔍 Showing results for "<strong>${escapeHtml(q)}</strong>"</span>
-          <button type="button" class="btn text small" style="color:#1E40AF; font-weight:700; padding:1px 6px;" onclick="clearColorMixDrawerSearch()">✕ Clear</button>
+          <button type="button" class="btn text small" style="color:var(--info-text); font-weight:700; padding:1px 6px;" onclick="clearColorMixDrawerSearch()">✕ Clear</button>
         </div>
       ` : ''}
       ${renderCategorizedAccordionMenusHtml(idx, prods, selectedProductId, q, selectedPrefCan)}
@@ -2689,14 +3320,6 @@ function toggleColorMixOpenedSection() {
   }
 }
 
-function setColorMixTypeFilter(typeFilter) {
-  colorMixStudioState.typeFilter = typeFilter || 'all';
-  if (typeFilter && typeFilter !== 'all') {
-    colorMixStudioState.baseType = typeFilter;
-  }
-  renderColorMixStudio();
-}
-
 function onColorMixProductSelect(idx, productId, preferredCanSize = 0) {
   const p = productById(productId);
   if (!p) return;
@@ -2726,6 +3349,7 @@ function onColorMixProductSelect(idx, productId, preferredCanSize = 0) {
     colorMixStudioState.components.push({
       id: uid('cmc'),
       productId: p.id,
+      colorId: p.colorId || p.color_id || null,
       name: p.name,
       brand: p.brand || '',
       colorName: getProductColorName(p),
@@ -2740,6 +3364,7 @@ function onColorMixProductSelect(idx, productId, preferredCanSize = 0) {
     const comp = colorMixStudioState.components[idx];
     if (comp) {
       comp.productId = p.id;
+      comp.colorId = p.colorId || p.color_id || null;
       comp.name = p.name;
       comp.brand = p.brand || '';
       comp.colorName = getProductColorName(p);
@@ -2760,21 +3385,6 @@ function onColorMixProductSelect(idx, productId, preferredCanSize = 0) {
   colorMixStudioState.inlineSearchQuery = '';
   updateColorMixCalculation();
   renderColorMixStudio();
-}
-
-function onColorMixColorInput(idx, hex) {
-  if (colorMixStudioState.components[idx]) {
-    colorMixStudioState.components[idx].hex = hex;
-  }
-  updateColorMixCalculation();
-  renderColorMixStudio();
-}
-
-function onColorMixColorLive(idx, hex) {
-  if (colorMixStudioState.components[idx]) {
-    colorMixStudioState.components[idx].hex = hex;
-  }
-  syncColorMixVisuals(idx);
 }
 
 function onColorMixTotalLitersChange(val, clampInput = true) {
@@ -2801,101 +3411,10 @@ function onColorMixTotalLitersChange(val, clampInput = true) {
   syncColorMixVisuals();
 }
 
-function addColorMixIngredient() {
-  const prods = colorMixAvailableProducts();
-  if (!prods.length) {
-    showToast('No paint products above stock threshold available in inventory.', 'error');
-    return;
-  }
-  const currentTotal = colorMixStudioState.components.reduce((s, c) => s + (Number(c.pct) || 0), 0);
-  const remainingPct = Math.max(10, Math.round((100 - currentTotal) * 10) / 10);
-
-  // Pick next unused product
-  const usedIds = new Set(colorMixStudioState.components.map(c => String(c.productId)));
-  const candidate = prods.find(p => !usedIds.has(String(p.id)));
-
-  if (!candidate) {
-    showToast('All available paint products are already selected across ingredient slots.', 'info');
-    return;
-  }
-
-  colorMixStudioState.components.push({
-    id: uid('cmc'),
-    productId: candidate.id,
-    name: candidate.name,
-    brand: candidate.brand || '',
-    colorName: getProductColorName(candidate),
-    color: getProductColorName(candidate),
-    stock: candidate.stock,
-    price: candidate.price,
-    hex: getProductDefaultColor(candidate),
-    pct: remainingPct,
-    preferredCanSize: 0
-  });
-
-  updateColorMixCalculation();
-  renderColorMixStudio();
-}
-
-function removeColorMixIngredient(idx) {
-  if (colorMixStudioState.components.length <= 2) {
-    showToast('At least 2 formula ingredients are required for paint color mixing.', 'error');
-    return;
-  }
-  colorMixStudioState.components.splice(idx, 1);
-  balanceColorMixTo100();
-  renderColorMixStudio();
-}
-
-function equalizeColorMixPcts() {
-  const len = colorMixStudioState.components.length;
-  if (len === 0) return;
-  const basePct = Math.floor(100 / len);
-  const remainder = 100 - (basePct * len);
-
-  colorMixStudioState.components.forEach((c, i) => {
-    c.pct = basePct + (i === len - 1 ? remainder : 0);
-  });
-
-  syncColorMixVisuals();
-}
-
 function balanceColorMixTo100() {
-  const comps = colorMixStudioState.components;
-  const len = comps.length;
-  if (len === 0) return;
-  let sumOthers = 0;
-  for (let i = 0; i < len - 1; i++) {
-    sumOthers += Number(comps[i].pct) || 0;
-  }
-  if (sumOthers <= 100) {
-    comps[len - 1].pct = Math.max(0, Math.round((100 - sumOthers) * 10) / 10);
-  } else {
-    // Prior components exceed 100%: scale all components proportionally to sum to 100%
-    const totalAll = comps.reduce((s, c) => s + (Number(c.pct) || 0), 0);
-    if (totalAll > 0) {
-      let running = 0;
-      for (let i = 0; i < len - 1; i++) {
-        const scaled = Math.round(((Number(comps[i].pct) || 0) / totalAll) * 1000) / 10;
-        comps[i].pct = scaled;
-        running += scaled;
-      }
-      comps[len - 1].pct = Math.max(0, Math.round((100 - running) * 10) / 10);
-    }
-  }
-  syncColorMixVisuals(len - 1);
+  showToast('Ingredient percentages are locked for Mixed Color Catalog recipes.', 'info');
 }
 
-
-function applyDetectedColorName() {
-  const mixed = subtractivePaintMix(colorMixStudioState.components);
-  const detected = detectMixedColorName(mixed.r, mixed.g, mixed.b);
-  colorMixStudioState.colorName = detected.name;
-  colorMixStudioState.userCustomizedName = false;
-  const input = document.getElementById('cm-color-name');
-  if (input) input.value = detected.name;
-  showToast(`Applied detected color name: "${detected.name}"`, 'ok');
-}
 
 async function submitColorMix() {
   const s = colorMixStudioState;
@@ -2971,7 +3490,7 @@ async function submitColorMix() {
       return false;
     }
     const totalReq = reqLitersByProd[pid];
-    const rawMixAvail = productMixAvailableStock(p);
+    const rawMixAvail = productMixNonExpiredAvailableStock(p);
     const reservedInCart = (isPos && typeof getCartReservedLitersForProduct === 'function')
       ? getCartReservedLitersForProduct(p).total
       : 0;
@@ -3014,13 +3533,17 @@ async function submitColorMix() {
     };
   });
 
-  saveMixedColorToPresets({
-    colorName: colorName,
-    detectedName: detected.name,
-    hex: mixed.hex,
-    baseType: baseType,
-    components: componentsData
-  });
+  const isExistingBuiltinPreset = Array.isArray(DEFAULT_COLOR_RECIPE_PRESETS) &&
+    DEFAULT_COLOR_RECIPE_PRESETS.some(pr => String(pr.name || '').trim().toLowerCase() === String(colorName || '').trim().toLowerCase());
+  if (!isExistingBuiltinPreset) {
+    saveMixedColorToPresets({
+      colorName: colorName,
+      detectedName: detected.name,
+      hex: mixed.hex,
+      baseType: baseType,
+      components: componentsData
+    });
+  }
 
   const formulaSummary = componentsData.map(cp => `${cp.percentage}% ${cp.name} (${cp.liters}L)`).join(' + ');
   if (isPos) {
@@ -3141,3 +3664,7 @@ async function submitColorMix() {
     return true;
   }
 }
+
+/* ============================================================
+   COLOR LIBRARY INTEGRATION FOR PAINT MIXING STUDIO
+   ============================================================ */

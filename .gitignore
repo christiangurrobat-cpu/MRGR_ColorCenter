@@ -3,6 +3,8 @@ logs/*.log
 
 # Runtime Migration Flags
 api/.schema_migrated
+api/.batch_schema_v1
+api/.color_library_v4
 
 # Operating System Files
 Thumbs.db

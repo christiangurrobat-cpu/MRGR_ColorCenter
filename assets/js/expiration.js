@@ -9,12 +9,31 @@
    (receiving -> new batch, POS/other deductions -> FIFO, returns -> restore).
    ============================================================ */
 
+const EXP_SUMMARY_CACHE_KEY = 'mrgr_exp_summary_v1';
+
+function expReadCachedSummary() {
+  try {
+    const raw = sessionStorage.getItem(EXP_SUMMARY_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function expWriteCachedSummary(summary) {
+  try {
+    if (summary) sessionStorage.setItem(EXP_SUMMARY_CACHE_KEY, JSON.stringify(summary));
+  } catch (e) { /* ignore storage quota/privacy errors */ }
+}
+
 const EXP = {
   loaded: false,
   loading: false,
   error: '',
   data: null,          // last /list payload
-  summary: null,       // lightweight summary for nav badge / dashboards
+  summary: expReadCachedSummary(), // lightweight summary for nav badge / dashboards
   summaryTs: 0,
   detail: null,        // last /detail payload shown in modal
   detailTab: 'movements'
@@ -140,6 +159,31 @@ function expBadgeCount() {
   return (s.expired || 0) + (s.critical || 0);
 }
 
+function expSyncDashboardCards() {
+  const s = EXP.summary;
+  if (!s) return;
+  const urgent = (s.expired || 0) + (s.critical || 0);
+
+  const card = document.getElementById('exp-dash-stat-card');
+  if (card) {
+    card.classList.toggle('danger', urgent > 0);
+    const valEl = card.querySelector('.value');
+    if (valEl) valEl.textContent = `${urgent} Urgent`;
+    const subEl = card.querySelector('.sub');
+    if (subEl) subEl.innerHTML = `<b>${s.expired || 0}</b> expired · <b>${s.critical || 0}</b> critical · <b>${s.soon || 0}</b> soon`;
+  }
+
+  const adminQuickBtn = document.getElementById('exp-dash-quick-btn');
+  if (adminQuickBtn) {
+    adminQuickBtn.innerHTML = `🗓️ Expiration Tracking ${urgent > 0 ? `<span class="nav-badge" style="background:var(--danger);">${urgent}</span>` : ''}`;
+  }
+
+  const staffQuickBtn = document.getElementById('exp-staff-quick-btn');
+  if (staffQuickBtn && typeof getModuleBadgeHtml === 'function') {
+    staffQuickBtn.innerHTML = `<span>🗓️</span> Expiration Tracking ${getModuleBadgeHtml('expiration')}`;
+  }
+}
+
 function expRefreshSummary(force) {
   if (!currentUser || !['admin', 'staff'].includes(currentUser.role)) return;
   const now = Date.now();
@@ -147,8 +191,10 @@ function expRefreshSummary(force) {
   EXP.summaryTs = now;
   expApi('summary').then(json => {
     EXP.summary = Object.assign({}, json.summary, { attention: json.attention || [], thresholds: json.thresholds });
+    expWriteCachedSummary(EXP.summary);
     const w = document.getElementById('exp-dash-widget');
     if (w) w.innerHTML = expDashboardWidgetInner();
+    expSyncDashboardCards();
     if (typeof updateNavBadges === 'function') {
       // updateNavBadges re-enters expRefreshSummary but the throttle stamp above stops recursion
       updateNavBadges();
@@ -169,6 +215,8 @@ async function expLoad(silent) {
     EXP.loaded = true;
     EXP.summary = Object.assign({}, json.summary, { attention: EXP.summary ? EXP.summary.attention : [], thresholds: json.thresholds });
     EXP.summaryTs = Date.now();
+    expWriteCachedSummary(EXP.summary);
+    expSyncDashboardCards();
   } catch (e) {
     EXP.error = e.message || 'Could not load batches.';
   }
@@ -177,6 +225,8 @@ async function expLoad(silent) {
     expRenderFilters();
     expRenderResults();
     if (typeof updateNavBadges === 'function') updateNavBadges();
+  } else if ((currentPage === 'inventory' || currentPage === 'products') && typeof renderInventoryTable === 'function') {
+    renderInventoryTable(true);
   }
 }
 
@@ -574,12 +624,12 @@ function expRenderCards() {
       </div>
     </div>`;
   el.innerHTML =
-    card('total', 'all', '📦', 'Total Batches', s ? `${s.total === 1 ? 'batch' : 'batches'} with stock on hand` : 'Loading…', 'exp-card-total', '#F4EFE6', 'var(--ink)') +
-    card('good', 'good', '✅', 'Good Stock', `${units('unitsGood')} · &gt; ${t.soon} days`, 'exp-card-good', '#EAF4EC', '#3F8358') +
-    card('soon', 'soon', '🕒', 'Expiring Soon', `${units('unitsSoon')} · ${t.critical + 1}–${t.soon} days`, 'exp-card-soon', '#FDF3E3', '#94690F') +
-    card('critical', 'critical', '🔥', 'Critical', `${units('unitsCritical')} · 0–${t.critical} days`, 'exp-card-critical', '#FDEBDD', '#B4491B') +
-    card('expired', 'expired', '⛔', 'Expired', `${units('unitsExpired')} · past expiry`, 'exp-card-expired', '#FBEAE8', '#C1443D') +
-    card('none', 'none', '❔', 'Not Specified', `${units('unitsNone')} · no expiry date`, 'exp-card-none', '#EEEAE3', '#6B6259');
+    card('total', 'all', '📦', 'Total Batches', s ? `${s.total === 1 ? 'batch' : 'batches'} with stock on hand` : 'Loading…', 'exp-card-total', 'var(--surface-3)', 'var(--ink)') +
+    card('good', 'good', '✅', 'Good Stock', `${units('unitsGood')} · &gt; ${t.soon} days`, 'exp-card-good', 'var(--success-bg)', 'var(--success-text)') +
+    card('soon', 'soon', '🕒', 'Expiring Soon', `${units('unitsSoon')} · ${t.critical + 1}–${t.soon} days`, 'exp-card-soon', 'var(--warning-bg)', 'var(--warning-text)') +
+    card('critical', 'critical', '🔥', 'Critical', `${units('unitsCritical')} · 0–${t.critical} days`, 'exp-card-critical', 'var(--warning-bg)', 'var(--warning-text)') +
+    card('expired', 'expired', '⛔', 'Expired', `${units('unitsExpired')} · past expiry`, 'exp-card-expired', 'var(--danger-bg)', 'var(--danger-text)') +
+    card('none', 'none', '❔', 'Not Specified', `${units('unitsNone')} · no expiry date`, 'exp-card-none', 'var(--surface-3)', 'var(--ink-soft)');
   if (lg) {
     const risk = s && s.valueAtRisk > 0 ? ` · Stock value at risk (critical + expired, known cost): <b>${peso(s.valueAtRisk)}</b>` : '';
     lg.innerHTML = `Cards count batches that still have stock on hand. Good &gt; ${t.soon} days · Expiring Soon ${t.critical + 1}–${t.soon} days · Critical ≤ ${t.critical} days · Expired = past expiration date.${risk}`;
@@ -628,7 +678,7 @@ function expRenderBatchRow(b, canEdit) {
       </div>
     </td>
     <td>${escapeHtml(b.brand || '—')}</td>
-    <td class="center"><span class="badge" style="background:#F4EFE6; color:#6B6259; font-weight:700;">🥫 ${b.containerSize !== null ? fmtSize(b.containerSize) : '—'}</span></td>
+    <td class="center"><span class="badge" style="background:var(--surface-3); color:var(--ink-soft); font-weight:700;">🥫 ${b.containerSize !== null ? fmtSize(b.containerSize) : '—'}</span></td>
     <td><code class="exp-code">${escapeHtml(b.batchNumber)}</code>${b.source === 'opening' ? '<div class="exp-sub">opening balance</div>' : (b.source === 'reconciliation' ? '<div class="exp-sub">auto-reconciled</div>' : '')}</td>
     <td>${escapeHtml(b.supplierName || '—')}</td>
     <td>${expFmtDate(b.dateReceived)}</td>
@@ -643,9 +693,9 @@ function expRenderBatchRow(b, canEdit) {
       ${dep ? expBadge('depleted') : expBadge(b.expiryStatus)}
       ${(!dep && b.discountPct > 0 && b.pricePerCan !== null) ? `
         <div style="margin-top:4px; font-size:11px; line-height:1.3;">
-          <span class="badge" style="background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; font-size:10px; padding:1px 5px;">🏷️ -${b.discountPct}%</span>
+          <span class="badge" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-size:10px; padding:1px 5px;">🏷️ -${b.discountPct}%</span>
           <span class="muted" style="text-decoration:line-through; margin-left:3px;">${peso(b.pricePerCan)}</span>
-          <strong style="color:#065F46; margin-left:3px;">${peso(b.discountedPrice)}</strong>
+          <strong style="color:var(--success-text); margin-left:3px;">${peso(b.discountedPrice)}</strong>
         </div>
       ` : ''}
     </td>
@@ -653,17 +703,16 @@ function expRenderBatchRow(b, canEdit) {
       <button type="button" class="exp-act" title="View batch details" onclick="expOpenDetail('${bid}')">👁</button>
       <button type="button" class="exp-act" title="View stock movement history" onclick="expOpenDetail('${bid}', 'movements')">📜</button>
       <button type="button" class="exp-act ${canEdit ? '' : 'disabled'}" title="${canEdit ? (expCanEditFull() ? 'Edit batch information' : 'Edit expiration date & batch notes') : 'You do not have permission to edit batch information'}" onclick="expOpenEdit('${bid}')">✏️</button>
-      <button type="button" class="exp-act ${expCanAdjust() ? '' : 'disabled'}" title="${expCanAdjust() ? 'Record stock adjustment' : 'Stock adjustments require Administrator authorization'}" onclick="expOpenAdjust('${bid}')">±</button>
+      <button type="button" class="exp-act ${expCanAdjust() ? '' : 'disabled'}" ${expCanAdjust() ? '' : 'disabled'} title="${expCanAdjust() ? 'Record stock adjustment' : 'Stock adjustments require Administrator authorization'}" onclick="expOpenAdjust('${bid}')">±</button>
     </td>
   </tr>`;
 }
 
 function expEmptyStateHtml() {
-  return `<div class="exp-empty">${
-    (EXP.data.batches || []).length === 0
+  return `<div class="exp-empty">${(EXP.data.batches || []).length === 0
       ? '📦 No batches yet. Batches are created automatically when stock is received.'
       : '🔍 No batches match the current filters.' + (expHasActiveFilters() ? ' <button class="btn ghost small" onclick="expResetFilters()">Clear filters</button>' : '')
-  }</div>`;
+    }</div>`;
 }
 
 function expRenderTable() {
@@ -813,11 +862,10 @@ function expRenderDetail() {
 
   const banner = `
     <div class="exp-detail-banner ${status}">
-      <div class="exp-detail-banner-main">${expBadge(status)} <span class="exp-detail-banner-text">${
-        b.depleted ? 'This batch has been fully consumed.' :
-        (b.expiryStatus === 'expired' ? `Expired ${Math.abs(b.daysRemaining)} day(s) ago — remove from sale.` :
+      <div class="exp-detail-banner-main">${expBadge(status)} <span class="exp-detail-banner-text">${b.depleted ? 'This batch has been fully consumed.' :
+      (b.expiryStatus === 'expired' ? `Expired ${Math.abs(b.daysRemaining)} day(s) ago — remove from sale.` :
         (b.expiryStatus === 'none' ? 'No expiration date recorded for this batch.' :
-        (b.daysRemaining === 0 ? 'Expires today.' : `Expires in ${b.daysRemaining} day(s).`)))}</span></div>
+          (b.daysRemaining === 0 ? 'Expires today.' : `Expires in ${b.daysRemaining} day(s).`)))}</span></div>
       <div class="exp-detail-banner-qty"><b>${b.remainingQty}</b> of ${b.originalQty} unit(s) left</div>
     </div>`;
 
@@ -887,14 +935,14 @@ function expRenderDetail() {
       ${tabBtn('ledger', `🧾 Batch Ledger (${(d.ledger || []).length})`)}
     </div>
     ${pane('movements', (d.stockMovements || []).length
-      ? `<div class="table-scroll exp-hist"><table class="exp-table small"><thead><tr><th>Date</th><th>Type</th><th class="right">Qty (liters)</th><th>Staff</th><th>Details</th></tr></thead><tbody>${movRows}</tbody></table></div><div class="muted small" style="margin-top:6px;">Central stock-movement log for this container size since this batch was received (all batches of ${fmtSize(b.containerSize)}).</div>`
-      : empty('No stock movements recorded for this container size since the batch was received.'))}
+    ? `<div class="table-scroll exp-hist"><table class="exp-table small"><thead><tr><th>Date</th><th>Type</th><th class="right">Qty (liters)</th><th>Staff</th><th>Details</th></tr></thead><tbody>${movRows}</tbody></table></div><div class="muted small" style="margin-top:6px;">Central stock-movement log for this container size since this batch was received (all batches of ${fmtSize(b.containerSize)}).</div>`
+    : empty('No stock movements recorded for this container size since the batch was received.'))}
     ${pane('fifo', (d.fifoDeductions || []).length
       ? `<div class="table-scroll exp-hist"><table class="exp-table small"><thead><tr><th>Date</th><th>Reference</th><th>Source</th><th class="right">Units deducted</th><th class="right">Batch balance</th><th>Staff</th><th>Details</th></tr></thead><tbody>${fifoRows}</tbody></table></div><div class="muted small" style="margin-top:6px;">Units taken from this batch by POS sales and other deductions, oldest batch first.</div>`
       : empty('No FIFO deductions have drawn from this batch yet.'))}
     ${pane('ledger', (d.ledger || []).length
-      ? `<div class="table-scroll exp-hist"><table class="exp-table small"><thead><tr><th>Date</th><th>Event</th><th class="right">Change</th><th class="right">Balance</th><th>Staff</th><th>Details</th></tr></thead><tbody>${ledgerRows}</tbody></table></div>`
-      : empty('No ledger entries.'))}`;
+        ? `<div class="table-scroll exp-hist"><table class="exp-table small"><thead><tr><th>Date</th><th>Event</th><th class="right">Change</th><th class="right">Balance</th><th>Staff</th><th>Details</th></tr></thead><tbody>${ledgerRows}</tbody></table></div>`
+        : empty('No ledger entries.'))}`;
 
   const canAdjust = !!(d.permissions && d.permissions.canAdjust !== undefined ? d.permissions.canAdjust : expCanAdjust());
   const foot = `
@@ -996,8 +1044,8 @@ function expOpenEdit(batchId) {
   const body = `
     <div class="exp-form-note">
       ${canFull
-        ? 'Edit batch details below. <b>Original Quantity</b> and <b>Remaining Quantity</b> are read-only—use <b>Record Adjustment</b> to add or remove stock. Every change is logged in the Audit Log.'
-        : 'Inventory Staff may update the <b>Expiration Date</b> and <b>Restocking / Batch Notes</b>. Other fields are locked to Administrators.'}
+      ? 'Edit batch details below. <b>Original Quantity</b> and <b>Remaining Quantity</b> are read-only—use <b>Record Adjustment</b> to add or remove stock. Every change is logged in the Audit Log.'
+      : 'Inventory Staff may update the <b>Expiration Date</b> and <b>Restocking / Batch Notes</b>. Other fields are locked to Administrators.'}
     </div>
 
     <div class="exp-edit-section">
@@ -1152,7 +1200,7 @@ async function expSaveEdit(batchId) {
    the batch ledger all stay in sync.
    ------------------------------------------------------------ */
 function expOpenAdjust(batchId) {
-  if (!expCanEdit()) {
+  if (!expCanAdjust()) {
     showToast('Stock adjustments require Administrator authorization. Staff can submit an adjustment request under Stock Receiving / Adjust.', 'error');
     return;
   }
@@ -1266,14 +1314,14 @@ async function expSaveAdjust(batchId) {
     if (typeof logAudit === 'function') {
       logAudit(isAdd ? 'STOCK_INCREASE' : 'STOCK_DECREASE', 'Inventory',
         `${isAdd ? 'Increased' : 'Decreased'} stock for ${p.name} via Expiration Tracking (Batch ${b.batchNumber}: ${qty} × ${size}L = ${isAdd ? '+' : '-'}${formatStock(liters)}L) — Reason: ${t.reason}`, {
-          productId: p.productId || p.id,
-          entityName: p.name,
-          fieldChanged: `Sealed Stock (${size}L Container) · Batch ${b.batchNumber}`,
-          oldValue: `${beforeCans} units (${formatStock(beforeStock)} L total)`,
-          newValue: `${afterCans} units (${formatStock(p.stock)} L total)`,
-          referenceNo: b.batchNumber,
-          reason: `${t.reason} — ${note}`
-        });
+        productId: p.productId || p.id,
+        entityName: p.name,
+        fieldChanged: `Sealed Stock (${size}L Container) · Batch ${b.batchNumber}`,
+        oldValue: `${beforeCans} units (${formatStock(beforeStock)} L total)`,
+        newValue: `${afterCans} units (${formatStock(p.stock)} L total)`,
+        referenceNo: b.batchNumber,
+        reason: `${t.reason} — ${note}`
+      });
     }
     closeModal();
     showToast(`✓ Adjustment recorded for batch ${b.batchNumber}.`, 'ok');
@@ -1354,8 +1402,14 @@ async function expSaveDiscounts() {
     if (err) err.textContent = 'Discount percentages must be between 0% and 90%.';
     return;
   }
+  const t = (EXP.data && EXP.data.thresholds) || { critical: 30, soon: 90 };
+  const tiers = [
+    { days: Number(t.soon || 90), pct: soonPct },
+    { days: Number(t.critical || 30), pct: criticalPct }
+  ];
   try {
-    await expApi('save_discount_settings', { body: { enabled, criticalPct, soonPct } });
+    await expApi('save_discount_settings', { body: { enabled, criticalPct, soonPct, tiers } });
+    if (typeof posBatchStatusLoadedAt !== 'undefined') posBatchStatusLoadedAt = 0;
     closeModal();
     showToast('✓ Near-expiry discount policy saved.', 'ok');
     await expLoad(true);

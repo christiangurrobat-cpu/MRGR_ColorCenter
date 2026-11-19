@@ -92,7 +92,7 @@ function getAuditActionCategory($action, $details = '') {
     ], true)) {
         return 'purchase_orders';
     }
-    if (in_array($a, ['SALE', 'SALE_COMPLETE', 'RECEIPT_GENERATED', 'SALE_VOID'], true)) {
+    if (in_array($a, ['SALE', 'SALE_COMPLETE', 'RECEIPT_GENERATED', 'SALE_VOID', 'SALE_VOID_REQUEST', 'SALE_VOID_APPROVE', 'SALE_VOID_REJECT'], true)) {
         return 'sales_transactions';
     }
     if (in_array($a, ['SALE_REFUND', 'PARTIAL_REFUND', 'SALE_RETURN', 'SALE_EXCHANGE'], true)) {
@@ -575,7 +575,7 @@ try {
             'PO_CREATE', 'PO_SUBMIT', 'PO_APPROVE', 'PO_REJECT',
             'PO_RECEIVE', 'PO_PARTIAL_RECEIVE', 'PO_CANCEL', 'PO_BATCH_APPROVE'
         ],
-        'sales_transactions' => ['SALE', 'SALE_COMPLETE', 'RECEIPT_GENERATED', 'SALE_VOID'],
+        'sales_transactions' => ['SALE', 'SALE_COMPLETE', 'RECEIPT_GENERATED', 'SALE_VOID', 'SALE_VOID_REQUEST', 'SALE_VOID_APPROVE', 'SALE_VOID_REJECT'],
         'returns_refunds' => ['SALE_REFUND', 'PARTIAL_REFUND', 'SALE_RETURN', 'SALE_EXCHANGE'],
         'user_management' => [
             'USER_CREATE', 'USER_UPDATE', 'USER_DEACTIVATE', 'USER_REACTIVATE',

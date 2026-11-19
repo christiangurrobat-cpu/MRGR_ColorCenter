@@ -169,6 +169,12 @@ if ($action === 'verify_admin') {
         exit;
     }
 
+    if (empty($_SESSION['user_id'])) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'Authentication required.']);
+        exit;
+    }
+
     $raw = file_get_contents('php://input');
     $data = json_decode($raw, true) ?: [];
     $username = trim((string)($data['username'] ?? ''));
@@ -193,15 +199,9 @@ if ($action === 'verify_admin') {
     $user = $res->fetch_assoc();
     $stmt->close();
 
-    if (!$user) {
+    if (!$user || $user['status'] !== 'active') {
         http_response_code(401);
         echo json_encode(['success' => false, 'error' => 'Invalid administrator credentials.']);
-        exit;
-    }
-
-    if ($user['status'] !== 'active') {
-        http_response_code(403);
-        echo json_encode(['success' => false, 'error' => 'Administrator account is inactive.']);
         exit;
     }
 
@@ -218,7 +218,7 @@ if ($action === 'verify_admin') {
 
     if (!$isValid) {
         http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Incorrect administrator password.']);
+        echo json_encode(['success' => false, 'error' => 'Invalid administrator credentials.']);
         exit;
     }
 

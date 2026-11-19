@@ -34,6 +34,7 @@ function clearPosSearch() {
 
 function onPosCustomerNameInput(val) {
   currentSaleCustomerName = typeof val === 'string' ? val : '';
+  if (typeof scheduleRouteStateSync === 'function') scheduleRouteStateSync();
 }
 
 function clearPosCart() {
@@ -49,29 +50,167 @@ function clearPosCart() {
 
 let posBatchStatusBySize = {};
 let posBatchStatusLoadedAt = 0;
+let posBatchStatusAttempted = false;
+let posBatchStatusPromise = null;
 async function posLoadBatchStatus(force = false) {
   if (!force && Date.now() - posBatchStatusLoadedAt < 10000) return;
-  try {
-    const res = await fetch('api/batches.php?action=pos_status', { cache: 'no-store' });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success && data.bySize) {
-        posBatchStatusBySize = data.bySize;
-        posBatchStatusLoadedAt = Date.now();
+  if (!force && posBatchStatusPromise) return posBatchStatusPromise;
+
+  posBatchStatusPromise = (async () => {
+    try {
+      const res = await fetch('api/batches.php?action=pos_status', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success && data.bySize) {
+          posBatchStatusBySize = data.bySize;
+          posBatchStatusLoadedAt = Date.now();
+        }
+      }
+    } catch (e) { /* offline / fallback to server-side check */ }
+    finally {
+      posBatchStatusAttempted = true;
+      posBatchStatusPromise = null;
+      if (typeof currentPage !== 'undefined' && currentPage === 'pos' && document.getElementById('pos-product-list')) {
+        renderPosProductList();
       }
     }
-  } catch (e) { /* offline / fallback to server-side check */ }
+  })();
+
+  return posBatchStatusPromise;
+}
+
+function posGetSizeBatchInfo(p, size) {
+  const variant = p ? productSizeVariantBySize(p, size) : null;
+  const sizeId = variant ? variant.sizeId : null;
+  const batchInfo = (sizeId && posBatchStatusBySize && posBatchStatusBySize[sizeId]) ? posBatchStatusBySize[sizeId] : null;
+  const origPrice = variant ? Number(variant.pricePerCan.toFixed(2)) : Number(((p ? p.price : 0) * size).toFixed(2));
+
+  if (!batchInfo) {
+    const fallbackQty = p ? (productHasCanBreakdown(p) ? productCanCount(p, size) : Math.floor((p.stock || 0) / size)) : 0;
+    return {
+      sizeId,
+      batchInfo: null,
+      nonExpiredQty: fallbackQty,
+      expiredQty: 0,
+      discountedQty: 0,
+      regularQty: fallbackQty,
+      bestDiscountPct: 0,
+      bestDiscountAmount: 0,
+      bestOriginalPrice: origPrice,
+      bestDiscountedPrice: origPrice,
+      discountedBatches: [],
+      regularBatches: [],
+      bestRegularBatchId: null,
+      bestRegularBatchNumber: null,
+      bestRegularExpiryDate: null,
+      bestRegularDaysRemaining: null,
+      bestRegularQty: fallbackQty
+    };
+  }
+
+  const nonExpiredQty = Number(batchInfo.nonExpiredQty) || 0;
+  const expiredQty = Number(batchInfo.expiredQty) || 0;
+  const discountedQty = Number(batchInfo.discountedQty) || 0;
+  const regularQty = batchInfo.regularQty !== undefined ? (Number(batchInfo.regularQty) || 0) : Math.max(0, nonExpiredQty - discountedQty);
+  const bestDiscountPct = (discountedQty > 0 && Number(batchInfo.bestDiscountPct || batchInfo.fifoDiscountPct) > 0)
+    ? Number(batchInfo.bestDiscountPct || batchInfo.fifoDiscountPct)
+    : 0;
+  const bestDiscountAmount = bestDiscountPct > 0
+    ? Number((origPrice * (bestDiscountPct / 100)).toFixed(2))
+    : 0;
+  const bestDiscountedPrice = bestDiscountPct > 0
+    ? Number(Math.max(0, origPrice - bestDiscountAmount).toFixed(2))
+    : origPrice;
+
+  return {
+    sizeId,
+    batchInfo,
+    nonExpiredQty,
+    expiredQty,
+    discountedQty,
+    regularQty,
+    bestDiscountPct,
+    bestDiscountAmount,
+    bestOriginalPrice: origPrice,
+    bestDiscountedPrice,
+    bestDiscountBatchId: batchInfo.bestDiscountBatchId || batchInfo.fifoBatchId || null,
+    bestDiscountBatchNumber: batchInfo.bestDiscountBatchNumber || batchInfo.fifoBatchNumber || null,
+    bestDiscountExpiryDate: batchInfo.bestDiscountExpiryDate || null,
+    bestDiscountDaysRemaining: batchInfo.bestDiscountDaysRemaining !== undefined ? batchInfo.bestDiscountDaysRemaining : batchInfo.fifoDaysRemaining,
+    bestDiscountStatus: batchInfo.fifoExpiryStatus || null,
+    discountedBatches: Array.isArray(batchInfo.discountedBatches) ? batchInfo.discountedBatches : [],
+    regularBatches: Array.isArray(batchInfo.regularBatches) ? batchInfo.regularBatches : [],
+    bestRegularBatchId: batchInfo.bestRegularBatchId || null,
+    bestRegularBatchNumber: batchInfo.bestRegularBatchNumber || null,
+    bestRegularExpiryDate: batchInfo.bestRegularExpiryDate || null,
+    bestRegularDaysRemaining: batchInfo.bestRegularDaysRemaining !== undefined ? batchInfo.bestRegularDaysRemaining : null,
+    bestRegularQty: Number(batchInfo.bestRegularQty) || 0
+  };
+}
+
+function posGetProductDiscountSummary(p) {
+  if (!p) return { hasDiscount: false, maxPct: 0, totalDiscountedQty: 0, discountedSizes: [] };
+  const sizes = productSizes(p) || [];
+  const discountedSizes = [];
+  let maxPct = 0;
+  let totalDiscountedQty = 0;
+
+  sizes.forEach(s => {
+    const info = posGetSizeBatchInfo(p, s);
+    if (info.discountedQty > 0 && info.bestDiscountPct > 0) {
+      maxPct = Math.max(maxPct, info.bestDiscountPct);
+      totalDiscountedQty += info.discountedQty;
+      discountedSizes.push({
+        size: s,
+        discountedQty: info.discountedQty,
+        regularQty: info.regularQty,
+        pct: info.bestDiscountPct,
+        origPrice: info.bestOriginalPrice,
+        discPrice: info.bestDiscountedPrice,
+        savedAmt: info.bestDiscountAmount
+      });
+    }
+  });
+
+  return {
+    hasDiscount: discountedSizes.length > 0,
+    maxPct,
+    totalDiscountedQty,
+    discountedSizes
+  };
+}
+
+function posGetCartSizeUsage(p, sizeId, size, excludeIndex = -1) {
+  let discQty = 0;
+  let regQty = 0;
+  const byBatch = {};
+  cart.forEach((c, idx) => {
+    if (idx === excludeIndex || c.type !== 'product') return;
+    const sameProd = p && (c.productId === p.id || c.productId === p.productId);
+    if (!sameProd) return;
+    const sameSize = sizeId && c.sizeId ? c.sizeId === sizeId : (Number(c.size) || 1) === size;
+    if (!sameSize) return;
+    const q = Number(c.qty) || 0;
+    if (c.isNearExpiryDiscount || Number(c.nearExpiryDiscountPct) > 0) {
+      discQty += q;
+    } else {
+      regQty += q;
+    }
+    const bid = c.selectedBatchId || c.nearExpiryBatchId || c.regularBatchId || null;
+    if (bid) {
+      byBatch[bid] = (byBatch[bid] || 0) + q;
+    }
+  });
+  return { discQty, regQty, totalQty: discQty + regQty, byBatch };
 }
 
 function posPage() {
   posLoadBatchStatus(false);
-  const categories = ['Automotive Paint', 'House Paint', 'Specialty Paint'];
+  const categories = (typeof getProductCategories === 'function')
+    ? getProductCategories()
+    : ['Automotive Paint', 'House Paint', 'Specialty Paint'];
   const cartItemCount = cart.reduce((sum, item) => sum + (item.qty || 1), 0);
   const totalActive = activeProducts().length;
-
-  setTimeout(() => {
-    updateCheckoutButtonState();
-  }, 20);
 
   return `
   <div class="pos-grid">
@@ -86,7 +225,7 @@ function posPage() {
             </div>
           </div>
           <button class="btn small" style="background:linear-gradient(135deg, #1F6F6B 0%, #298C87 100%); box-shadow:0 2px 8px rgba(31,111,107,0.25);" onclick="openColorMixModal(true)">
-            🎨 + Add Custom Color Mix
+            🎨 Select Mixed Color
           </button>
         </div>
         <div class="panel-body" style="padding-bottom:10px;">
@@ -165,8 +304,33 @@ function posPage() {
   </div>`;
 }
 
+function renderPosProductPriceHtml(p) {
+  const discSum = posGetProductDiscountSummary(p);
+  const primaryDisc = discSum.hasDiscount ? discSum.discountedSizes[0] : null;
+  return `
+    <span class="price-val">${peso(p.price)}</span>
+    <span class="price-unit">/ Liter</span>
+    ${primaryDisc ? `
+      <div class="pos-pprice-disc" title="Near-Expiry Discount on ${fmtSize(primaryDisc.size)} (${primaryDisc.discountedQty} eligible)">
+        <div class="pos-pprice-disc-line">
+          <del>${peso(primaryDisc.origPrice)}</del>
+          <strong>${peso(primaryDisc.discPrice)}</strong>
+        </div>
+        <span class="pos-disc-save">Save ${peso(primaryDisc.savedAmt)}/${fmtSize(primaryDisc.size)}</span>
+      </div>
+    ` : ''}`;
+}
+
 function renderPosProductList() {
-  closeAllPosMoreMenus();
+  const container = document.getElementById('pos-product-list');
+  const pagContainer = document.getElementById('pos-pagination');
+  if (!container) return;
+
+  if (!posBatchStatusAttempted && posBatchStatusLoadedAt === 0 && posBatchStatusPromise) {
+    container.innerHTML = '<div class="muted small" style="padding:24px 16px; text-align:center;">Loading product catalog…</div>';
+    return;
+  }
+
   const searchInput = document.getElementById('pos-search');
   if (searchInput) posSearchQuery = searchInput.value;
   const q = (posSearchQuery || '').toLowerCase().trim();
@@ -191,10 +355,6 @@ function renderPosProductList() {
       return searchBlob.includes(q);
     });
   }
-
-  const container = document.getElementById('pos-product-list');
-  const pagContainer = document.getElementById('pos-pagination');
-  if (!container) return;
 
   const totalItems = list.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / POS_PAGE_SIZE));
@@ -240,23 +400,29 @@ function renderPosProductList() {
 
   container.innerHTML = pagedList.map(p => {
     const isOut = typeof isProductOutOfStock === 'function' ? isProductOutOfStock(p) : ((Number(p.stock) || 0) <= 0);
-    const isLow = typeof isProductLowStock === 'function' ? isProductLowStock(p) : false;
-    const hex = getProductDefaultColor(p);
+    const resolvedCol = (typeof resolveProductColor === 'function') ? resolveProductColor(p) : { name: p.color || '-', hex: getProductDefaultColor(p), isLinked: false };
+    const hex = resolvedCol.hex || getProductDefaultColor(p);
     const rgb = hexToRgb(hex);
     const rgbaBg = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`;
     const rgbaGlow = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)`;
     const detected = detectMixedColorName(rgb.r, rgb.g, rgb.b);
-    const colorLabel = p.color && p.color !== '-' ? p.color : detected.name;
+    const colorLabel = resolvedCol.isLinked
+      ? resolvedCol.name
+      : (p.color && p.color !== '-' ? p.color : detected.name);
+    const colorTone = (typeof resolveProductColorTone === 'function')
+      ? resolveProductColorTone(p, resolvedCol)
+      : (detected.family || 'General');
 
-    // Stock availability status indicator (In Stock: Green, Low Stock: Orange, Out of Stock: Red)
-    let stockBadgeHtml = '';
-    if (isOut) {
-      stockBadgeHtml = `<span>·</span> <span class="pos-stock-tag out-of-stock" title="Out of stock (0 available)"><span class="dot"></span> Out of Stock</span>`;
-    } else if (isLow) {
-      stockBadgeHtml = `<span>·</span> <span class="pos-stock-tag low-stock" title="Low stock on one or more container sizes"><span class="dot"></span> Low Stock</span>`;
-    } else {
-      stockBadgeHtml = `<span>·</span> <span class="pos-stock-tag in-stock" title="Healthy stock available"><span class="dot"></span> In Stock</span>`;
-    }
+    const discSum = posGetProductDiscountSummary(p);
+    const primaryDisc = discSum.hasDiscount ? discSum.discountedSizes[0] : null;
+    const discSizeLabel = discSum.hasDiscount
+      ? (discSum.discountedSizes.length === 1
+        ? `${fmtSize(primaryDisc.size)}: ${primaryDisc.pct}% OFF`
+        : discSum.discountedSizes.map(d => `${fmtSize(d.size)} (${d.pct}% OFF)`).join(', '))
+      : '';
+    const discBadgeHtml = discSum.hasDiscount
+      ? `<span class="pos-disc-badge" title="${escapeAttr('Near-Expiry Discount available: ' + discSum.discountedSizes.map(d => `${fmtSize(d.size)} (${d.discountedQty} unit${d.discountedQty === 1 ? '' : 's'} at ${d.pct}% OFF)`).join(', '))}">🏷️ ${discSizeLabel} · ${discSum.totalDiscountedQty} Near-Expiry</span>`
+      : '';
 
     return `
     <div class="pos-product ${isOut ? 'out-of-stock-row' : ''}" 
@@ -266,27 +432,24 @@ function renderPosProductList() {
       <div class="pinfo">
         <div class="pname">
           <span>${escapeHtml(p.name)}</span>
-          <span class="pos-color-badge" title="Color: ${escapeHtml(colorLabel)} (${detected.family} tone)">
+          <span class="pos-color-badge" title="Color: ${escapeHtml(colorLabel)} (${escapeHtml(colorTone)} tone)">
             <span class="cm-color-dot" style="background:${hex}; width:8px; height:8px; border-radius:50%; display:inline-block;"></span>
             <span>${escapeHtml(colorLabel)}</span>
             <code class="pos-hex-code">(${hex})</code>
           </span>
+          ${discBadgeHtml}
         </div>
         <div class="pmeta">
           <span style="font-weight:600; color:var(--ink);">${escapeHtml(p.brand || '')}</span>
-          <span class="muted" style="font-size:11px;">· Tone: <b>${detected.family}</b></span>
-          ${stockBadgeHtml}
+          <span class="muted" style="font-size:11px;">· Tone: <b>${escapeHtml(colorTone)}</b></span>
         </div>
       </div>
-      <div class="pprice">
-        <span class="price-val">${peso(p.price)}</span>
-        <span class="price-unit">/ Liter</span>
+      <div class="pprice" id="pos-pprice-${escapeAttr(p.id)}">
+        ${renderPosProductPriceHtml(p)}
       </div>
-      <div class="pos-size-picker">
-        <div class="pos-size-buttons">
-          ${renderPosProductSizes(p)}
-        </div>
-        <span class="pos-size-hint">${isOut ? 'Currently unavailable' : 'Click size to add to cart'}</span>
+      <div class="pos-size-picker" id="pos-size-picker-${escapeAttr(p.id)}">
+        ${renderPosProductSizes(p)}
+        <span class="pos-size-hint">${isOut ? 'Currently unavailable' : (discSum.hasDiscount ? 'Click size to select discounted or regular batch' : 'Click size to add to cart')}</span>
       </div>
     </div>`;
   }).join('');
@@ -345,163 +508,184 @@ function renderPosProductList() {
   }
 }
 
+const posExpandedSizeProducts = new Set();
+const posSelectedSizeByProduct = {};
+
+function posGetSizeGroup(size) {
+  const s = Number(size) || 0;
+  if (s <= 3) return { key: 'small', label: 'Small', range: '1L–3L' };
+  if (s <= 8) return { key: 'medium', label: 'Medium', range: '4L–8L' };
+  return { key: 'large', label: 'Large', range: '16L+' };
+}
+
+function posGetSizeCardData(p, s) {
+  const variant = productSizeVariantBySize(p, s);
+  const hasBreakdown = productHasCanBreakdown(p);
+  const canCount = productCanCount(p, s);
+  const bInfo = posGetSizeBatchInfo(p, s);
+  const rawInStock = hasBreakdown ? (canCount > 0 && p.stock >= s) : (p.stock >= s);
+  const inStock = rawInStock && (!bInfo.batchInfo || bInfo.nonExpiredQty > 0);
+  const displayCount = bInfo.batchInfo ? bInfo.nonExpiredQty : (hasBreakdown ? canCount : Math.floor((p.stock || 0) / s));
+  const isExpiredOnly = rawInStock && bInfo.batchInfo && bInfo.nonExpiredQty <= 0 && bInfo.expiredQty > 0;
+  const hasDisc = inStock && bInfo.discountedQty > 0 && bInfo.bestDiscountPct > 0;
+  const canPrice = variant ? Number(variant.pricePerCan.toFixed(2)) : Number(((p.price || 0) * s).toFixed(2));
+  return {
+    variant,
+    bInfo,
+    inStock,
+    displayCount,
+    isExpiredOnly,
+    hasDisc,
+    canPrice
+  };
+}
+
+function renderPosSizeCard(p, s) {
+  const d = posGetSizeCardData(p, s);
+  const { bInfo, inStock, displayCount, isExpiredOnly, hasDisc, canPrice } = d;
+  const isSelected = inStock && posSelectedSizeByProduct[p.id] === s;
+
+  const stockText = isExpiredOnly
+    ? `Expired (${bInfo.expiredQty})`
+    : (!inStock
+      ? 'Out of Stock'
+      : (hasDisc && bInfo.regularQty > 0
+        ? `${bInfo.discountedQty} discounted · ${bInfo.regularQty} regular`
+        : (hasDisc ? `${bInfo.discountedQty} near-expiry` : `${displayCount} in stock`)));
+
+  const priceHtml = hasDisc
+    ? `<del>${peso(canPrice)}</del> <strong>${peso(bInfo.bestDiscountedPrice)}</strong>`
+    : `<strong>${peso(canPrice)}</strong>`;
+
+  const titleText = !inStock
+    ? (isExpiredOnly
+      ? `Blocked: ${bInfo.expiredQty} expired unit(s) in ${fmtSize(s)}`
+      : `Out of stock for ${fmtSize(s)} (0 available)`)
+    : (hasDisc
+      ? `Select ${fmtSize(s)} — ${peso(bInfo.bestDiscountedPrice)} (was ${peso(canPrice)}, -${bInfo.bestDiscountPct}% on ${bInfo.discountedQty} unit${bInfo.discountedQty === 1 ? '' : 's'}${bInfo.regularQty > 0 ? `, ${bInfo.regularQty} regular` : ''})`
+      : `Select ${fmtSize(s)} — ${peso(canPrice)} (${displayCount} available)`);
+
+  return `
+    <button type="button"
+            class="pos-size-card ${inStock ? 'in-stock' : 'disabled out-of-stock'} ${hasDisc ? 'has-discount' : ''} ${isSelected ? 'is-selected' : ''}"
+            data-size="${s}"
+            ${!inStock ? 'disabled' : ''}
+            title="${escapeAttr(titleText)}"
+            onclick="selectPosContainerSize('${escapeAttr(p.id)}', ${s})">
+      <div class="psc-top">
+        <span class="psc-size">${fmtSize(s)}</span>
+        ${hasDisc ? `<span class="psc-disc-badge">-${bInfo.bestDiscountPct}%</span>` : (!inStock ? `<span class="psc-out-pill">${isExpiredOnly ? 'Expired' : 'Out'}</span>` : '')}
+      </div>
+      <div class="psc-price">${priceHtml}</div>
+      <div class="psc-stock">${stockText}</div>
+    </button>`;
+}
+
 /**
- * Renders size selection buttons for a product row in POS Product Catalog.
- * - Displays a maximum of 4 size buttons per product row.
- * - If >4 sizes, shows first 4 and provides a "+ More Sizes" dropdown for the remaining sizes.
- * - Out-of-stock sizes remain visible but disabled with distinct clear styling.
- * - All sizes remain accessible.
+ * Renders an expandable container size selector for a product row in POS Product Catalog.
+ * - Displays the first 4 available sizes by default as consistent container size cards.
+ * - Provides a "View All Sizes" / "Show Less" toggle when >4 sizes exist.
+ * - Organizes expanded sizes into Small (1L-3L), Medium (4L-8L), and Large (16L+) groups,
+ *   showing only groups and sizes that actually exist for the product.
  */
 function renderPosProductSizes(p) {
   const allSizes = productSizes(p);
+  if (!allSizes.length) {
+    return '<div class="muted small">No container sizes configured</div>';
+  }
+
   const MAX_VISIBLE_SIZES = 4;
-  const visibleSizes = allSizes.slice(0, MAX_VISIBLE_SIZES);
-  const extraSizes = allSizes.length > MAX_VISIBLE_SIZES ? allSizes.slice(MAX_VISIBLE_SIZES) : [];
+  const hasMore = allSizes.length > MAX_VISIBLE_SIZES;
+  const isExpanded = hasMore && posExpandedSizeProducts.has(p.id);
+  const remainingCount = allSizes.length - MAX_VISIBLE_SIZES;
 
-  const renderBtn = (s) => {
-    const variant = productSizeVariantBySize(p, s);
-    const hasBreakdown = productHasCanBreakdown(p);
-    const canCount = productCanCount(p, s);
-    const inStock = hasBreakdown ? (canCount > 0 && p.stock >= s) : (p.stock >= s);
-    const displayCount = hasBreakdown ? canCount : Math.floor(p.stock / s);
-    const countLabel = `(${inStock ? displayCount : 0})`;
-    const canPrice = variant ? variant.pricePerCan : (p.price * s);
-    const priceLabel = peso(canPrice);
-
-    return `
-      <button type="button" 
-              class="pos-size-btn ${inStock ? 'in-stock' : 'disabled out-of-stock'}" 
-              ${!inStock ? `disabled title="Out of stock for ${fmtSize(s)} (0 available)"` : `title="Add 1x ${fmtSize(s)} to cart — ${priceLabel}"`}
-              onclick="addSizeToCart('${p.id}', ${s})">
-        <span class="ps-size-tag">${fmtSize(s)}</span>
-        <span class="ps-stock-tag">${countLabel}</span>
-      </button>`;
-  };
-
-  let html = visibleSizes.map(renderBtn).join('');
-
-  if (extraSizes.length > 0) {
-    const moreAvailableCount = extraSizes.filter(s => {
-      const hasBreakdown = productHasCanBreakdown(p);
-      const canCount = productCanCount(p, s);
-      return hasBreakdown ? (canCount > 0 && p.stock >= s) : (p.stock >= s);
-    }).length;
-
-    html += `
-      <div class="pos-more-sizes-wrap" id="pos-more-wrap-${p.id}">
-        <button type="button" 
-                class="pos-size-btn pos-more-sizes-btn" 
-                id="pos-more-btn-${p.id}"
-                onclick="togglePosMoreSizesMenu(event, '${p.id}')"
-                aria-haspopup="true"
-                aria-expanded="false"
-                title="${extraSizes.length} more size${extraSizes.length > 1 ? 's' : ''} available (${moreAvailableCount} in stock)">
-          <span class="ps-more-tag">+ More Sizes</span>
-          <span class="ps-more-caret">▾</span>
-        </button>
-        <div class="pos-more-sizes-menu" id="pos-more-menu-${p.id}" role="menu" onclick="event.stopPropagation()">
-          <div class="pos-more-menu-header">
-            <span class="pos-more-header-title">More Sizes</span>
-            <span class="pos-more-header-count">${extraSizes.length} option${extraSizes.length > 1 ? 's' : ''}</span>
+  let bodyHtml = '';
+  if (!isExpanded) {
+    const visibleSizes = allSizes.slice(0, MAX_VISIBLE_SIZES);
+    bodyHtml = `
+      <div class="pos-size-cards-grid">
+        ${visibleSizes.map(s => renderPosSizeCard(p, s)).join('')}
+      </div>`;
+  } else {
+    const groupOrder = [
+      { key: 'small', label: 'Small', range: '1L–3L', sizes: [] },
+      { key: 'medium', label: 'Medium', range: '4L–8L', sizes: [] },
+      { key: 'large', label: 'Large', range: '16L+', sizes: [] }
+    ];
+    const groupMap = { small: groupOrder[0], medium: groupOrder[1], large: groupOrder[2] };
+    allSizes.forEach(s => {
+      const g = posGetSizeGroup(s);
+      groupMap[g.key].sizes.push(s);
+    });
+    const activeGroups = groupOrder.filter(g => g.sizes.length > 0);
+    bodyHtml = `
+      <div class="pos-size-groups">
+        ${activeGroups.map(g => `
+          <div class="pos-size-group">
+            <div class="pos-size-group-head">
+              <span class="pos-size-group-title">${g.label}</span>
+              <span class="pos-size-group-range">${g.range}</span>
+              <span class="pos-size-group-count">${g.sizes.length}</span>
+            </div>
+            <div class="pos-size-cards-grid">
+              ${g.sizes.map(s => renderPosSizeCard(p, s)).join('')}
+            </div>
           </div>
-          <div class="pos-more-menu-items">
-            ${extraSizes.map(s => {
-      const variant = productSizeVariantBySize(p, s);
-      const hasBreakdown = productHasCanBreakdown(p);
-      const canCount = productCanCount(p, s);
-      const inStock = hasBreakdown ? (canCount > 0 && p.stock >= s) : (p.stock >= s);
-      const displayCount = hasBreakdown ? canCount : Math.floor(p.stock / s);
-      const countLabel = `(${inStock ? displayCount : 0})`;
-      const canPrice = variant ? variant.pricePerCan : (p.price * s);
-      const priceLabel = peso(canPrice);
-      return `
-              <button type="button" 
-                      role="menuitem"
-                      class="pos-more-item ${inStock ? 'in-stock' : 'disabled out-of-stock'}" 
-                      ${!inStock ? `disabled title="Out of stock for ${fmtSize(s)} (0 available)"` : `title="Add 1x ${fmtSize(s)} to cart — ${priceLabel}"`}
-                      onclick="selectPosMoreSize('${p.id}', ${s})">
-                <div class="pos-more-item-main">
-                  <span class="pos-more-item-size">${fmtSize(s)}</span>
-                  <span class="pos-more-item-stock ${inStock ? 'in-stock' : 'out-of-stock'}">${countLabel}</span>
-                </div>
-                <div class="pos-more-item-side">
-                  <span class="pos-more-item-price">${priceLabel}</span>
-                  <span class="pos-more-item-action ${inStock ? 'can-add' : 'is-out'}">${inStock ? '+ Add' : 'Out'}</span>
-                </div>
-              </button>`;
-    }).join('')}
-          </div>
-          <div class="pos-more-menu-footer">
-            <span class="pos-more-footer-note">All sizes: ${allSizes.map(s => fmtSize(s)).join(', ')}</span>
-          </div>
-        </div>
+        `).join('')}
       </div>`;
   }
 
-  return html;
+  const toggleHtml = hasMore ? `
+    <div class="pos-size-toggle-row">
+      <button type="button"
+              class="pos-size-toggle-btn ${isExpanded ? 'is-expanded' : ''}"
+              aria-expanded="${isExpanded ? 'true' : 'false'}"
+              onclick="togglePosProductSizes('${escapeAttr(p.id)}')"
+              title="${isExpanded ? 'Collapse size list' : `Show all ${allSizes.length} container sizes`}">
+        <span>${isExpanded ? 'Show Less' : `View All Sizes (+${remainingCount})`}</span>
+        <span class="pos-size-toggle-caret">${isExpanded ? '▴' : '▾'}</span>
+      </button>
+    </div>` : '';
+
+  return `<div class="pos-size-selector-inner">${bodyHtml}${toggleHtml}</div>`;
 }
 
-function togglePosMoreSizesMenu(event, productId) {
-  if (event) {
-    event.stopPropagation();
-    event.preventDefault();
+function togglePosProductSizes(productId) {
+  const p = productById(productId);
+  if (!p) return;
+  if (posExpandedSizeProducts.has(p.id)) {
+    posExpandedSizeProducts.delete(p.id);
+  } else {
+    posExpandedSizeProducts.add(p.id);
   }
-  const menu = document.getElementById(`pos-more-menu-${productId}`);
-  const btn = document.getElementById(`pos-more-btn-${productId}`);
-  const row = btn ? btn.closest('.pos-product') : null;
-  const isOpen = menu && menu.classList.contains('open');
-
-  closeAllPosMoreMenus();
-
-  if (!isOpen && menu && btn) {
-    menu.classList.add('open');
-    btn.classList.add('active');
-    btn.setAttribute('aria-expanded', 'true');
-    if (row) row.classList.add('dropdown-active');
-
-    // Smart flip: open upwards if close to window bottom
-    const rect = btn.getBoundingClientRect();
-    const menuHeight = menu.offsetHeight || 190;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    if (spaceBelow < menuHeight + 16 && rect.top > menuHeight) {
-      menu.classList.add('open-up');
-    } else {
-      menu.classList.remove('open-up');
-    }
+  const pickerEl = document.getElementById(`pos-size-picker-${p.id}`);
+  if (pickerEl) {
+    const isOut = typeof isProductOutOfStock === 'function' ? isProductOutOfStock(p) : ((Number(p.stock) || 0) <= 0);
+    const discSum = posGetProductDiscountSummary(p);
+    pickerEl.innerHTML = `
+      ${renderPosProductSizes(p)}
+      <span class="pos-size-hint">${isOut ? 'Currently unavailable' : (discSum.hasDiscount ? 'Click size to select discounted or regular batch' : 'Click size to add to cart')}</span>`;
+  } else {
+    renderPosProductList();
   }
 }
 
-function selectPosMoreSize(productId, size) {
-  closeAllPosMoreMenus();
-  addSizeToCart(productId, size);
-}
+function selectPosContainerSize(productId, size) {
+  const p = productById(productId);
+  if (!p) return;
+  const d = posGetSizeCardData(p, size);
+  if (!d.inStock) return;
 
-function closeAllPosMoreMenus() {
-  document.querySelectorAll('.pos-more-sizes-menu.open').forEach(m => {
-    m.classList.remove('open');
-    m.classList.remove('open-up');
-  });
-  document.querySelectorAll('.pos-more-sizes-btn.active').forEach(b => {
-    b.classList.remove('active');
-    b.setAttribute('aria-expanded', 'false');
-  });
-  document.querySelectorAll('.pos-product.dropdown-active').forEach(r => {
-    r.classList.remove('dropdown-active');
-  });
-}
+  posSelectedSizeByProduct[p.id] = size;
 
-if (typeof window !== 'undefined' && !window._posMoreSizesListenersAttached) {
-  window._posMoreSizesListenersAttached = true;
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.pos-more-sizes-wrap')) {
-      closeAllPosMoreMenus();
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      closeAllPosMoreMenus();
-    }
-  });
+  const pickerEl = document.getElementById(`pos-size-picker-${p.id}`);
+  if (pickerEl) {
+    pickerEl.querySelectorAll('.pos-size-card').forEach(card => {
+      card.classList.toggle('is-selected', Number(card.getAttribute('data-size')) === Number(size));
+    });
+  }
+
+  addSizeToCart(p.id, size);
 }
 
 function getCartReservedLitersForProduct(prod, excludeIndex = -1) {
@@ -528,6 +712,10 @@ function addSizeToCart(productId, size = 1) {
   const p = productById(productId);
   if (!p || p.stock <= 0) { showToast('This product is out of stock.', 'error'); return; }
 
+  const bInfo = posGetSizeBatchInfo(p, size);
+  const sizeId = bInfo.sizeId;
+  const usage = posGetCartSizeUsage(p, sizeId, size);
+
   // Check available stock in liters across all product & colormix lines in cart
   const reserved = getCartReservedLitersForProduct(p);
   const totalAvail = typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock;
@@ -538,49 +726,396 @@ function addSizeToCart(productId, size = 1) {
     return;
   }
 
-  // If canStock breakdown is tracked, check can count for this size
   if (productHasCanBreakdown(p)) {
-    const existingSameSize = cart.find(c => c.type === 'product' && (c.productId === p.id || c.productId === p.productId) && (Number(c.size) || 1) === size);
-    const cansInCart = existingSameSize ? existingSameSize.qty : 0;
     const availableCans = productCanCount(p, size);
-    if (cansInCart + 1 > availableCans) {
-      showToast(`Only ${availableCans} in stock for ${size}L (${cansInCart} already in cart).`, 'error');
+    if (usage.totalQty + 1 > availableCans) {
+      showToast(`Only ${availableCans} in stock for ${fmtSize(size)} (${usage.totalQty} already in cart).`, 'error');
       return;
     }
   }
 
-  const variant = productSizeVariantBySize(p, size);
-  const sizeId = variant ? variant.sizeId : null;
-  const batchInfo = (sizeId && posBatchStatusBySize && posBatchStatusBySize[sizeId]) ? posBatchStatusBySize[sizeId] : null;
-  const existing = cart.find(c => c.type === 'product' && (c.productId === p.id || c.productId === p.productId) && (c.sizeId ? c.sizeId === sizeId : (Number(c.size) || 1) === size));
-  const nextQty = existing ? (existing.qty + 1) : 1;
-  if (batchInfo && batchInfo.nonExpiredQty < nextQty) {
-    if (batchInfo.expiredQty > 0 && batchInfo.nonExpiredQty <= 0) {
+  const nextTotalQty = usage.totalQty + 1;
+  if (bInfo.batchInfo && bInfo.nonExpiredQty < nextTotalQty) {
+    if (bInfo.expiredQty > 0 && bInfo.nonExpiredQty <= 0) {
       showToast(`Sale blocked: Remaining ${fmtSize(size)} stock for "${p.name}" is expired and cannot be sold.`, 'error');
     } else {
-      showToast(`Only ${batchInfo.nonExpiredQty} non-expired ${fmtSize(size)} unit(s) available for "${p.name}".`, 'error');
+      showToast(`Only ${bInfo.nonExpiredQty} non-expired ${fmtSize(size)} unit(s) available for "${p.name}".`, 'error');
     }
     return;
   }
 
-  const originalUnitPrice = variant ? Number(variant.pricePerCan.toFixed(2)) : Number((p.price * size).toFixed(2));
-  const nearExpiryDiscountPct = (batchInfo && Number(batchInfo.fifoDiscountPct) > 0) ? Number(batchInfo.fifoDiscountPct) : 0;
-  const nearExpiryDiscountAmount = nearExpiryDiscountPct > 0
-    ? Number((originalUnitPrice * (nearExpiryDiscountPct / 100)).toFixed(2))
-    : 0;
-  const unitPriceForSize = nearExpiryDiscountPct > 0
-    ? Number(Math.max(0, originalUnitPrice - nearExpiryDiscountAmount).toFixed(2))
-    : originalUnitPrice;
+  const remainingDiscQty = Math.max(0, bInfo.discountedQty - usage.discQty);
+  if (remainingDiscQty > 0 && bInfo.bestDiscountPct > 0) {
+    openPosDiscountSizeModal(p.id, size);
+    return;
+  }
+
+  addPosSizeBatchToCart(p.id, size, false, 1);
+}
+
+function posFmtBatchExpiry(expDate, daysRemaining) {
+  if (!expDate) return { expStr: 'No Expiration', daysStr: 'No expiration limit' };
+  const expStr = typeof expFmtDate === 'function' ? expFmtDate(expDate) : expDate;
+  let daysStr = '';
+  if (daysRemaining !== null && daysRemaining !== undefined) {
+    const d = Number(daysRemaining);
+    daysStr = d === 0 ? 'Expires today' : (d === 1 ? '1 day left' : `${d} days left`);
+  }
+  return { expStr, daysStr };
+}
+
+function posIsRegularLongerShelfLife(regBatch, discBatch) {
+  if (!regBatch) return false;
+  if (!discBatch || !discBatch.expirationDate) return false;
+  if (!regBatch.expirationDate) return true; // No expiry is strictly longer than a dated near-expiry batch
+  return String(regBatch.expirationDate) > String(discBatch.expirationDate);
+}
+
+let posOptionModalState = null;
+
+function openPosDiscountSizeModal(productId, size) {
+  const p = productById(productId);
+  if (!p) return;
+  const bInfo = posGetSizeBatchInfo(p, size);
+  const usage = posGetCartSizeUsage(p, bInfo.sizeId, size);
+  const maxCans = productHasCanBreakdown(p) ? productCanCount(p, size) : Math.floor((p.stock || 0) / size);
+  const nonExpAvail = bInfo.batchInfo ? bInfo.nonExpiredQty : maxCans;
+  const totalRemaining = Math.max(0, Math.min(maxCans, nonExpAvail) - usage.totalQty);
+
+  const discBatches = (bInfo.discountedBatches || []).map(b => {
+    const used = usage.byBatch[b.batchId] || 0;
+    return { ...b, availQty: Math.max(0, (Number(b.remainingQty) || 0) - used) };
+  }).filter(b => b.availQty > 0);
+
+  const regBatches = (bInfo.regularBatches || []).map(b => {
+    const used = usage.byBatch[b.batchId] || 0;
+    return { ...b, availQty: Math.max(0, (Number(b.remainingQty) || 0) - used) };
+  }).filter(b => b.availQty > 0);
+
+  const remainingDiscQty = Math.min(totalRemaining, discBatches.reduce((s, b) => s + b.availQty, 0) || Math.max(0, bInfo.discountedQty - usage.discQty));
+  const remainingRegQty = Math.min(totalRemaining, regBatches.reduce((s, b) => s + b.availQty, 0) || Math.max(0, bInfo.regularQty - usage.regQty));
+
+  const primaryDiscBatch = discBatches[0] || (bInfo.bestDiscountBatchId ? {
+    batchId: bInfo.bestDiscountBatchId,
+    batchNumber: bInfo.bestDiscountBatchNumber,
+    availQty: remainingDiscQty,
+    expirationDate: bInfo.bestDiscountExpiryDate,
+    daysRemaining: bInfo.bestDiscountDaysRemaining,
+    discountPct: bInfo.bestDiscountPct,
+    discountAmount: bInfo.bestDiscountAmount,
+    discountedPrice: bInfo.bestDiscountedPrice,
+    originalPrice: bInfo.bestOriginalPrice
+  } : null);
+
+  const primaryRegBatch = regBatches[0] || (bInfo.bestRegularBatchId ? {
+    batchId: bInfo.bestRegularBatchId,
+    batchNumber: bInfo.bestRegularBatchNumber,
+    availQty: remainingRegQty,
+    expirationDate: bInfo.bestRegularExpiryDate,
+    daysRemaining: bInfo.bestRegularDaysRemaining,
+    originalPrice: bInfo.bestOriginalPrice
+  } : null);
+
+  const defaultChosen = remainingDiscQty > 0 ? 'disc' : (remainingRegQty > 0 ? 'reg' : null);
+
+  posOptionModalState = {
+    productId: p.id,
+    size: Number(size),
+    discBatches,
+    regBatches,
+    primaryDiscBatch,
+    selectedDiscBatchId: primaryDiscBatch ? primaryDiscBatch.batchId : null,
+    selectedRegBatchId: primaryRegBatch ? primaryRegBatch.batchId : null
+  };
+
+  const discExp = primaryDiscBatch ? posFmtBatchExpiry(primaryDiscBatch.expirationDate, primaryDiscBatch.daysRemaining) : { expStr: '—', daysStr: '' };
+  const regExp = primaryRegBatch ? posFmtBatchExpiry(primaryRegBatch.expirationDate, primaryRegBatch.daysRemaining) : { expStr: '—', daysStr: '' };
+  const hasLongerShelf = posIsRegularLongerShelfLife(primaryRegBatch, primaryDiscBatch);
+
+  let availabilityNoticeHtml = '';
+  if (remainingDiscQty > 0 && remainingRegQty <= 0) {
+    availabilityNoticeHtml = `<div class="pos-option-notice is-info">ℹ️ Only <strong>Discounted Near-Expiry</strong> stock is currently available for ${fmtSize(size)}.</div>`;
+  } else if (remainingRegQty > 0 && remainingDiscQty <= 0) {
+    availabilityNoticeHtml = `<div class="pos-option-notice is-info">ℹ️ Only <strong>Regular Stock</strong> is currently available for ${fmtSize(size)}.</div>`;
+  }
+
+  const discSelectHtml = discBatches.length > 1 ? `
+    <div class="pos-batch-select-row">
+      <label class="pos-batch-select-label" for="pos-disc-batch-select">Batch:</label>
+      <select id="pos-disc-batch-select" class="pos-batch-select" onchange="onPosOptionBatchChange('disc', this.value)">
+        ${discBatches.map(b => {
+    const ex = posFmtBatchExpiry(b.expirationDate, b.daysRemaining);
+    return `<option value="${escapeAttr(b.batchId)}">${escapeHtml(b.batchNumber)} (${b.availQty} avail · Exp: ${escapeHtml(ex.expStr)})</option>`;
+  }).join('')}
+      </select>
+    </div>` : '';
+
+  const regSelectHtml = regBatches.length > 1 ? `
+    <div class="pos-batch-select-row">
+      <label class="pos-batch-select-label" for="pos-reg-batch-select">Batch (FIFO/FEFO):</label>
+      <select id="pos-reg-batch-select" class="pos-batch-select" onchange="onPosOptionBatchChange('reg', this.value)">
+        ${regBatches.map(b => {
+    const ex = posFmtBatchExpiry(b.expirationDate, b.daysRemaining);
+    return `<option value="${escapeAttr(b.batchId)}">${escapeHtml(b.batchNumber)} (${b.availQty} avail · Exp: ${escapeHtml(ex.expStr)})</option>`;
+  }).join('')}
+      </select>
+    </div>` : '';
+
+  const discBatchAvail = primaryDiscBatch ? Math.min(remainingDiscQty, primaryDiscBatch.availQty) : remainingDiscQty;
+  const regBatchAvail = primaryRegBatch ? Math.min(remainingRegQty, primaryRegBatch.availQty) : remainingRegQty;
+
+  const body = `
+    <div class="pos-option-modal-intro">
+      <div class="pos-option-prod-title">${escapeHtml(p.name)} — ${fmtSize(size)}</div>
+      <div class="muted small">Compare pricing and expiration dates to choose the best option for the customer.</div>
+    </div>
+    ${availabilityNoticeHtml}
+    <div class="pos-disc-modal-grid">
+      <div id="pos-opt-card-disc"
+           class="pos-disc-option-card is-discounted ${defaultChosen === 'disc' ? 'is-chosen' : ''} ${remainingDiscQty <= 0 ? 'is-unavailable' : ''}"
+           onclick="selectPosOptionCard('disc')">
+        <div class="pos-disc-option-head">
+          <div class="pos-opt-badges">
+            <span id="pos-disc-pct-badge" class="badge" style="background:#059669; color:#fff; font-weight:700;">🏷️ ${bInfo.bestDiscountPct}% OFF</span>
+            <span class="pos-near-expiry-pill">Near Expiry</span>
+          </div>
+          <span id="pos-disc-avail-label" class="pos-opt-qty-badge is-disc">${discBatchAvail} available</span>
+        </div>
+        <div id="pos-disc-price-wrap" class="pos-disc-option-price">
+          <del>${peso(bInfo.bestOriginalPrice)}</del>
+          <strong>${peso(bInfo.bestDiscountedPrice)}</strong>
+          <span class="pos-disc-save">Save ${peso(bInfo.bestDiscountAmount)} / unit</span>
+        </div>
+        <p class="pos-opt-desc">Save money with this discounted product. Please check the expiration date before purchasing.</p>
+        ${discSelectHtml}
+        <div class="pos-opt-batch-meta" id="pos-disc-batch-meta">
+          ${primaryDiscBatch ? `
+            <div><span>Batch:</span> <code>${escapeHtml(primaryDiscBatch.batchNumber || '—')}</code></div>
+            <div><span>Expiration Date:</span> <strong>${escapeHtml(discExp.expStr)}</strong>${discExp.daysStr ? ` <span class="pos-opt-days is-warn">(${escapeHtml(discExp.daysStr)})</span>` : ''}</div>
+          ` : '<div class="muted small">No discounted near-expiry batch available.</div>'}
+        </div>
+        <div class="pos-disc-option-actions" onclick="event.stopPropagation()">
+          <button id="pos-disc-submit-btn" type="button" class="btn small" style="background:#059669; color:#fff; flex:1;" ${remainingDiscQty <= 0 ? 'disabled' : ''} onclick="submitPosDiscountSelection('${escapeAttr(p.id)}', ${Number(size)}, true)">
+            ${remainingDiscQty > 0 ? `✓ Select ${bInfo.bestDiscountPct}% OFF` : 'Unavailable'}
+          </button>
+        </div>
+      </div>
+
+      <div id="pos-opt-card-reg"
+           class="pos-disc-option-card is-regular ${defaultChosen === 'reg' ? 'is-chosen' : ''} ${remainingRegQty <= 0 ? 'is-unavailable' : ''}"
+           onclick="selectPosOptionCard('reg')">
+        <div class="pos-disc-option-head">
+          <div class="pos-opt-badges">
+            <span class="badge ghost" style="font-weight:700;">📦 Regular Stock</span>
+            ${hasLongerShelf && remainingRegQty > 0 ? '<span class="pos-longer-shelf-pill" id="pos-reg-shelf-pill">✨ Longer Shelf Life</span>' : '<span class="pos-longer-shelf-pill" id="pos-reg-shelf-pill" style="display:none;">✨ Longer Shelf Life</span>'}
+          </div>
+          <span id="pos-reg-avail-label" class="pos-opt-qty-badge is-reg">${regBatchAvail} available</span>
+        </div>
+        <div class="pos-disc-option-price">
+          <strong style="color:var(--ink);">${peso(bInfo.bestOriginalPrice)}</strong>
+          <span class="muted small">/ unit</span>
+        </div>
+        <p class="pos-opt-desc">Regular-priced product with a longer remaining shelf life.</p>
+        ${regSelectHtml}
+        <div class="pos-opt-batch-meta" id="pos-reg-batch-meta">
+          ${primaryRegBatch ? `
+            <div><span>Batch:</span> <code>${escapeHtml(primaryRegBatch.batchNumber || '—')}</code></div>
+            <div><span>Expiration Date:</span> <strong>${escapeHtml(regExp.expStr)}</strong>${regExp.daysStr ? ` <span class="pos-opt-days">(${escapeHtml(regExp.daysStr)})</span>` : ''}</div>
+          ` : '<div class="muted small">No regular batch available.</div>'}
+        </div>
+        <div class="pos-disc-option-actions" onclick="event.stopPropagation()">
+          <button type="button" class="btn secondary small" style="flex:1;" ${remainingRegQty <= 0 ? 'disabled' : ''} onclick="submitPosDiscountSelection('${escapeAttr(p.id)}', ${Number(size)}, false)">
+            ${remainingRegQty > 0 ? '+ Select Regular' : 'No Regular Stock'}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  openModal(`Choose Your Product Option — ${fmtSize(size)}`, body, `<button type="button" class="btn secondary" onclick="closeModal()">Cancel</button>`);
+}
+
+function selectPosOptionCard(type) {
+  const discCard = document.getElementById('pos-opt-card-disc');
+  const regCard = document.getElementById('pos-opt-card-reg');
+  if (type === 'disc' && discCard && !discCard.classList.contains('is-unavailable')) {
+    discCard.classList.add('is-chosen');
+    if (regCard) regCard.classList.remove('is-chosen');
+  } else if (type === 'reg' && regCard && !regCard.classList.contains('is-unavailable')) {
+    regCard.classList.add('is-chosen');
+    if (discCard) discCard.classList.remove('is-chosen');
+  }
+}
+
+function onPosOptionBatchChange(type, batchId) {
+  if (!posOptionModalState) return;
+  selectPosOptionCard(type);
+  if (type === 'disc') {
+    const b = posOptionModalState.discBatches.find(x => x.batchId === batchId);
+    if (!b) return;
+    posOptionModalState.selectedDiscBatchId = b.batchId;
+    const ex = posFmtBatchExpiry(b.expirationDate, b.daysRemaining);
+    const metaEl = document.getElementById('pos-disc-batch-meta');
+    if (metaEl) {
+      metaEl.innerHTML = `
+        <div><span>Batch:</span> <code>${escapeHtml(b.batchNumber || '—')}</code></div>
+        <div><span>Expiration Date:</span> <strong>${escapeHtml(ex.expStr)}</strong>${ex.daysStr ? ` <span class="pos-opt-days is-warn">(${escapeHtml(ex.daysStr)})</span>` : ''}</div>`;
+    }
+    const availEl = document.getElementById('pos-disc-avail-label');
+    if (availEl) availEl.textContent = `${b.availQty} available`;
+    const pctBadge = document.getElementById('pos-disc-pct-badge');
+    if (pctBadge && b.discountPct !== undefined) pctBadge.textContent = `🏷️ ${b.discountPct}% OFF`;
+    const priceWrap = document.getElementById('pos-disc-price-wrap');
+    if (priceWrap && b.discountedPrice !== undefined) {
+      priceWrap.innerHTML = `
+        <del>${peso(b.originalPrice)}</del>
+        <strong>${peso(b.discountedPrice)}</strong>
+        <span class="pos-disc-save">Save ${peso(b.discountAmount)} / unit</span>`;
+    }
+    const submitBtn = document.getElementById('pos-disc-submit-btn');
+    if (submitBtn) {
+      submitBtn.disabled = (Number(b.availQty) || 0) <= 0;
+      submitBtn.textContent = (Number(b.availQty) || 0) > 0 ? `✓ Select ${b.discountPct}% OFF` : 'Unavailable';
+    }
+  } else {
+    const b = posOptionModalState.regBatches.find(x => x.batchId === batchId);
+    if (!b) return;
+    posOptionModalState.selectedRegBatchId = b.batchId;
+    const ex = posFmtBatchExpiry(b.expirationDate, b.daysRemaining);
+    const metaEl = document.getElementById('pos-reg-batch-meta');
+    if (metaEl) {
+      metaEl.innerHTML = `
+        <div><span>Batch:</span> <code>${escapeHtml(b.batchNumber || '—')}</code></div>
+        <div><span>Expiration Date:</span> <strong>${escapeHtml(ex.expStr)}</strong>${ex.daysStr ? ` <span class="pos-opt-days">(${escapeHtml(ex.daysStr)})</span>` : ''}</div>`;
+    }
+    const availEl = document.getElementById('pos-reg-avail-label');
+    if (availEl) availEl.textContent = `${b.availQty} available`;
+    const shelfPill = document.getElementById('pos-reg-shelf-pill');
+    if (shelfPill) {
+      const hasLonger = posIsRegularLongerShelfLife(b, posOptionModalState.primaryDiscBatch);
+      shelfPill.style.display = hasLonger ? '' : 'none';
+    }
+  }
+}
+
+function submitPosDiscountSelection(productId, size, useDiscount) {
+  const batchId = posOptionModalState
+    ? (useDiscount ? posOptionModalState.selectedDiscBatchId : posOptionModalState.selectedRegBatchId)
+    : null;
+  if (addPosSizeBatchToCart(productId, size, useDiscount, 1, batchId)) {
+    posOptionModalState = null;
+    closeModal();
+  }
+}
+
+function addPosSizeBatchToCart(productId, size = 1, applyNearExpiryDiscount = false, addQty = 1, selectedBatchId = null) {
+  const p = productById(productId);
+  if (!p || p.stock <= 0) { showToast('This product is out of stock.', 'error'); return false; }
+
+  const qtyToAdd = Math.max(1, parseInt(addQty, 10) || 1);
+  const bInfo = posGetSizeBatchInfo(p, size);
+  const sizeId = bInfo.sizeId;
+  const usage = posGetCartSizeUsage(p, sizeId, size);
+
+  const reserved = getCartReservedLitersForProduct(p);
+  const totalAvail = typeof productMixAvailableStock === 'function' ? productMixAvailableStock(p) : p.stock;
+  const availForSealed = Math.min(p.stock - reserved.sealed, totalAvail - reserved.total);
+
+  if (qtyToAdd * size > availForSealed + 1e-6) {
+    showToast(`Not enough stock — only ${formatLiters(Math.max(0, availForSealed))} available.`, 'error');
+    return false;
+  }
+
+  if (productHasCanBreakdown(p)) {
+    const availableCans = productCanCount(p, size);
+    if (usage.totalQty + qtyToAdd > availableCans) {
+      showToast(`Only ${availableCans} in stock for ${fmtSize(size)} (${usage.totalQty} already in cart).`, 'error');
+      return false;
+    }
+  }
+
+  if (bInfo.batchInfo && bInfo.nonExpiredQty < usage.totalQty + qtyToAdd) {
+    if (bInfo.expiredQty > 0 && bInfo.nonExpiredQty <= 0) {
+      showToast(`Sale blocked: Remaining ${fmtSize(size)} stock for "${p.name}" is expired and cannot be sold.`, 'error');
+    } else {
+      showToast(`Only ${bInfo.nonExpiredQty} non-expired ${fmtSize(size)} unit(s) available for "${p.name}".`, 'error');
+    }
+    return false;
+  }
+
+  let nearExpiryDiscountPct = 0;
+  let nearExpiryDiscountAmount = 0;
+  const originalUnitPrice = bInfo.bestOriginalPrice;
+  let unitPriceForSize = originalUnitPrice;
+  let chosenBatchId = null;
+  let chosenBatchNumber = null;
+
+  if (applyNearExpiryDiscount) {
+    if (bInfo.discountedQty <= 0 || bInfo.bestDiscountPct <= 0) {
+      showToast(`No active near-expiry discount is available for ${fmtSize(size)} "${p.name}".`, 'error');
+      return false;
+    }
+    const discBatch = (selectedBatchId && (bInfo.discountedBatches || []).find(b => b.batchId === selectedBatchId))
+      || (bInfo.discountedBatches || [])[0]
+      || null;
+    chosenBatchId = discBatch ? discBatch.batchId : bInfo.bestDiscountBatchId;
+    chosenBatchNumber = discBatch ? discBatch.batchNumber : bInfo.bestDiscountBatchNumber;
+
+    const batchUsed = chosenBatchId ? (usage.byBatch[chosenBatchId] || 0) : usage.discQty;
+    const batchAvail = discBatch ? Math.max(0, (Number(discBatch.remainingQty) || 0) - batchUsed) : Math.max(0, bInfo.discountedQty - usage.discQty);
+    if (qtyToAdd > batchAvail) {
+      showToast(`Only ${batchAvail} discounted unit(s) remaining in batch ${chosenBatchNumber || ''} for ${fmtSize(size)} "${p.name}".`, 'error');
+      return false;
+    }
+    nearExpiryDiscountPct = discBatch && discBatch.discountPct ? Number(discBatch.discountPct) : bInfo.bestDiscountPct;
+    nearExpiryDiscountAmount = discBatch && discBatch.discountAmount !== undefined ? Number(discBatch.discountAmount) : bInfo.bestDiscountAmount;
+    unitPriceForSize = discBatch && discBatch.discountedPrice !== undefined ? Number(discBatch.discountedPrice) : bInfo.bestDiscountedPrice;
+  } else if (bInfo.batchInfo) {
+    const regBatch = (selectedBatchId && (bInfo.regularBatches || []).find(b => b.batchId === selectedBatchId))
+      || (bInfo.regularBatches || [])[0]
+      || null;
+    chosenBatchId = regBatch ? regBatch.batchId : bInfo.bestRegularBatchId;
+    chosenBatchNumber = regBatch ? regBatch.batchNumber : bInfo.bestRegularBatchNumber;
+
+    if (regBatch) {
+      const batchUsed = usage.byBatch[regBatch.batchId] || 0;
+      const batchAvail = Math.max(0, (Number(regBatch.remainingQty) || 0) - batchUsed);
+      if (qtyToAdd > batchAvail) {
+        showToast(`Only ${batchAvail} regular-priced unit(s) available in batch ${regBatch.batchNumber} for ${fmtSize(size)} "${p.name}".`, 'error');
+        return false;
+      }
+    } else {
+      const remainingRegQty = Math.max(0, bInfo.regularQty - usage.regQty);
+      if (qtyToAdd > remainingRegQty) {
+        showToast(`Only ${remainingRegQty} regular-priced unit(s) available for ${fmtSize(size)} "${p.name}".`, 'error');
+        return false;
+      }
+    }
+  }
+
+  const isDisc = nearExpiryDiscountPct > 0;
+  const existing = cart.find(c =>
+    c.type === 'product' &&
+    (c.productId === p.id || c.productId === p.productId) &&
+    (c.sizeId ? c.sizeId === sizeId : (Number(c.size) || 1) === size) &&
+    Boolean(c.isNearExpiryDiscount || Number(c.nearExpiryDiscountPct) > 0) === isDisc &&
+    ((c.selectedBatchId || c.nearExpiryBatchId || c.regularBatchId || null) === chosenBatchId)
+  );
 
   if (existing) {
-    existing.qty += 1;
+    existing.qty += qtyToAdd;
     existing.unitPrice = unitPriceForSize;
     existing.originalUnitPrice = originalUnitPrice;
+    existing.isNearExpiryDiscount = isDisc;
     existing.nearExpiryDiscountPct = nearExpiryDiscountPct;
     existing.nearExpiryDiscountAmount = nearExpiryDiscountAmount;
-    existing.nearExpiryStatus = (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoExpiryStatus : null;
-    existing.nearExpiryBatchId = (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoBatchId : null;
-    existing.nearExpiryBatchNumber = (batchInfo && nearExpiryDiscountPct > 0) ? (batchInfo.fifoBatchNumber || null) : null;
+    existing.nearExpiryStatus = isDisc ? bInfo.bestDiscountStatus : null;
+    existing.selectedBatchId = chosenBatchId;
+    existing.selectedBatchNumber = chosenBatchNumber;
+    existing.nearExpiryBatchId = isDisc ? chosenBatchId : null;
+    existing.nearExpiryBatchNumber = isDisc ? chosenBatchNumber : null;
+    existing.regularBatchId = !isDisc ? chosenBatchId : null;
+    existing.regularBatchNumber = !isDisc ? chosenBatchNumber : null;
     existing.lineTotal = Number((existing.qty * existing.unitPrice).toFixed(2));
   } else {
     cart.push({
@@ -594,28 +1129,30 @@ function addSizeToCart(productId, size = 1) {
       brand: p.brand,
       color: p.color,
       size: size,
-      qty: 1,
+      qty: qtyToAdd,
       unitPrice: unitPriceForSize,
       originalUnitPrice: originalUnitPrice,
+      isNearExpiryDiscount: isDisc,
       nearExpiryDiscountPct: nearExpiryDiscountPct,
       nearExpiryDiscountAmount: nearExpiryDiscountAmount,
-      nearExpiryStatus: (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoExpiryStatus : null,
-      nearExpiryBatchId: (batchInfo && nearExpiryDiscountPct > 0) ? batchInfo.fifoBatchId : null,
-      nearExpiryBatchNumber: (batchInfo && nearExpiryDiscountPct > 0) ? (batchInfo.fifoBatchNumber || null) : null,
+      nearExpiryStatus: isDisc ? bInfo.bestDiscountStatus : null,
+      selectedBatchId: chosenBatchId,
+      selectedBatchNumber: chosenBatchNumber,
+      nearExpiryBatchId: isDisc ? chosenBatchId : null,
+      nearExpiryBatchNumber: isDisc ? chosenBatchNumber : null,
+      regularBatchId: !isDisc ? chosenBatchId : null,
+      regularBatchNumber: !isDisc ? chosenBatchNumber : null,
       pricePerLiter: p.price,
-      lineTotal: unitPriceForSize,
+      lineTotal: Number((qtyToAdd * unitPriceForSize).toFixed(2)),
       taxClassification: p.taxClassification || p.tax_classification || 'vatable'
     });
   }
   refreshCartUI();
-  showToast(`Added 1x ${fmtSize(size)} ${p.name} to Current Sale.`, 'ok');
+  showToast(`Added ${qtyToAdd}x ${fmtSize(size)} ${p.name}${isDisc ? ` (${nearExpiryDiscountPct}% OFF)` : ''} to Current Sale.`, 'ok');
+  return true;
 }
 
 // Backward compatibility
-function addToCart(productId, qty = 1, size = 1) {
-  addSizeToCart(productId, size);
-}
-
 function changeCartQty(index, delta) {
   const line = cart[index];
   if (!line) return;
@@ -633,8 +1170,9 @@ function handleCartQtyInput(index, input) {
   if (!line) return;
   const raw = input.value.trim();
   if (raw === '') return;
-  let newQty = parseInt(raw, 10);
-  if (isNaN(newQty) || newQty < 1) return;
+  let newQty = line.type === 'colormix' ? parseFloat(raw) : parseInt(raw, 10);
+  if (isNaN(newQty) || newQty <= 0) return;
+  if (line.type === 'colormix') newQty = Number(newQty.toFixed(2));
 
   if (line.type === 'product') {
     const p = productById(line.productId);
@@ -656,14 +1194,48 @@ function handleCartQtyInput(index, input) {
       }
 
       if (productHasCanBreakdown(p)) {
-        const maxCans = productCanCount(p, size);
+        const usage = posGetCartSizeUsage(p, line.sizeId, size, index);
+        const maxCans = Math.max(0, productCanCount(p, size) - usage.totalQty);
         if (newQty > maxCans) {
-          showToast(`Only ${maxCans} in stock for ${size}L.`, 'error');
+          showToast(`Only ${maxCans} additional unit(s) available in stock for ${fmtSize(size)}.`, 'error');
           if (maxCans <= 0) {
             input.value = line.qty;
             return;
           }
           newQty = maxCans;
+          input.value = newQty;
+        }
+      }
+
+      const bInfo = posGetSizeBatchInfo(p, size);
+      if (bInfo.batchInfo) {
+        const isDiscLine = Boolean(line.isNearExpiryDiscount || Number(line.nearExpiryDiscountPct) > 0);
+        const usage = posGetCartSizeUsage(p, line.sizeId, size, index);
+        let maxBatchQty = isDiscLine
+          ? Math.max(0, bInfo.discountedQty - usage.discQty)
+          : Math.max(0, bInfo.nonExpiredQty - usage.totalQty);
+        if (isDiscLine && line.selectedBatchId && Array.isArray(bInfo.discountedBatches)) {
+          const selBatch = bInfo.discountedBatches.find(x => x.batchId === line.selectedBatchId);
+          if (selBatch) {
+            const usedOnBatch = cart.reduce((acc, it, idx) => (
+              idx !== index && it && it.type === 'product' && it.selectedBatchId === line.selectedBatchId
+                ? acc + (Number(it.qty) || 0) : acc
+            ), 0);
+            maxBatchQty = Math.min(maxBatchQty, Math.max(0, (Number(selBatch.remainingQty) || 0) - usedOnBatch));
+          }
+        }
+        if (newQty > maxBatchQty) {
+          showToast(
+            isDiscLine
+              ? `Only ${maxBatchQty} discounted unit(s) available for ${fmtSize(size)} "${p.name}". Add additional units at regular price.`
+              : `Only ${maxBatchQty} non-expired ${fmtSize(size)} unit(s) available for "${p.name}".`,
+            'error'
+          );
+          if (maxBatchQty <= 0) {
+            input.value = line.qty;
+            return;
+          }
+          newQty = maxBatchQty;
           input.value = newQty;
         }
       }
@@ -721,15 +1293,24 @@ function updateCartLineDOM(index) {
 
   const priceEl = document.getElementById(`cart-price-${index}`);
   if (priceEl) {
-    priceEl.innerHTML = `<span>${peso(line.lineTotal)}</span>`;
+    const isDiscLine = line.type === 'product' && Number(line.nearExpiryDiscountPct) > 0;
+    const origSub = isDiscLine ? Number(((line.originalUnitPrice || line.unitPrice) * line.qty).toFixed(2)) : 0;
+    priceEl.innerHTML = isDiscLine
+      ? `<del class="muted" style="font-size:11px; display:block; font-weight:400;">${peso(origSub)}</del><span>${peso(line.lineTotal)}</span>`
+      : `<span>${peso(line.lineTotal)}</span>`;
   }
 
   const metaEl = document.getElementById(`cart-meta-${index}`);
   if (metaEl) {
     const isMix = line.type === 'colormix';
+    const isDiscLine = !isMix && Number(line.nearExpiryDiscountPct) > 0;
+    const perUnitSave = isDiscLine ? Number((line.nearExpiryDiscountAmount || ((line.originalUnitPrice || line.unitPrice) - line.unitPrice)).toFixed(2)) : 0;
+    const totalSave = isDiscLine ? Number((perUnitSave * (line.qty || 1)).toFixed(2)) : 0;
     metaEl.innerHTML = isMix
       ? `Custom Mix · <strong>${line.liters}L</strong> · ${peso(line.unitPrice)}/L`
-      : `${escapeHtml(line.brand || '')} · Size: <strong>${line.size || 1}L</strong> · ${peso(line.unitPrice)} each · <span class="total-liters" style="color:var(--teal); font-weight:600;">${(line.qty * (Number(line.size) || 1)).toFixed(2)} L total</span>`;
+      : `${escapeHtml(line.brand || '')} · Size: <strong>${line.size || 1}L</strong> · ${isDiscLine
+        ? `<del class="muted">${peso(line.originalUnitPrice)}</del> <strong style="color:var(--success-text);">${peso(line.unitPrice)}</strong> <span class="badge" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-size:10px; padding:0 5px;">🏷️ -${line.nearExpiryDiscountPct}% OFF (-${peso(perUnitSave)}/unit · Save ${peso(totalSave)})</span> <span class="badge" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-size:10px; padding:0 5px;">${line.qty} discounted</span>`
+        : `${peso(line.unitPrice)} each`} · <span class="total-liters" style="color:var(--teal-text); font-weight:600;">${(line.qty * (Number(line.size) || 1)).toFixed(2)} L total</span>`;
   }
 
   const cartCountBadge = document.getElementById('cart-count-badge');
@@ -741,15 +1322,17 @@ function updateCartLineDOM(index) {
 
   renderCartTotals();
   updateCheckoutButtonState();
+  if (typeof scheduleRouteStateSync === 'function') scheduleRouteStateSync();
 }
 
 function setCartQty(index, rawVal) {
   const line = cart[index];
   if (!line) return;
-  let newQty = parseInt(rawVal, 10);
+  let newQty = line.type === 'colormix' ? parseFloat(rawVal) : parseInt(rawVal, 10);
   if (isNaN(newQty) || newQty <= 0) {
-    newQty = 1;
+    newQty = line.type === 'colormix' ? 0.5 : 1;
   }
+  if (line.type === 'colormix') newQty = Number(newQty.toFixed(2));
 
   if (line.type === 'product') {
     const p = productById(line.productId);
@@ -775,13 +1358,49 @@ function setCartQty(index, rawVal) {
     }
 
     if (productHasCanBreakdown(p)) {
-      const maxCans = productCanCount(p, size);
+      const usage = posGetCartSizeUsage(p, line.sizeId, size, index);
+      const maxCans = Math.max(0, productCanCount(p, size) - usage.totalQty);
       if (newQty > maxCans) {
-        showToast(`Only ${maxCans} in stock for ${size}L.`, 'error');
+        showToast(`Only ${maxCans} in stock for ${fmtSize(size)}.`, 'error');
         if (maxCans <= 0) {
           cart.splice(index, 1);
         } else {
           line.qty = maxCans;
+          line.lineTotal = Number((line.qty * line.unitPrice).toFixed(2));
+        }
+        refreshCartUI();
+        return;
+      }
+    }
+
+    const bInfo = posGetSizeBatchInfo(p, size);
+    if (bInfo.batchInfo) {
+      const isDiscLine = Boolean(line.isNearExpiryDiscount || Number(line.nearExpiryDiscountPct) > 0);
+      const usage = posGetCartSizeUsage(p, line.sizeId, size, index);
+      let maxBatchQty = isDiscLine
+        ? Math.max(0, bInfo.discountedQty - usage.discQty)
+        : Math.max(0, bInfo.nonExpiredQty - usage.totalQty);
+      if (isDiscLine && line.selectedBatchId && Array.isArray(bInfo.discountedBatches)) {
+        const selBatch = bInfo.discountedBatches.find(x => x.batchId === line.selectedBatchId);
+        if (selBatch) {
+          const usedOnBatch = cart.reduce((acc, it, idx) => (
+            idx !== index && it && it.type === 'product' && it.selectedBatchId === line.selectedBatchId
+              ? acc + (Number(it.qty) || 0) : acc
+          ), 0);
+          maxBatchQty = Math.min(maxBatchQty, Math.max(0, (Number(selBatch.remainingQty) || 0) - usedOnBatch));
+        }
+      }
+      if (newQty > maxBatchQty) {
+        showToast(
+          isDiscLine
+            ? `Only ${maxBatchQty} discounted unit(s) available for ${fmtSize(size)} "${p.name}". Add additional units at regular price.`
+            : `Only ${maxBatchQty} non-expired ${fmtSize(size)} unit(s) available for "${p.name}".`,
+          'error'
+        );
+        if (maxBatchQty <= 0) {
+          cart.splice(index, 1);
+        } else {
+          line.qty = maxBatchQty;
           line.lineTotal = Number((line.qty * line.unitPrice).toFixed(2));
         }
         refreshCartUI();
@@ -853,6 +1472,7 @@ function refreshCartUI() {
   if (typeof updateNavBadges === 'function') {
     try { updateNavBadges(); } catch (e) { }
   }
+  if (typeof scheduleRouteStateSync === 'function') scheduleRouteStateSync();
 
   if (focusedInputId) {
     const nextInput = document.getElementById(focusedInputId);
@@ -887,15 +1507,20 @@ function cartLinesHtml() {
       <div class="cname">
         <div class="cname-title">
           <span>${escapeHtml(c.name)}</span>
-          ${isMix ? `<span class="badge" style="font-size:10.5px; padding:1px 6px; background:#FAF7F2; border:1px solid var(--line);">${escapeHtml(c.colorName || 'Mix')}</span>` :
-        (c.color && c.color !== '-' ? `<span class="badge" style="font-size:10.5px; padding:1px 6px; background:#FAF7F2; border:1px solid var(--line);">${escapeHtml(c.color)}</span>` : '')}
+          ${isMix ? `<span class="badge" style="font-size:10.5px; padding:1px 6px; background:var(--surface-2); border:1px solid var(--line);">${escapeHtml(c.colorName || 'Mix')}</span>` :
+        (c.color && c.color !== '-' ? `<span class="badge" style="font-size:10.5px; padding:1px 6px; background:var(--surface-2); border:1px solid var(--line);">${escapeHtml(c.color)}</span>` : '')}
         </div>
         <span class="cmeta" id="cart-meta-${i}">
           ${isMix ? `Custom Mix · <strong>${c.liters}L</strong> · ${peso(c.unitPrice)}/L` :
-        `${escapeHtml(c.brand || '')} · Size: <strong>${c.size || 1}L</strong> · ${c.nearExpiryDiscountPct > 0 ? `<del class="muted">${peso(c.originalUnitPrice)}</del> <strong style="color:#065F46;">${peso(c.unitPrice)}</strong> <span class="badge" style="background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; font-size:10px; padding:0 5px;">🏷️ -${c.nearExpiryDiscountPct}% (-${peso(c.nearExpiryDiscountAmount || (c.originalUnitPrice - c.unitPrice))})</span>${c.nearExpiryBatchNumber ? ` <span class="muted">· Batch <code>${escapeHtml(c.nearExpiryBatchNumber)}</code></span>` : ''}` : `${peso(c.unitPrice)} each`} · <span class="total-liters" style="color:var(--teal); font-weight:600;">${(c.qty * (Number(c.size) || 1)).toFixed(2)} L total</span>`}
+        `${escapeHtml(c.brand || '')} · Size: <strong>${c.size || 1}L</strong> · ${c.nearExpiryDiscountPct > 0 ? (() => {
+          const perSave = Number((c.nearExpiryDiscountAmount || ((c.originalUnitPrice || c.unitPrice) - c.unitPrice)).toFixed(2));
+          const totSave = Number((perSave * (c.qty || 1)).toFixed(2));
+          return `<del class="muted">${peso(c.originalUnitPrice)}</del> <strong style="color:var(--success-text);">${peso(c.unitPrice)}</strong> <span class="badge" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-size:10px; padding:0 5px;">🏷️ -${c.nearExpiryDiscountPct}% OFF (-${peso(perSave)}/unit · Save ${peso(totSave)})</span> <span class="badge" style="background:var(--success-bg); color:var(--success-text); border:1px solid var(--success-border); font-size:10px; padding:0 5px;">${c.qty} discounted</span>${c.nearExpiryBatchNumber ? ` <span class="muted">· Batch <code>${escapeHtml(c.nearExpiryBatchNumber)}</code></span>` : ''}`;
+        })() : `${peso(c.unitPrice)} each`} · <span class="total-liters" style="color:var(--teal-text); font-weight:600;">${(c.qty * (Number(c.size) || 1)).toFixed(2)} L total</span>`}
         </span>
       </div>
       <div class="cprice" id="cart-price-${i}">
+        ${!isMix && Number(c.nearExpiryDiscountPct) > 0 ? `<del class="muted" style="font-size:11px; display:block; font-weight:400;">${peso(Number(((c.originalUnitPrice || c.unitPrice) * (c.qty || 1)).toFixed(2)))}</del>` : ''}
         <span>${peso(c.lineTotal)}</span>
       </div>
       <div class="qty-control">
@@ -943,7 +1568,7 @@ async function saveVatSettings(newSettings) {
   const vatRate = (!isNaN(rawRate) && rawRate >= 0) ? Number(rawRate.toFixed(2)) : 12.00;
 
   const clean = { taxStatus, pricingType, vatRate };
-  
+
   if (typeof db !== 'undefined' && db) {
     db.vatSettings = clean;
     if (!db.settings) db.settings = {};
@@ -964,7 +1589,7 @@ async function saveVatSettings(newSettings) {
       showToast(data.error || 'Failed to save VAT settings.', 'error');
       return false;
     }
-    
+
     if (typeof logAudit === 'function') {
       logAudit('UPDATE_VAT_SETTINGS', 'Settings', `Admin ${currentUser.name} updated Philippine VAT configuration to ${taxStatus.toUpperCase()} (${vatRate}%, ${pricingType})`, {
         entityName: 'Philippine Tax Settings',
@@ -996,9 +1621,9 @@ function getPosVatBadgeHtml() {
   const label = isVatReg
     ? `🇵🇭 ${rate}% VAT (${isExclusive ? 'Exclusive' : 'Inclusive'})`
     : `🇵🇭 Non-VAT Registered`;
-  const bg = isVatReg ? '#EDF5F4' : '#F2EDE4';
-  const color = isVatReg ? '#1F6F6B' : '#786F66';
-  const border = isVatReg ? '#C4DFDC' : 'var(--line)';
+  const bg = isVatReg ? 'var(--teal-tint)' : 'var(--surface-3)';
+  const color = isVatReg ? 'var(--teal-dark)' : 'var(--ink-soft)';
+  const border = isVatReg ? 'var(--teal-tint-border)' : 'var(--line)';
 
   return `
     <span id="pos-vat-status-badge" class="badge" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:11px; font-weight:700;" title="Philippine Tax Status">
@@ -1021,7 +1646,7 @@ function openVatSettingsModal() {
     '⚙️ Philippine 12% VAT Configuration',
     `
     <form id="vat-settings-form" onsubmit="event.preventDefault(); submitVatSettingsModal();" style="display:flex; flex-direction:column; gap:16px;">
-      <div style="background:#EDF5F4; border:1px solid #C4DFDC; border-radius:8px; padding:12px 14px; font-size:12.5px; color:#1F6F6B;">
+      <div style="background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:8px; padding:12px 14px; font-size:12.5px; color:var(--teal-dark);">
         <div style="font-weight:700; margin-bottom:3px; display:flex; align-items:center; gap:6px;">
           <span>🇵🇭</span>
           <span>Bureau of Internal Revenue (BIR) Value-Added Tax (VAT)</span>
@@ -1034,14 +1659,14 @@ function openVatSettingsModal() {
           Business Tax Status <span style="color:var(--danger);">*</span>
         </label>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-          <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:2px solid ${isVatReg ? 'var(--teal)' : 'var(--line)'}; border-radius:8px; background:${isVatReg ? '#F4F9F8' : '#fff'}; cursor:pointer;" id="label-tax-status-vat">
+          <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:2px solid ${isVatReg ? 'var(--teal)' : 'var(--line)'}; border-radius:8px; background:${isVatReg ? 'var(--teal-tint)' : 'var(--surface)'}; cursor:pointer;" id="label-tax-status-vat">
             <input type="radio" name="vat_tax_status" value="vat_registered" ${isVatReg ? 'checked' : ''} onchange="onVatTaxStatusRadioChange(this.value)" style="margin-top:2px;">
             <div>
               <div style="font-weight:700; color:var(--ink); font-size:13px;">VAT Registered</div>
               <div class="muted small" style="font-size:11px; margin-top:2px;">Subject to standard 12% Philippine VAT on VATable sales.</div>
             </div>
           </label>
-          <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:2px solid ${!isVatReg ? 'var(--teal)' : 'var(--line)'}; border-radius:8px; background:${!isVatReg ? '#F4F9F8' : '#fff'}; cursor:pointer;" id="label-tax-status-nonvat">
+          <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:2px solid ${!isVatReg ? 'var(--teal)' : 'var(--line)'}; border-radius:8px; background:${!isVatReg ? 'var(--teal-tint)' : 'var(--surface)'}; cursor:pointer;" id="label-tax-status-nonvat">
             <input type="radio" name="vat_tax_status" value="non_vat" ${!isVatReg ? 'checked' : ''} onchange="onVatTaxStatusRadioChange(this.value)" style="margin-top:2px;">
             <div>
               <div style="font-weight:700; color:var(--ink); font-size:13px;">Non-VAT Registered</div>
@@ -1057,7 +1682,7 @@ function openVatSettingsModal() {
             <label style="font-weight:700; font-size:13px; color:var(--ink); margin-bottom:6px; display:block;">
               Pricing Method <span style="color:var(--danger);">*</span>
             </label>
-            <select id="vat-pricing-type" style="width:100%; padding:9px 12px; font-size:13px; border:1px solid var(--line); border-radius:6px; background:#fff;">
+            <select id="vat-pricing-type" style="width:100%; padding:9px 12px; font-size:13px; border:1px solid var(--line); border-radius:6px; background:var(--surface);">
               <option value="inclusive" ${!isExclusive ? 'selected' : ''}>VAT-Inclusive (Item prices already include 12% VAT)</option>
               <option value="exclusive" ${isExclusive ? 'selected' : ''}>VAT-Exclusive (12% VAT is added on top of item prices)</option>
             </select>
@@ -1097,11 +1722,11 @@ function onVatTaxStatusRadioChange(val) {
   const lblNonVat = document.getElementById('label-tax-status-nonvat');
   if (lblVat) {
     lblVat.style.borderColor = isVat ? 'var(--teal)' : 'var(--line)';
-    lblVat.style.background = isVat ? '#F4F9F8' : '#fff';
+    lblVat.style.background = isVat ? 'var(--teal-tint)' : 'var(--surface)';
   }
   if (lblNonVat) {
     lblNonVat.style.borderColor = !isVat ? 'var(--teal)' : 'var(--line)';
-    lblNonVat.style.background = !isVat ? '#F4F9F8' : '#fff';
+    lblNonVat.style.background = !isVat ? 'var(--teal-tint)' : 'var(--surface)';
   }
 }
 
@@ -1181,7 +1806,18 @@ function calculateSaleVat(items, discountAmount = 0, customVatSettings = null) {
     const exemptDisc = Number((safeDiscount * (sExempt / subtotal)).toFixed(2));
     nVatable = Number(Math.max(0, sVatable - vatableDisc).toFixed(2));
     nExempt = Number(Math.max(0, sExempt - exemptDisc).toFixed(2));
-    nZeroRated = Number(Math.max(0, netSubtotal - nVatable - nExempt).toFixed(2));
+    if (sZeroRated > 0) {
+      nZeroRated = Number(Math.max(0, netSubtotal - nVatable - nExempt).toFixed(2));
+    } else {
+      nZeroRated = 0.00;
+      if (sExempt > 0 && sVatable > 0) {
+        nVatable = Number(Math.max(0, netSubtotal - nExempt).toFixed(2));
+      } else if (sVatable > 0) {
+        nVatable = netSubtotal;
+      } else if (sExempt > 0) {
+        nExempt = netSubtotal;
+      }
+    }
   }
 
   const rateFactor = vatRate / 100.0;
@@ -1287,7 +1923,7 @@ function cartTotalsHtml() {
         </div>
         <div class="cart-total-row" style="padding:2px 0;">
           <span class="muted">VAT Amount (${t.vatRate}%):</span>
-          <span style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal, #1F6F6B);">${peso(t.vatAmount)}</span>
+          <span style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal-text, #1F6F6B);">${peso(t.vatAmount)}</span>
         </div>
         ${(t.vatExemptSales > 0) ? `
           <div class="cart-total-row" style="padding:2px 0;">
@@ -1304,7 +1940,7 @@ function cartTotalsHtml() {
       ` : `
         <div class="cart-total-row" style="padding:2px 0;">
           <span class="muted">Tax Status:</span>
-          <span class="badge" style="background:#F2EDE4; border:1px solid var(--line); font-size:10.5px; padding:1px 6px;">Non-VAT Registered</span>
+          <span class="badge" style="background:var(--surface-3); border:1px solid var(--line); font-size:10.5px; padding:1px 6px;">Non-VAT Registered</span>
         </div>
       `}
     </div>
@@ -1392,7 +2028,7 @@ function updateCheckoutButtonState() {
     } else if (!isStockValid) {
       hintEl.innerHTML = `<span style="color:var(--danger); font-weight:600;">⚠️ ${escapeHtml(stockError)}</span>`;
     } else {
-      hintEl.innerHTML = `<span style="color:var(--teal); font-weight:600;">✓ Ready to complete sale · Click to review &amp; print receipt</span>`;
+      hintEl.innerHTML = `<span style="color:var(--teal-text); font-weight:600;">✓ Ready to complete sale · Click to review &amp; print receipt</span>`;
     }
   }
 }
@@ -1437,14 +2073,14 @@ function promptCustomerPurchaseConfirmation(data) {
                 <span class="cm-color-dot" style="background:${hex}; width:16px; height:16px; border-radius:50%; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.2);" title="${hex}"></span>
                 <div>
                   <div style="font-weight:600; color:var(--ink);">Custom Color Mix — ${escapeHtml(i.colorName || 'Special Blend')}</div>
-                  <div class="muted small" style="font-size:11px; color:#6B6259;">
+                  <div class="muted small" style="font-size:11px; color:var(--ink-soft);">
                     Formula: ${formulaSummary}
                   </div>
                 </div>
               </div>
             </td>
             <td style="text-align:center;">
-              <span class="badge" style="background:#F2EDE4; border:1px solid var(--line); font-size:11.5px; padding:2px 7px; font-weight:600;">
+              <span class="badge" style="background:var(--surface-3); border:1px solid var(--line); font-size:11.5px; padding:2px 7px; font-weight:600;">
                 ${fmtSize(i.liters || 1)} Mix
               </span>
             </td>
@@ -1473,7 +2109,7 @@ function promptCustomerPurchaseConfirmation(data) {
               <span class="cm-color-dot" style="background:${hex}; width:16px; height:16px; border-radius:50%; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.2);" title="${hex}"></span>
               <div>
                 <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                  <span style="font-weight:600; color:var(--ink);">${escapeHtml(i.name)} <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal);">(${hex})</code></span>
+                  <span style="font-weight:600; color:var(--ink);">${escapeHtml(i.name)} <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal-text);">(${hex})</code></span>
                 </div>
                 <div class="muted small" style="font-size:11px; margin-top:2px;">
                   ${escapeHtml(i.brand || (p && p.brand) || '')}
@@ -1484,7 +2120,7 @@ function promptCustomerPurchaseConfirmation(data) {
           </td>
           <td style="text-align:center;">
             <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
-              <span class="badge" style="background:#F2EDE4; border:1px solid var(--line); font-size:11.5px; padding:2px 7px; font-weight:600;">
+              <span class="badge" style="background:var(--surface-3); border:1px solid var(--line); font-size:11.5px; padding:2px 7px; font-weight:600;">
                 ${fmtSize(size)} <span class="muted" style="font-size:10.5px;">(${sizeUnit})</span>
               </span>
             </div>
@@ -1520,7 +2156,7 @@ function promptCustomerPurchaseConfirmation(data) {
           </div>
         </div>
 
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; font-size:12.5px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; font-size:12.5px;">
           <div>
             <span class="muted">Cashier:</span> <strong>${escapeHtml(cashierName)}</strong>
             ${((customerName || '').trim()) ? `<span style="margin-left:14px;"><span class="muted">Customer:</span> <strong>${escapeHtml(customerName.trim())}</strong></span>` : ''}
@@ -1547,17 +2183,17 @@ function promptCustomerPurchaseConfirmation(data) {
           </table>
         </div>
 
-        <div class="pos-confirm-payment-box" style="background:#FAF8F5; border:1.5px solid var(--line); border-radius:10px; padding:14px; margin-top:14px;">
+        <div class="pos-confirm-payment-box" style="background:var(--surface-2); border:1.5px solid var(--line); border-radius:10px; padding:14px; margin-top:14px;">
           <div style="display:flex; justify-content:space-between; font-size:13px; padding:3px 0;">
             <span class="muted">Subtotal:</span>
             <span style="font-weight:600; font-family:'Space Grotesk',monospace;">${peso(totals.subtotal)}</span>
           </div>
           ${(totals.discountAmount > 0) ? `
-            <div style="display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:var(--teal, #1F6F6B);">
+            <div style="display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:var(--teal-text, #1F6F6B);">
               <span>Discount (${totals.discountPct}%):</span>
               <span style="font-weight:700; font-family:'Space Grotesk',monospace;">-${peso(totals.discountAmount)}</span>
             </div>
-            <div style="display:inline-flex; align-items:center; gap:5px; background:#EDF5F4; border:1px solid #C4DFDC; color:#1F6F6B; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:700; margin:4px 0 2px;">
+            <div style="display:inline-flex; align-items:center; gap:5px; background:var(--teal-tint); border:1px solid var(--teal-tint-border); color:var(--teal-dark); padding:3px 8px; border-radius:4px; font-size:11px; font-weight:700; margin:4px 0 2px;">
               <span>🎉</span>
               <span>10% Discount Applied!</span>
             </div>
@@ -1572,7 +2208,7 @@ function promptCustomerPurchaseConfirmation(data) {
               </div>
               <div style="display:flex; justify-content:space-between; padding:2px 0;">
                 <span class="muted">VAT Amount (${totals.vatRate || 12}%):</span>
-                <span style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal, #1F6F6B);">${peso(totals.vatAmount || 0)}</span>
+                <span style="font-family:'Space Grotesk',monospace; font-weight:700; color:var(--teal-text, #1F6F6B);">${peso(totals.vatAmount || 0)}</span>
               </div>
               ${(Number(totals.vatExemptSales || 0) > 0) ? `
                 <div style="display:flex; justify-content:space-between; padding:2px 0;">
@@ -1582,7 +2218,7 @@ function promptCustomerPurchaseConfirmation(data) {
               ` : `
                 <div style="display:flex; justify-content:space-between; padding:2px 0;">
                   <span class="muted">VAT-Exempt Sales:</span>
-                  <span style="font-family:'Space Grotesk',monospace; color:#8A8070;">₱0.00</span>
+                  <span style="font-family:'Space Grotesk',monospace; color:var(--ink-soft);">₱0.00</span>
                 </div>
               `}
               ${(Number(totals.zeroRatedSales || 0) > 0) ? `
@@ -1594,23 +2230,23 @@ function promptCustomerPurchaseConfirmation(data) {
             ` : `
               <div style="display:flex; justify-content:space-between; padding:2px 0;">
                 <span class="muted">Tax Classification:</span>
-                <span class="badge" style="background:#F2EDE4; border:1px solid var(--line); font-size:11px; font-weight:600;">Non-VAT Registered (0% VAT)</span>
+                <span class="badge" style="background:var(--surface-3); border:1px solid var(--line); font-size:11px; font-weight:600;">Non-VAT Registered (0% VAT)</span>
               </div>
             `}
           </div>
 
           <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; margin-top:2px;">
             <span style="font-size:15px; font-weight:700; color:var(--ink);">Total Amount Due:</span>
-            <span id="pos-confirm-total-due" data-amount="${totalDue}" style="font-size:22px; font-weight:800; font-family:'Space Grotesk',monospace; color:var(--teal);">${peso(totalDue)}</span>
+            <span id="pos-confirm-total-due" data-amount="${totalDue}" style="font-size:22px; font-weight:800; font-family:'Space Grotesk',monospace; color:var(--teal-text);">${peso(totalDue)}</span>
           </div>
 
           <!-- Cash Payment Section (Cash Only Store Policy) -->
-          <div style="margin-top:12px; padding-top:12px; border-top:2px solid #EBE4D8;">
+          <div style="margin-top:12px; padding-top:12px; border-top:2px solid var(--line);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
               <label for="pos-cash-tendered-input" style="font-weight:700; font-size:13px; color:var(--ink); display:flex; align-items:center; gap:6px;">
                 <span>💵 Cash Tendered (Halagang Ibinayad):</span>
               </label>
-              <span class="badge" style="background:#EDF5F4; color:#1F6F6B; border:1px solid #C4DFDC; font-size:11px; font-weight:700;">STORE POLICY: CASH ONLY</span>
+              <span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border); font-size:11px; font-weight:700;">STORE POLICY: CASH ONLY</span>
             </div>
 
             <div style="position:relative; margin-bottom:8px;">
@@ -1623,12 +2259,12 @@ function promptCustomerPurchaseConfirmation(data) {
             <!-- Quick Cash Buttons -->
             <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
               <span class="muted small" style="align-self:center; margin-right:4px; font-size:11px;">Quick Cash:</span>
-              <button type="button" class="btn ghost small" style="padding:4px 10px; font-size:12px; font-weight:700; border:1px solid var(--teal); background:#EDF5F4; color:var(--teal);"
+              <button type="button" class="btn ghost small" style="padding:4px 10px; font-size:12px; font-weight:700; border:1px solid var(--teal); background:var(--teal-tint); color:var(--teal-text);"
                 onclick="setPosQuickCash(${totalDue})">
                 Exact (${peso(totalDue)})
               </button>
               ${quickBills.map(b => `
-                <button type="button" class="btn ghost small" style="padding:4px 10px; font-size:12px; font-weight:600; border:1px solid var(--line); background:#fff;"
+                <button type="button" class="btn ghost small" style="padding:4px 10px; font-size:12px; font-weight:600; border:1px solid var(--line); background:var(--surface);"
                   onclick="setPosQuickCash(${b})">
                   ${peso(b)}
                 </button>
@@ -1636,15 +2272,15 @@ function promptCustomerPurchaseConfirmation(data) {
             </div>
 
             <!-- Real-time Change Feedback Banner -->
-            <div id="pos-change-banner" style="background:#FFF0EE; border:1.5px solid #F0C4BF; border-radius:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center;">
-              <span style="font-size:13px; font-weight:600; color:#C1443D;" id="pos-change-label">⚠️ Please enter cash tendered</span>
-              <span id="pos-change-val" style="font-size:18px; font-weight:800; font-family:'Space Grotesk',monospace; color:#C1443D;">₱0.00</span>
+            <div id="pos-change-banner" style="background:var(--danger-bg); border:1.5px solid var(--danger-border); border-radius:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:13px; font-weight:600; color:var(--danger-text);" id="pos-change-label">⚠️ Please enter cash tendered</span>
+              <span id="pos-change-val" style="font-size:18px; font-weight:800; font-family:'Space Grotesk',monospace; color:var(--danger-text);">₱0.00</span>
             </div>
           </div>
         </div>
 
         <div style="font-size:12px; color:var(--ink-soft); display:flex; align-items:center; gap:8px; padding:6px 4px 2px;">
-          <span style="color:var(--teal); font-weight:bold; font-size:14px;">✔</span>
+          <span style="color:var(--teal-text); font-weight:bold; font-size:14px;">✔</span>
           <span>Ensure payment is received and change is counted before finalizing transaction.</span>
         </div>
       </div>
@@ -1682,11 +2318,11 @@ function onPosCashTenderedChange() {
   const tendered = Number(rawVal);
 
   if (rawVal === '' || isNaN(tendered) || tendered <= 0) {
-    bannerEl.style.background = '#FFF0EE';
-    bannerEl.style.borderColor = '#F0C4BF';
-    labelEl.style.color = '#C1443D';
+    bannerEl.style.background = 'var(--danger-bg)';
+    bannerEl.style.borderColor = 'var(--danger-border)';
+    labelEl.style.color = 'var(--danger-text)';
     labelEl.innerHTML = '⚠️ Please enter cash tendered';
-    valEl.style.color = '#C1443D';
+    valEl.style.color = 'var(--danger-text)';
     valEl.textContent = '₱0.00';
     submitBtn.disabled = true;
     submitBtn.style.opacity = '0.5';
@@ -1698,21 +2334,21 @@ function onPosCashTenderedChange() {
 
   if (change < 0) {
     const lacking = Math.abs(change);
-    bannerEl.style.background = '#FFF0EE';
-    bannerEl.style.borderColor = '#F0C4BF';
-    labelEl.style.color = '#C1443D';
+    bannerEl.style.background = 'var(--danger-bg)';
+    bannerEl.style.borderColor = 'var(--danger-border)';
+    labelEl.style.color = 'var(--danger-text)';
     labelEl.innerHTML = `⚠️ Insufficient Cash (Shortage)`;
-    valEl.style.color = '#C1443D';
+    valEl.style.color = 'var(--danger-text)';
     valEl.textContent = `-${peso(lacking)}`;
     submitBtn.disabled = true;
     submitBtn.style.opacity = '0.5';
     submitBtn.style.cursor = 'not-allowed';
   } else {
-    bannerEl.style.background = '#EDF5F4';
-    bannerEl.style.borderColor = '#C4DFDC';
-    labelEl.style.color = '#1F6F6B';
+    bannerEl.style.background = 'var(--teal-tint)';
+    bannerEl.style.borderColor = 'var(--teal-tint-border)';
+    labelEl.style.color = 'var(--teal-dark)';
     labelEl.innerHTML = `✓ Change Due:`;
-    valEl.style.color = '#1F6F6B';
+    valEl.style.color = 'var(--teal-dark)';
     valEl.textContent = peso(change);
     submitBtn.disabled = false;
     submitBtn.style.opacity = '1';
@@ -1940,6 +2576,8 @@ async function completeSale() {
             newValue: `${afterCans} units (${formatStock(p.stock)}L)`
           });
         }
+        const targetBatchId = c.selectedBatchId || c.nearExpiryBatchId || c.regularBatchId || null;
+        const targetBatchNumber = c.selectedBatchNumber || c.nearExpiryBatchNumber || c.regularBatchNumber || null;
         db.movements.push({
           id: uid('mv'),
           date: sale.date,
@@ -1951,7 +2589,8 @@ async function completeSale() {
           container_size: size,
           productName: p ? p.name : c.name,
           qtyChange: -litersDeducted,
-          note: `Sold via POS (${receiptNo}) [Sold ${count} × ${size}L${trailNote}]`,
+          batch: targetBatchId ? { batchId: targetBatchId, batchNumber: targetBatchNumber } : undefined,
+          note: `Sold via POS (${receiptNo}) [Sold ${count} × ${size}L${targetBatchNumber ? ` · Batch ${targetBatchNumber}` : ''}${trailNote}]`,
           staffName: (currentUser && currentUser.name) || 'Cashier'
         });
       } else {
@@ -2084,6 +2723,7 @@ async function completeSale() {
       return;
     }
     cart = [];
+    posLoadBatchStatus(true);
     currentSaleCustomerName = '';
     const custInp = document.getElementById('pos-customer-name');
     if (custInp) custInp.value = '';
@@ -2125,22 +2765,22 @@ function showReceipt(sale) {
     return `
     <tr>
       <td>
-        <div style="font-weight:700; color:#1E1B18; display:flex; align-items:center; gap:6px;">
+        <div style="font-weight:700; color:var(--ink); display:flex; align-items:center; gap:6px;">
           ${hex ? `<span class="cm-color-dot" style="background:${hex}; width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.15);" title="${hex}"></span>` : ''}
           ${escapeHtml(i.name)}
-          ${hex ? `<span style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:#1F6F6B;">(${hex})</span>` : ''}
+          ${hex ? `<span style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal-dark);">(${hex})</span>` : ''}
         </div>
-        <div style="font-size:11px; color:#6B6259; margin-top:2px;">
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:2px;">
           <span>${escapeHtml(i.brand || (p && p.brand) || '')}${sizeLabel}${litersText}</span>
           ${colorLabel ? ` · Color: <b>${escapeHtml(colorLabel)}</b>` : ''}
         </div>
         ${(Number(i.nearExpiryDiscountPct) > 0) ? `
-          <div style="font-size:10.5px; color:#065F46; margin-top:2px;">
+          <div style="font-size:10.5px; color:var(--success-text); margin-top:2px;">
             🏷️ Near-Expiry Discount: -${Number(i.nearExpiryDiscountPct)}% (Orig: ${peso(i.originalUnitPrice || i.unitPrice)}, Saved: ${peso(i.nearExpiryDiscountAmount || 0)})${i.nearExpiryBatchNumber ? ` · Batch ${escapeHtml(i.nearExpiryBatchNumber)}` : ''}
           </div>
         ` : ''}
         ${i.components && i.components.length ? `
-          <div style="font-size:10.5px; color:#786F66; margin-top:2px;">
+          <div style="font-size:10.5px; color:var(--ink-soft); margin-top:2px;">
             Blend Formula: ${i.components.map(cp => `${cp.percentage}% ${escapeHtml(cp.name)} (${formatStock(cp.liters)}L)`).join(', ')}
           </div>
         ` : ''}
@@ -2161,13 +2801,13 @@ function showReceipt(sale) {
       <div class="pos-receipt-sub" style="font-size:11px; margin-top:2px;">Official Sales Receipt</div>
       <div class="pos-receipt-badge">Receipt #: <span>${escapeHtml(receiptNo)}</span></div>
       ${status === 'voided' ? `
-        <div style="background:#FFF0EE; border:2px dashed #C1443D; border-radius:8px; padding:10px 14px; margin-top:10px; text-align:center;">
-          <div style="font-size:16px; font-weight:800; color:#C1443D; letter-spacing:0.05em;">*** TRANSACTION VOIDED ***</div>
-          <div style="font-size:11.5px; color:#A83232; margin-top:3px;">
+        <div style="background:var(--danger-bg); border:2px dashed #C1443D; border-radius:8px; padding:10px 14px; margin-top:10px; text-align:center;">
+          <div style="font-size:16px; font-weight:800; color:var(--danger-text); letter-spacing:0.05em;">*** TRANSACTION VOIDED ***</div>
+          <div style="font-size:11.5px; color:var(--danger-text); margin-top:3px;">
             Voided on <b>${formatDateTime(sale.voidedAt || sale.date)}</b> by <b>${escapeHtml(sale.voidedBy || 'Admin')}</b>
           </div>
-          ${sale.voidReason ? `<div style="font-size:11.5px; color:#6B2121; margin-top:2px;">Reason: <i>${escapeHtml(sale.voidReason)}</i></div>` : ''}
-          <div style="font-size:10.5px; color:#A83232; margin-top:3px;">All stock units have been reversed and restored to inventory.</div>
+          ${sale.voidReason ? `<div style="font-size:11.5px; color:var(--danger-text); margin-top:2px;">Reason: <i>${escapeHtml(sale.voidReason)}</i></div>` : ''}
+          <div style="font-size:10.5px; color:var(--danger-text); margin-top:3px;">All stock units have been reversed and restored to inventory.</div>
         </div>
       ` : ''}
     </div>
@@ -2203,7 +2843,7 @@ function showReceipt(sale) {
         <span class="num">${peso(sale.subtotal)}</span>
       </div>
       ${(Number(sale.discountAmount || sale.discount || 0) > 0) ? `
-        <div class="pos-receipt-total-row" style="color:var(--teal, #1F6F6B);">
+        <div class="pos-receipt-total-row" style="color:var(--teal-text, #1F6F6B);">
           <span class="muted">Discount (${Number(sale.discountPct || sale.discountPercentage || 10)}%):</span>
           <span class="num" style="font-weight:700;">-${peso(Number(sale.discountAmount || sale.discount || 0))}</span>
         </div>
@@ -2211,17 +2851,17 @@ function showReceipt(sale) {
 
       <!-- Philippine BIR VAT Breakdown on Receipt -->
       ${(() => {
-        const vatRate = sale.vatRate !== undefined ? Number(sale.vatRate) : (sale.vat_rate !== undefined ? Number(sale.vat_rate) : null);
-        const vatableSales = sale.vatableSales !== undefined ? Number(sale.vatableSales) : (sale.vatable_sales !== undefined ? Number(sale.vatable_sales) : null);
-        const vatAmount = sale.vatAmount !== undefined ? Number(sale.vatAmount) : (sale.vat_amount !== undefined ? Number(sale.vat_amount) : null);
-        const vatExemptSales = sale.vatExemptSales !== undefined ? Number(sale.vatExemptSales) : (sale.vat_exempt_sales !== undefined ? Number(sale.vat_exempt_sales) : 0);
-        const zeroRatedSales = sale.zeroRatedSales !== undefined ? Number(sale.zeroRatedSales) : (sale.zero_rated_sales !== undefined ? Number(sale.zero_rated_sales) : 0);
-        const taxStatus = sale.taxStatus || sale.tax_status || (vatRate === 0 ? 'non_vat' : 'vat_registered');
+      const vatRate = sale.vatRate !== undefined ? Number(sale.vatRate) : (sale.vat_rate !== undefined ? Number(sale.vat_rate) : null);
+      const vatableSales = sale.vatableSales !== undefined ? Number(sale.vatableSales) : (sale.vatable_sales !== undefined ? Number(sale.vatable_sales) : null);
+      const vatAmount = sale.vatAmount !== undefined ? Number(sale.vatAmount) : (sale.vat_amount !== undefined ? Number(sale.vat_amount) : null);
+      const vatExemptSales = sale.vatExemptSales !== undefined ? Number(sale.vatExemptSales) : (sale.vat_exempt_sales !== undefined ? Number(sale.vat_exempt_sales) : 0);
+      const zeroRatedSales = sale.zeroRatedSales !== undefined ? Number(sale.zeroRatedSales) : (sale.zero_rated_sales !== undefined ? Number(sale.zero_rated_sales) : 0);
+      const taxStatus = sale.taxStatus || sale.tax_status || (vatRate === 0 ? 'non_vat' : 'vat_registered');
 
-        if (vatAmount === null || isNaN(vatAmount)) return '';
+      if (vatAmount === null || isNaN(vatAmount)) return '';
 
-        if (taxStatus !== 'non_vat') {
-          return `
+      if (taxStatus !== 'non_vat') {
+        return `
             <div style="border-top:1px dashed var(--line, #ddd); border-bottom:1px dashed var(--line, #ddd); padding:4px 0; margin:4px 0; font-size:11.5px;">
               <div class="pos-receipt-total-row" style="padding:1px 0;">
                 <span class="muted">VATable Sales:</span>
@@ -2229,7 +2869,7 @@ function showReceipt(sale) {
               </div>
               <div class="pos-receipt-total-row" style="padding:1px 0;">
                 <span class="muted">VAT Amount (${vatRate || 12}%):</span>
-                <span class="num" style="font-weight:700; color:var(--teal, #1F6F6B);">${peso(vatAmount || 0)}</span>
+                <span class="num" style="font-weight:700; color:var(--teal-text, #1F6F6B);">${peso(vatAmount || 0)}</span>
               </div>
               ${(vatExemptSales > 0) ? `
                 <div class="pos-receipt-total-row" style="padding:1px 0;">
@@ -2250,8 +2890,8 @@ function showReceipt(sale) {
               ` : ''}
             </div>
           `;
-        } else {
-          return `
+      } else {
+        return `
             <div style="border-top:1px dashed var(--line, #ddd); border-bottom:1px dashed var(--line, #ddd); padding:4px 0; margin:4px 0; font-size:11.5px;">
               <div class="pos-receipt-total-row" style="padding:1px 0;">
                 <span class="muted">Tax Classification:</span>
@@ -2259,8 +2899,8 @@ function showReceipt(sale) {
               </div>
             </div>
           `;
-        }
-      })()}
+      }
+    })()}
 
       <div class="pos-receipt-total-row ${(returnedVal > 0 || refundTotal > 0) ? '' : 'grand'}">
         <span>Total Amount Due:</span>
@@ -2268,7 +2908,7 @@ function showReceipt(sale) {
       </div>
       ${(returnedVal > 0 || refundTotal > 0) ? `
         <div class="pos-receipt-total-row" style="color:var(--danger);"><span class="muted">Returned Credit:</span><span class="num">-${peso(returnedVal || refundTotal)}</span></div>
-        ${exchangeTotal > 0 ? `<div class="pos-receipt-total-row" style="color:var(--teal);"><span class="muted">Replacement Issued:</span><span class="num">+${peso(exchangeTotal)}</span></div>` : ''}
+        ${exchangeTotal > 0 ? `<div class="pos-receipt-total-row" style="color:var(--teal-text);"><span class="muted">Replacement Issued:</span><span class="num">+${peso(exchangeTotal)}</span></div>` : ''}
         <div class="pos-receipt-total-row grand"><span>Net Total:</span><span class="grand-val">${peso(netTotal)}</span></div>
       ` : ''}
       <div class="pos-receipt-total-row" style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line, #ddd);">
@@ -2281,12 +2921,12 @@ function showReceipt(sale) {
       </div>
       <div class="pos-receipt-total-row">
         <span class="muted">Change Due:</span>
-        <span class="num" style="font-weight:700; color:var(--teal, #1F6F6B);">${peso(sale.changeAmount !== undefined ? sale.changeAmount : 0)}</span>
+        <span class="num" style="font-weight:700; color:var(--teal-text, #1F6F6B);">${peso(sale.changeAmount !== undefined ? sale.changeAmount : 0)}</span>
       </div>
     </div>
 
     <div class="pos-receipt-footer">
-      <div style="font-weight:600; color:#1E1B18;">Thank you for your purchase at MRGR Color Center!</div>
+      <div style="font-weight:600; color:var(--ink);">Thank you for your purchase at MRGR Color Center!</div>
       <div style="margin-top:4px;">Please retain this official receipt for warranty and aftersales support. Returns and exchanges are valid within the same day of purchase with original receipt.</div>
     </div>
   </div>`;
@@ -2314,6 +2954,7 @@ function printReceiptSection() {
     <base href="${escapeAttr(window.location.href)}">
     <title>Receipt - MRGR Color Center</title>
     <style>
+      :root { --surface: #FFFFFF; --surface-2: #FAF8F5; --surface-3: #F4EFE6; --ink: #26211C; --ink-soft: #6B6259; --line: #E2DACD; --line-light: #ECE6DB; --teal: #1F6F6B; --teal-dark: #17524F; --teal-text: #1F6F6B; --teal-tint: #EAF4F3; --teal-tint-border: #C4E2DF; --success: #3F8358; --success-text: #065F46; --success-bg: #EAF4EC; --success-border: #A7F3D0; --warning: #D97706; --warning-text: #92400E; --warning-bg: #FEF3C7; --warning-border: #FCD34D; --danger: #C1443D; --danger-text: #991B1B; --danger-bg: #FBEAE8; --danger-border: #FCA5A5; --info-text: #1B4F72; --info-bg: #EBF5FB; --info-border: #AED6F1; --purple-text: #6B21A8; --purple-bg: #F3E8FF; --purple-border: #DDD6FE; }
       body { font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 13px; color: #26211C; padding: 24px; line-height: 1.45; background: #fff; }
       .pos-receipt-card { border: none !important; box-shadow: none !important; max-width: 100% !important; padding: 0 !important; }
       .pos-receipt-header { text-align: center; border-bottom: 2px dashed #222; padding-bottom: 12px; margin-bottom: 14px; }

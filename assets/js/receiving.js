@@ -3,8 +3,14 @@
    ============================================================ */
 let bulkAdjustmentRows = [];
 let bulkAdjSupplierFilter = '';
+let bulkAdjCategoryFilter = '';
+let bulkAdjSearchQuery = '';
+let bulkAdjSortBy = 'name-asc';
 let bulkAdjBatchNote = '';
 let receivingPOId = '';
+let receivingPOSearchQuery = '';
+let receivingPOStatusFilter = 'open'; // 'open' (default: pending + partial), 'all', 'pending', 'partial', 'received'
+let receivingPOVisibleLimit = 6;
 let currentMovementType = 'receiving';
 let adjActiveView = 'entry'; // 'entry' or 'requests'
 let adjRequestFilterStatus = 'all'; // 'all', 'pending', 'approved', 'rejected'
@@ -131,11 +137,10 @@ function defaultAdjSizeForProduct(product, reason = 'Damaged', currentSize = 1) 
   return validNum ? numSize : sizes[0];
 }
 function initBulkAdjustmentRows() {
-  if (!bulkAdjustmentRows || bulkAdjustmentRows.length === 0) {
-    bulkAdjustmentRows = [
-      { id: uid('adj'), productId: '', reason: 'Damaged', size: 1, qty: 1, note: '' }
-    ];
+  if (!Array.isArray(bulkAdjustmentRows)) {
+    bulkAdjustmentRows = [];
   } else {
+    bulkAdjustmentRows = bulkAdjustmentRows.filter(r => r && r.productId);
     bulkAdjustmentRows.forEach(r => {
       if (r.size === undefined || r.size === null || r.size === '') {
         r.size = r.reason === 'Dispose Opened / Used Stock' ? openedValueForSize(1) : 1;
@@ -203,14 +208,17 @@ function receivingPage() {
         <!-- Stock Receiving -->
         <div id="mv-fields-receiving">
           <div id="rcv-po-container"></div>
-          <button id="btn-submit-rcv" class="btn" style="margin-top:14px; padding:9px 22px; font-weight:600;" type="submit" disabled>Confirm Delivery Received</button>
+          <div class="rcv-submit-bar">
+            <span class="rcv-submit-hint">Confirming updates sealed stock and creates expiration tracking batches automatically.</span>
+            <button id="btn-submit-rcv" class="btn rcv-submit-btn" type="submit" disabled>✓ Confirm Delivery Received</button>
+          </div>
         </div>
 
     <!-- Stock Adjustment -->
     <div id="mv-fields-adjustment" class="hidden" style="margin-top:14px;">
       <!-- Sub-view navigation between Form & Requests -->
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:10px; flex-wrap:wrap;">
-        <div style="display:inline-flex; background:#FAF7F2; padding:3px; border-radius:8px; border:1px solid var(--line);">
+      <div class="rcv-adj-topbar">
+        <div class="rcv-subtabs">
           <button type="button" class="btn ${adjActiveView === 'entry' ? '' : 'ghost'} small" style="${adjActiveView === 'entry' ? 'box-shadow:var(--shadow-sm);' : ''}" onclick="switchAdjView('entry')">
             ✏️ Adjustment Form
           </button>
@@ -219,12 +227,12 @@ function receivingPage() {
           </button>
         </div>
         ${pendingAdjRequests().length > 0 && currentUser && currentUser.role === 'admin' ? `
-          <div style="font-size:12px; color:#92400E; font-weight:600; display:flex; align-items:center; gap:6px;">
+          <div class="rcv-pending-notice">
             <span>⏳ <b>${pendingAdjRequests().length}</b> stock adjustment request(s) awaiting Admin approval</span>
           </div>
         ` : ''}
         ${pendingAdjRequests().length > 0 && currentUser && currentUser.role === 'staff' ? `
-          <div style="font-size:12px; color:#92400E; font-weight:600; display:flex; align-items:center; gap:6px;">
+          <div class="rcv-pending-notice">
             <span>⏳ <b>${pendingAdjRequests().length}</b> adjustment request(s) awaiting Admin approval</span>
           </div>
         ` : ''}
@@ -239,11 +247,11 @@ function receivingPage() {
   </form>
 </div>
   </div>
-  <div class="panel">
-<div class="panel-head row wrap" style="gap:8px;">
+  <div class="panel rcv-movements-panel">
+<div class="panel-head row wrap" style="gap:10px;">
   <div>
     <h3 style="margin:0;">Recent Stock Movements</h3>
-    <span class="muted small">Latest 15 orders / batches</span>
+    <span class="muted small">Latest 15 orders &amp; stock batches</span>
   </div>
   <div class="spacer"></div>
   <button class="btn secondary small audit-historical-btn" onclick="goTo('reports'); if (typeof setReportTab==='function') setReportTab('transactions');" title="Open complete Transaction History in Reports">🏛️ All Historical Transactions &rarr;</button>
@@ -260,10 +268,6 @@ function openPOsForReceiving() {
     .sort((a, b) => new Date(a.orderDate) - new Date(b.orderDate));
 }
 
-function pendingPOsCount() {
-  return (db.purchaseOrders || []).filter(o => o.status === 'pending').length;
-}
-
 function openedStockShelfHtml() {
   const openedProducts = (db.products || []).filter(p => productOpenedStock(p) > 0);
   // One shelf row per product AND can size (each opened can size is tracked separately)
@@ -271,12 +275,12 @@ function openedStockShelfHtml() {
   const totalLiters = openedList.reduce((sum, r) => sum + r.left, 0);
 
   return `
-  <div style="background:#FFFDF9; border:1px solid #E8DEC8; border-radius:var(--radius); padding:14px 16px; margin-bottom:14px;">
+  <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; margin-bottom:14px;">
     <div class="row wrap" style="justify-content:space-between; align-items:center; gap:10px; margin-bottom:${openedList.length ? '12px' : '4px'};">
       <div>
         <div style="font-weight:700; font-size:14px; color:var(--ink); display:flex; align-items:center; gap:8px;">
           <span>🫙 Opened / Used Stock Shelf (For Future Color Mixing)</span>
-          <span class="badge" style="background:#FDF4E3; color:#9A6216; border:1px solid #F0D9B5;">
+          <span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border);">
             ${openedList.length} unit${openedList.length === 1 ? '' : 's'} · ${formatLiters(totalLiters)} available
           </span>
         </div>
@@ -311,13 +315,13 @@ function openedStockShelfHtml() {
                 <td>
                   <div style="display:flex; align-items:center; gap:8px; font-weight:600;">
                     <span style="width:14px; height:14px; border-radius:4px; background:${hex}; border:1px solid var(--line); display:inline-block;"></span>
-                    <span>${escapeHtml(p.name)} <code style="font-size:11px; color:var(--teal);">(${hex})</code></span>
+                    <span>${escapeHtml(p.name)} <code style="font-size:11px; color:var(--teal-text);">(${hex})</code></span>
                   </div>
                 </td>
                 <td>${escapeHtml(p.brand)}</td>
-                <td class="center"><span class="badge" style="background:#F4EFE6; color:#6B6259; font-weight:700;">🥫 ${canSize}L Can</span></td>
-                <td class="right" style="color:#C1443D; font-weight:700; font-family:'Space Grotesk',sans-serif;">${formatLiters(used)} used</td>
-                <td class="right"><span class="badge" style="background:#FDF4E3; color:#9A6216; border:1px solid #F0D9B5; font-weight:700;">🫙 ${formatLiters(opened)} left</span></td>
+                <td class="center"><span class="badge" style="background:var(--surface-3); color:var(--ink-soft); font-weight:700;">🥫 ${canSize}L Can</span></td>
+                <td class="right" style="color:var(--danger-text); font-weight:700; font-family:'Space Grotesk',sans-serif;">${formatLiters(used)} used</td>
+                <td class="right"><span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-weight:700;">🫙 ${formatLiters(opened)} left</span></td>
                 <td class="right">${formatLiters(p.stock)}</td>
                 <td class="right">
                   <button type="button" class="btn ghost small" style="color:var(--danger); font-size:11.5px;" onclick="disposeOpenedStock('${p.id}', ${canSize})" title="Dispose dried or unusable leftover paint from this ${canSize}L opened container">🗑️ Dispose</button>
@@ -402,18 +406,185 @@ async function disposeOpenedStock(productId, size) {
   });
 }
 
-function onReceivingPOChange() {
-  const sel = document.getElementById('mv-po');
-  if (!sel) return;
-  receivingPOId = sel.value;
-  rcvBatchDraft = {}; // batch/expiry entries belong to the PO being received
+function selectReceivingPO(poId) {
+  const po = (db.purchaseOrders || []).find(o => o.id === poId);
+  if (!po || (po.status !== 'ordered' && po.status !== 'partial')) return;
+  receivingPOId = poId;
+  rcvBatchDraft = {};
   renderReceivingPOPreview();
+}
+
+function getPOStatusCategory(po) {
+  if (!po) return 'pending';
+  const stats = getPOQtyStats(po);
+  if (po.status === 'received' || stats.pendingItems <= 0) return 'received';
+  if (po.status === 'partial' || stats.receivedItems > 0) return 'partial';
+  return 'pending';
+}
+
+function getReceivingPOStatusCounts() {
+  const all = (db.purchaseOrders || []).filter(o =>
+    o.status === 'ordered' || o.status === 'partial' || o.status === 'received'
+  );
+  let pending = 0;
+  let partial = 0;
+  let received = 0;
+  all.forEach(o => {
+    const cat = getPOStatusCategory(o);
+    if (cat === 'received') received++;
+    else if (cat === 'partial') partial++;
+    else pending++;
+  });
+  return {
+    open: pending + partial,
+    all: all.length,
+    pending,
+    partial,
+    received
+  };
+}
+
+function getReceivingPOPickerList() {
+  const all = (db.purchaseOrders || []).filter(o =>
+    o.status === 'ordered' || o.status === 'partial' || o.status === 'received'
+  );
+  let filtered = all;
+  if (receivingPOStatusFilter === 'open') {
+    filtered = filtered.filter(o => {
+      const cat = getPOStatusCategory(o);
+      return cat === 'pending' || cat === 'partial';
+    });
+  } else if (receivingPOStatusFilter !== 'all') {
+    filtered = filtered.filter(o => getPOStatusCategory(o) === receivingPOStatusFilter);
+  }
+  const q = (receivingPOSearchQuery || '').trim().toLowerCase();
+  if (q) {
+    filtered = filtered.filter(o =>
+      (o.poNumber || '').toLowerCase().includes(q) ||
+      (o.supplierName || '').toLowerCase().includes(q)
+    );
+  }
+  const open = filtered
+    .filter(o => getPOStatusCategory(o) !== 'received')
+    .sort((a, b) => new Date(a.orderDate) - new Date(b.orderDate));
+  const done = filtered
+    .filter(o => getPOStatusCategory(o) === 'received')
+    .sort((a, b) => new Date(b.receivedAt || b.orderDate) - new Date(a.receivedAt || a.orderDate));
+  return open.concat(done);
+}
+
+function getPOQtyStats(po) {
+  const items = getPOItems(po);
+  let totalQty = 0;
+  let receivedQty = 0;
+  items.forEach(it => {
+    const ord = Number(it.qty || 0);
+    const rec = Number(it.receivedQty !== undefined ? it.receivedQty : (po.status === 'received' ? ord : 0));
+    totalQty += ord;
+    receivedQty += Math.min(ord, rec);
+  });
+  const pendingQty = Math.max(0, Number((totalQty - receivedQty).toFixed(2)));
+  return {
+    totalItems: totalQty,
+    receivedItems: Number(receivedQty.toFixed(2)),
+    pendingItems: pendingQty,
+    lineCount: items.length
+  };
+}
+
+function renderReceivingPOCardsHtml(poList, selectedId) {
+  if (!poList.length) {
+    return `<div class="rcv-po-empty">No purchase orders match your current filter or search.</div>`;
+  }
+  const visible = poList.slice(0, receivingPOVisibleLimit);
+  return visible.map(o => {
+    const stats = getPOQtyStats(o);
+    const cat = getPOStatusCategory(o);
+    const isFullyReceived = cat === 'received';
+    const isPartial = cat === 'partial';
+    const isSelected = !isFullyReceived && o.id === selectedId;
+    const statusBadge = isFullyReceived
+      ? `<span class="rcv-po-badge received">✓ Fully Received</span>`
+      : (isPartial
+        ? `<span class="rcv-po-badge partial">◐ Partially Received</span>`
+        : `<span class="rcv-po-badge pending">⏳ Pending</span>`);
+    const dateStr = o.orderDate ? formatDateShort(o.orderDate) : '—';
+
+    return `
+      <button type="button"
+        class="rcv-po-card ${isSelected ? 'selected' : ''} ${isFullyReceived ? 'disabled' : ''}"
+        ${isFullyReceived ? 'disabled aria-disabled="true" title="Fully received — no pending quantities remaining"' : `onclick="selectReceivingPO('${o.id}')"`}>
+        <div class="rcv-po-card-top">
+          <span class="rcv-po-number">${escapeHtml(o.poNumber)}</span>
+          <div class="rcv-po-badges">
+            ${isSelected ? `<span class="rcv-po-selected-pill">✓ Selected</span>` : ''}
+            ${statusBadge}
+          </div>
+        </div>
+        <div class="rcv-po-supplier">${escapeHtml(o.supplierName || '—')}</div>
+        <div class="rcv-po-meta-row">
+          <span class="rcv-po-amount">${peso(o.totalAmount)}</span>
+          <span class="rcv-po-date">📅 ${escapeHtml(dateStr)}</span>
+        </div>
+        <div class="rcv-po-counts">
+          <span>Total: <b>${formatStock(stats.totalItems)}</b></span>
+          <span>Received: <b>${formatStock(stats.receivedItems)}</b></span>
+          <span class="${stats.pendingItems > 0 ? 'rcv-po-pending-txt' : ''}">Pending: <b>${formatStock(stats.pendingItems)}</b></span>
+        </div>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderReceivingPOMoreHtml(totalCount) {
+  const remaining = totalCount - receivingPOVisibleLimit;
+  if (remaining <= 0) return '';
+  return `
+    <div class="rcv-po-load-more">
+      <button type="button" class="btn secondary small" onclick="loadMoreReceivingPOs()">
+        Load More Orders (${remaining} remaining)
+      </button>
+    </div>
+  `;
+}
+
+function loadMoreReceivingPOs() {
+  receivingPOVisibleLimit += 6;
+  updateReceivingPOGridOnly();
+}
+
+function setReceivingPOStatusFilter(filter) {
+  receivingPOStatusFilter = filter || 'open';
+  receivingPOVisibleLimit = 6;
+  renderReceivingPOPreview();
+}
+
+function updateReceivingPOGridOnly() {
+  const grid = document.getElementById('rcv-po-picker-grid');
+  const countEl = document.getElementById('rcv-po-match-count');
+  const moreEl = document.getElementById('rcv-po-more-wrap');
+  if (!grid) return;
+  const list = getReceivingPOPickerList();
+  grid.innerHTML = renderReceivingPOCardsHtml(list, receivingPOId);
+  if (countEl) {
+    const shown = Math.min(list.length, receivingPOVisibleLimit);
+    countEl.innerHTML = `Showing <b>${shown}</b> of <b>${list.length}</b> order${list.length === 1 ? '' : 's'}`;
+  }
+  if (moreEl) {
+    moreEl.innerHTML = renderReceivingPOMoreHtml(list.length);
+  }
+}
+
+function onReceivingPOSearchInput(val) {
+  receivingPOSearchQuery = val || '';
+  receivingPOVisibleLimit = 6;
+  updateReceivingPOGridOnly();
 }
 
 /* Batch / expiration details typed on the receiving form (per PO line index) — feeds Expiration Tracking */
 let rcvBatchDraft = {};
 function rcvBatchDraftSet(idx, field, value) {
-  if (!rcvBatchDraft[idx]) rcvBatchDraft[idx] = { batchNumber: '', expirationDate: '', notes: '' };
+  if (!rcvBatchDraft[idx]) rcvBatchDraft[idx] = { expirationDate: '', notes: '' };
   rcvBatchDraft[idx][field] = value;
 }
 
@@ -423,14 +594,61 @@ function renderReceivingPOPreview() {
   if (!container) return;
 
   const openPOs = openPOsForReceiving();
-  if (!openPOs.length) {
+  const statusCounts = getReceivingPOStatusCounts();
+  const pickerList = getReceivingPOPickerList();
+  const shownCount = Math.min(pickerList.length, receivingPOVisibleLimit);
+  const po = receivingPOId ? openPOs.find(o => o.id === receivingPOId) : openPOs[0];
+  if (po && po.id !== receivingPOId) receivingPOId = po.id;
+  if (!po) receivingPOId = '';
+
+  const pickerHtml = `
+    <div class="rcv-po-picker">
+      <div class="rcv-po-picker-head">
+        <div class="rcv-po-search-wrap">
+          <span class="rcv-po-search-icon">🔍</span>
+          <input type="text" id="rcv-po-search" class="rcv-po-search" placeholder="Search by PO Number or Supplier Name..." value="${escapeAttr(receivingPOSearchQuery)}" oninput="onReceivingPOSearchInput(this.value)">
+        </div>
+        <div class="rcv-po-picker-stats">
+          <span class="simple-stat-pill" id="rcv-po-match-count">Showing <b>${shownCount}</b> of <b>${pickerList.length}</b> order${pickerList.length === 1 ? '' : 's'}</span>
+          <span class="simple-stat-pill adj-stat-selected">Awaiting Delivery: <b>${openPOs.length}</b></span>
+        </div>
+      </div>
+      <div class="rcv-po-filter-tabs" role="tablist" aria-label="Filter Purchase Orders by status">
+        <button type="button" class="rcv-po-filter-tab ${receivingPOStatusFilter === 'open' ? 'active' : ''}" onclick="setReceivingPOStatusFilter('open')">
+          Awaiting Delivery <span class="rcv-po-tab-cnt">${statusCounts.open}</span>
+        </button>
+        <button type="button" class="rcv-po-filter-tab ${receivingPOStatusFilter === 'all' ? 'active' : ''}" onclick="setReceivingPOStatusFilter('all')">
+          All Orders <span class="rcv-po-tab-cnt">${statusCounts.all}</span>
+        </button>
+        <button type="button" class="rcv-po-filter-tab ${receivingPOStatusFilter === 'pending' ? 'active' : ''}" onclick="setReceivingPOStatusFilter('pending')">
+          Pending <span class="rcv-po-tab-cnt">${statusCounts.pending}</span>
+        </button>
+        <button type="button" class="rcv-po-filter-tab ${receivingPOStatusFilter === 'partial' ? 'active' : ''}" onclick="setReceivingPOStatusFilter('partial')">
+          Partially Received <span class="rcv-po-tab-cnt">${statusCounts.partial}</span>
+        </button>
+        <button type="button" class="rcv-po-filter-tab ${receivingPOStatusFilter === 'received' ? 'active' : ''}" onclick="setReceivingPOStatusFilter('received')">
+          Fully Received <span class="rcv-po-tab-cnt">${statusCounts.received}</span>
+        </button>
+      </div>
+      <div id="rcv-po-picker-grid" class="rcv-po-grid">
+        ${renderReceivingPOCardsHtml(pickerList, receivingPOId)}
+      </div>
+      <div id="rcv-po-more-wrap">
+        ${renderReceivingPOMoreHtml(pickerList.length)}
+      </div>
+    </div>
+  `;
+
+  if (!openPOs.length || !po) {
     if (submitBtn) submitBtn.disabled = true;
-    container.innerHTML = `<div class="muted small" style="padding:24px 0; text-align:center;">✓ No approved purchase orders currently awaiting delivery.</div>`;
+    container.innerHTML = `
+      ${pickerHtml}
+      <input type="hidden" id="mv-po" value="">
+      <div class="muted small" style="padding:20px 0; text-align:center;">✓ No approved purchase orders currently awaiting delivery.</div>
+    `;
     return;
   }
 
-  const po = receivingPOId ? openPOs.find(o => o.id === receivingPOId) : openPOs[0];
-  if (po && po.id !== receivingPOId) receivingPOId = po.id;
   if (submitBtn) submitBtn.disabled = false;
 
   const items = getPOItems(po);
@@ -450,83 +668,97 @@ function renderReceivingPOPreview() {
 
     const hex = product ? getProductHex(product) : '#CCCCCC';
     const isDone = remaining === 0;
+    const pctReceived = ordered > 0 ? Math.min(100, Math.round((alreadyReceived / ordered) * 100)) : 0;
 
     return `
     <div class="rcv-item-row ${isDone ? 'done' : ''}">
-      <!-- Left: Dot + Title + Can Size -->
-      <div class="rcv-item-identity">
-        <span class="rcv-item-dot" style="background:${hex};" title="${hex}"></span>
-        <div>
-          <div class="rcv-item-name">
-            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-              <span>${escapeHtml(item.productName)}</span>
+      <div class="rcv-item-main">
+        <!-- Left: Dot + Title + Brand / Size / Current Stock -->
+        <div class="rcv-item-identity">
+          <span class="rcv-item-dot" style="background:${hex};" title="${hex}"></span>
+          <div class="rcv-item-info">
+            <div class="rcv-item-name">${escapeHtml(item.productName)}</div>
+            <div class="rcv-item-sub">
+              ${item.brand ? `<span class="rcv-item-brand">${escapeHtml(item.brand)}</span><span class="rcv-dot-sep">·</span>` : ''}
+              <span class="rcv-size-badge">🥫 ${size}L</span>
+              ${product ? `<span class="rcv-dot-sep">·</span><span class="rcv-stock-now">Current: <b>${curCans}</b> unit${curCans === 1 ? '' : 's'}</span>` : ''}
             </div>
           </div>
-          <div class="rcv-item-sub">
-            <span>${escapeHtml(item.brand || '')}</span>
-            <span>·</span>
-            <span class="badge" style="background:#F4EFE6; color:#6B6259; font-weight:700; padding:1px 6px; font-size:11px;">🥫 ${size}L</span>
-            ${product ? `<span>· In stock: <b>${curCans}</b></span>` : ''}
+        </div>
+
+        <!-- Middle: Received vs Pending Progress -->
+        <div class="rcv-item-progress">
+          <div class="rcv-progress-stats">
+            <span class="rcv-stat-received">Received <b>${formatStock(alreadyReceived)}</b>/${formatStock(ordered)}</span>
+            ${remaining > 0
+        ? `<span class="rcv-stat-pending">${formatStock(remaining)} pending</span>`
+        : `<span class="rcv-stat-done">✓ Complete</span>`}
+          </div>
+          <div class="rcv-progress-track" title="${pctReceived}% received">
+            <div class="rcv-progress-fill ${isDone ? 'complete' : ''}" style="width:${pctReceived}%;"></div>
           </div>
         </div>
-      </div>
 
-      <!-- Middle: Clean Progress -->
-      <div class="rcv-item-progress">
-        <span class="muted">${formatStock(alreadyReceived)}/${formatStock(ordered)} received</span>
-        ${remaining > 0 ? ` · <b style="color:#C1443D;">${formatStock(remaining)} pending</b>` : ' · <span style="color:var(--success); font-weight:600;">✓ Done</span>'}
-      </div>
-
-      <!-- Right: Stepper + Live Pill -->
-      <div class="rcv-item-actions">
-        <div class="rcv-stepper-compact">
-          <button type="button" class="rcv-stepper-btn" onclick="stepReceivingQty(${i}, -1)" ${isDone ? 'disabled' : ''}>−</button>
-          <input type="number" id="rcv-qty-input-${i}" class="rcv-stepper-input" min="0" max="${remaining}" step="1" value="${remaining}"
-            ${isDone ? 'disabled' : ''}
-            oninput="onReceivingQtyChange(${i}, ${currentStock}, ${size}, ${curCans})">
-          <button type="button" class="rcv-stepper-btn" onclick="stepReceivingQty(${i}, 1)" ${isDone ? 'disabled' : ''}>+</button>
-        </div>
-        ${remaining > 0 ? `<button type="button" class="btn ghost small" style="padding:2px 7px; font-size:11px;" onclick="setReceivingQtyMax(${i})">All</button>` : ''}
-        
-        <div id="rcv-stock-preview-${i}" class="rcv-item-pill ${remaining > 0 ? 'add' : 'done'}">
-          ${product && remaining > 0
+        <!-- Right: Quantity Stepper + Expected Stock -->
+        <div class="rcv-item-actions">
+          <div class="rcv-stepper-wrap">
+            <div class="rcv-stepper-compact">
+              <button type="button" class="rcv-stepper-btn" onclick="stepReceivingQty(${i}, -1)" ${isDone ? 'disabled' : ''} aria-label="Decrease quantity">−</button>
+              <input type="number" id="rcv-qty-input-${i}" class="rcv-stepper-input" min="0" max="${remaining}" step="1" value="${remaining}"
+                ${isDone ? 'disabled' : ''}
+                oninput="onReceivingQtyChange(${i}, ${currentStock}, ${size}, ${curCans})">
+              <button type="button" class="rcv-stepper-btn" onclick="stepReceivingQty(${i}, 1)" ${isDone ? 'disabled' : ''} aria-label="Increase quantity">+</button>
+            </div>
+            ${remaining > 0 ? `<button type="button" class="rcv-all-btn" onclick="setReceivingQtyMax(${i})" title="Set to all ${formatStock(remaining)} remaining">All</button>` : ''}
+          </div>
+          <div id="rcv-stock-preview-${i}" class="rcv-item-pill ${remaining > 0 ? 'add' : 'done'}">
+            ${product && remaining > 0
         ? `➔ ${newCans} units (+${formatLiters(addedLiters)})`
-        : (isDone ? '✓ Fully Received' : 'No change')}
+        : (isDone ? '✓ Fully Received' : '0 units (No change)')}
+          </div>
         </div>
       </div>
       ${isDone ? '' : `
-      <div class="rcv-batch-fields" title="Batch details for Expiration Tracking">
-        <label>Batch / Lot No.
-          <input type="text" id="rcv-batch-input-${i}" maxlength="100" placeholder="Auto-generated if blank" value="${escapeAttr(rcvBatchDraft[i] ? rcvBatchDraft[i].batchNumber : '')}" oninput="rcvBatchDraftSet(${i}, 'batchNumber', this.value)">
-        </label>
-        <label>Expiration Date
-          <input type="date" id="rcv-exp-input-${i}" value="${escapeAttr(rcvBatchDraft[i] ? rcvBatchDraft[i].expirationDate : '')}" onchange="rcvBatchDraftSet(${i}, 'expirationDate', this.value)">
-        </label>
-        <label>Restocking Notes
-          <input type="text" id="rcv-note-input-${i}" maxlength="255" placeholder="Optional delivery / condition note" value="${escapeAttr(rcvBatchDraft[i] ? (rcvBatchDraft[i].notes || '') : '')}" oninput="rcvBatchDraftSet(${i}, 'notes', this.value)">
-        </label>
-        <span class="hint">🗓️ Optional — leave the date empty to track as “Not Specified”.</span>
+      <div class="rcv-batch-fields" title="Expiration and restocking details (Batch/Lot No. is auto-generated)">
+        <div class="rcv-batch-header">
+          <div class="rcv-batch-title">
+            <span>Expiration &amp; Restocking Details</span>
+            <span class="rcv-optional-tag">Optional</span>
+          </div>
+          <span class="hint">🏷️ Batch/Lot No. is auto-generated · Leave date empty to track as “Not Specified”</span>
+        </div>
+        <div class="rcv-batch-grid">
+          <label>
+            <span>Expiration Date</span>
+            <input type="date" id="rcv-exp-input-${i}" value="${escapeAttr(rcvBatchDraft[i] ? rcvBatchDraft[i].expirationDate : '')}" onchange="rcvBatchDraftSet(${i}, 'expirationDate', this.value)">
+          </label>
+          <label class="rcv-batch-notes-label">
+            <span>Restocking Notes</span>
+            <input type="text" id="rcv-note-input-${i}" maxlength="255" placeholder="Delivery / condition note" value="${escapeAttr(rcvBatchDraft[i] ? (rcvBatchDraft[i].notes || '') : '')}" oninput="rcvBatchDraftSet(${i}, 'notes', this.value)">
+          </label>
+        </div>
       </div>`}
     </div>`;
   }).join('');
 
   container.innerHTML = `
-    <!-- Minimalist PO Toolbar -->
+    ${pickerHtml}
+    <input type="hidden" id="mv-po" value="${escapeAttr(po.id)}">
+
+    <!-- Selected PO Summary & Quick Actions Toolbar -->
     <div class="rcv-minimal-toolbar">
-      <div class="row wrap" style="align-items:center; gap:10px;">
-        <span style="font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.4px;">Order:</span>
-        <select id="mv-po" onchange="onReceivingPOChange()" class="rcv-minimal-select">
-          ${openPOs.map(o => `<option value="${o.id}" ${o.id === po.id ? 'selected' : ''}>${escapeHtml(o.poNumber)}${o.status === 'partial' ? ' [Partial]' : ''} — ${escapeHtml(o.supplierName)} (${peso(o.totalAmount)})</option>`).join('')}
-        </select>
-        <span class="badge" style="background:#EBF5F4; color:#1F6F6B; font-weight:600; font-size:11.5px;">${totalRemainingCans} units pending</span>
+      <div class="rcv-toolbar-left">
+        <span class="rcv-toolbar-label">Receiving Order:</span>
+        <span class="rcv-selected-po-title">${escapeHtml(po.poNumber)} — ${escapeHtml(po.supplierName)} (${peso(po.totalAmount)})</span>
+        <span class="rcv-pending-badge">${totalRemainingCans} unit${totalRemainingCans === 1 ? '' : 's'} pending</span>
       </div>
-      <div class="row" style="gap:6px;">
+      <div class="rcv-toolbar-actions">
         <button type="button" class="btn ghost small" onclick="fillReceivingPageQtys(true)">⚡ Receive All</button>
         <button type="button" class="btn ghost small" onclick="fillReceivingPageQtys(false)">Reset</button>
       </div>
     </div>
 
-    <!-- Minimalist Checklist Rows -->
+    <!-- Product Receiving Cards -->
     <div class="rcv-minimal-list">
       ${rowsHtml}
     </div>
@@ -593,17 +825,7 @@ function onBulkAdjSupplierFilterChange() {
   if (filterSelect) {
     bulkAdjSupplierFilter = filterSelect.value;
   }
-  if (bulkAdjSupplierFilter) {
-    const supplier = db.suppliers.find(s => s.id === bulkAdjSupplierFilter);
-    if (supplier) {
-      bulkAdjustmentRows.forEach(r => {
-        if (r.productId && (!supplier.productIds || !supplier.productIds.includes(r.productId))) {
-          r.productId = '';
-        }
-      });
-    }
-  }
-  renderBulkAdjustmentView();
+  updateAdjPickerGridOnly();
 }
 
 function computeBulkAdjRowState(row) {
@@ -766,6 +988,143 @@ function setAdjReqFilter(filter) {
   renderPage();
 }
 
+function getFilteredAdjPickerProducts() {
+  const supplier = bulkAdjSupplierFilter ? db.suppliers.find(s => s.id === bulkAdjSupplierFilter) : null;
+  let list = activeProducts();
+  if (supplier) {
+    list = list.filter(p => supplier.productIds && supplier.productIds.includes(p.id));
+  }
+  if (bulkAdjCategoryFilter) {
+    list = list.filter(p => (p.category || p.type || 'General') === bulkAdjCategoryFilter);
+  }
+  const q = (bulkAdjSearchQuery || '').trim().toLowerCase();
+  if (q) {
+    list = list.filter(p => {
+      const name = (p.name || '').toLowerCase();
+      const brand = (p.brand || '').toLowerCase();
+      const code = String(p.productId || p.id || p.code || '').toLowerCase();
+      const cat = (p.category || p.type || '').toLowerCase();
+      return name.includes(q) || brand.includes(q) || code.includes(q) || cat.includes(q);
+    });
+  }
+  const sorted = list.slice();
+  if (bulkAdjSortBy === 'name-desc') {
+    sorted.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+  } else if (bulkAdjSortBy === 'stock-desc') {
+    sorted.sort((a, b) => (Number(b.stock) || 0) - (Number(a.stock) || 0));
+  } else if (bulkAdjSortBy === 'stock-asc') {
+    sorted.sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
+  } else {
+    sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }
+  return sorted;
+}
+
+function renderAdjPickerGridHtml(filteredProducts) {
+  const selectedIds = new Set((bulkAdjustmentRows || []).filter(r => r.productId).map(r => String(r.productId)));
+  if (!filteredProducts.length) {
+    return `
+      <div class="adj-picker-empty">
+        <div>No products match your search or filters.</div>
+        <button type="button" class="btn ghost small" onclick="resetAdjPickerFilters()">Reset Filters</button>
+      </div>
+    `;
+  }
+  return filteredProducts.map(p => {
+    const isSel = selectedIds.has(String(p.id));
+    const hex = getProductHex(p);
+    const cat = p.category || p.type || 'General';
+    const sizes = productSizes(p);
+    const stockNum = Number(p.stock) || 0;
+    const sizePills = sizes.map(s => {
+      const c = productCanCount(p, s);
+      return `<span class="adj-picker-size-pill">${s}L <b>(${c})</b></span>`;
+    }).join('');
+    return `
+      <button type="button" class="adj-picker-card ${isSel ? 'selected' : ''}" onclick="toggleBulkAdjProduct('${p.id}')" aria-pressed="${isSel ? 'true' : 'false'}">
+        <div class="adj-picker-card-top">
+          <div class="adj-picker-card-title">
+            <span class="adj-picker-dot" style="background:${hex};"></span>
+            <span class="adj-picker-name">${escapeHtml(p.name)}</span>
+          </div>
+          <span class="adj-picker-check ${isSel ? 'selected' : ''}">${isSel ? '✓ Selected' : '+ Select'}</span>
+        </div>
+        <div class="adj-picker-meta">
+          <span>${escapeHtml(p.brand || '—')}</span>
+          <span class="adj-picker-sep">·</span>
+          <span class="adj-picker-cat">${escapeHtml(cat)}</span>
+        </div>
+        <div class="adj-picker-stock-row">
+          <span class="adj-picker-stock-label">Available Stock:</span>
+          <span class="adj-picker-stock-val ${stockNum <= 0 ? 'empty' : ''}">${formatLiters(stockNum)}</span>
+        </div>
+        <div class="adj-picker-sizes">
+          ${sizePills}
+        </div>
+      </button>
+    `;
+  }).join('');
+}
+
+function updateAdjPickerGridOnly() {
+  const grid = document.getElementById('adj-picker-grid');
+  const countEl = document.getElementById('adj-picker-match-count');
+  if (!grid) return;
+  const filtered = getFilteredAdjPickerProducts();
+  grid.innerHTML = renderAdjPickerGridHtml(filtered);
+  if (countEl) {
+    countEl.innerHTML = `Showing <b>${filtered.length}</b> product${filtered.length === 1 ? '' : 's'}`;
+  }
+}
+
+function onAdjPickerSearchInput(val) {
+  bulkAdjSearchQuery = val || '';
+  updateAdjPickerGridOnly();
+}
+
+function onAdjPickerCategoryChange(val) {
+  bulkAdjCategoryFilter = val || '';
+  updateAdjPickerGridOnly();
+}
+
+function onAdjPickerSortChange(val) {
+  bulkAdjSortBy = val || 'name-asc';
+  updateAdjPickerGridOnly();
+}
+
+function resetAdjPickerFilters() {
+  bulkAdjSearchQuery = '';
+  bulkAdjCategoryFilter = '';
+  bulkAdjSupplierFilter = '';
+  bulkAdjSortBy = 'name-asc';
+  renderBulkAdjustmentView();
+}
+
+function toggleBulkAdjProduct(productId) {
+  if (!productId) return;
+  if (!Array.isArray(bulkAdjustmentRows)) bulkAdjustmentRows = [];
+  bulkAdjustmentRows = bulkAdjustmentRows.filter(r => r && r.productId);
+  const existingIdx = bulkAdjustmentRows.findIndex(r => String(r.productId) === String(productId));
+  if (existingIdx !== -1) {
+    bulkAdjustmentRows.splice(existingIdx, 1);
+  } else {
+    const p = productById(productId);
+    const reason = 'Damaged';
+    const resolvedSize = defaultAdjSizeForProduct(p, reason, 1);
+    const maxQty = maxAllowedAdjQty(p, reason, resolvedSize);
+    const resolvedQty = maxQty >= 1 ? 1 : 1;
+    bulkAdjustmentRows.push({
+      id: uid('adj'),
+      productId: productId,
+      reason,
+      size: resolvedSize,
+      qty: resolvedQty,
+      note: ''
+    });
+  }
+  renderBulkAdjustmentView();
+}
+
 function renderBulkAdjustmentView() {
   const container = document.getElementById('bulk-adj-container');
   if (!container) return;
@@ -775,223 +1134,228 @@ function renderBulkAdjustmentView() {
     return;
   }
 
-  const supplier = bulkAdjSupplierFilter ? db.suppliers.find(s => s.id === bulkAdjSupplierFilter) : null;
-  let availableProducts = activeProducts();
-  if (supplier) {
-    availableProducts = availableProducts.filter(p => supplier.productIds && supplier.productIds.includes(p.id));
-  }
+  initBulkAdjustmentRows();
+
+  const allActive = activeProducts();
+  const categories = Array.from(new Set(allActive.map(p => p.category || p.type || 'General'))).sort((a, b) => a.localeCompare(b));
+  const categoryOptions = categories
+    .map(c => `<option value="${escapeAttr(c)}" ${c === bulkAdjCategoryFilter ? 'selected' : ''}>${escapeHtml(c)}</option>`)
+    .join('');
 
   const supplierOptions = db.suppliers
     .filter(s => s.status === 'active')
     .map(s => `<option value="${s.id}" ${s.id === bulkAdjSupplierFilter ? 'selected' : ''}>${escapeHtml(s.name)}</option>`)
     .join('');
 
-  if (!bulkAdjustmentRows || bulkAdjustmentRows.length === 0) {
-    bulkAdjustmentRows = [{ id: uid('adj'), productId: '', reason: 'Damaged', size: 1, qty: 1, note: '' }];
-  }
-
+  const filteredProducts = getFilteredAdjPickerProducts();
   const validRows = bulkAdjustmentRows.filter(r => r.productId);
   let hasInvalidRows = false;
   validRows.forEach(r => {
     if (computeBulkAdjRowState(r).isInvalid) hasInvalidRows = true;
   });
 
-  const cardsHtml = bulkAdjustmentRows.map((row, index) => {
+  const cardsHtml = validRows.length ? validRows.map((row, index) => {
     const state = computeBulkAdjRowState(row);
     const product = state.product;
-
-    const productOptionsHtml = availableProducts.map(p => `
-      <option value="${p.id}" ${p.id === row.productId ? 'selected' : ''}>
-        ${escapeHtml(p.brand)} — ${escapeHtml(p.name)} (${p.color !== '-' ? escapeHtml(p.color) : 'Standard'}) [Stock: ${formatLiters(p.stock)}]
-      </option>
-    `).join('');
+    if (!product) return '';
+    const hex = getProductHex(product);
+    const cat = product.category || product.type || 'General';
 
     return `
       <div class="simple-adj-card" id="simple-card-${index}">
         <div class="simple-adj-card-head">
-          <span>📦 Item #${index + 1}${product ? `: ${escapeHtml(product.name)}` : ''}</span>
-          ${bulkAdjustmentRows.length > 1 ? `
-            <button type="button" class="btn ghost small" style="color:var(--danger); padding:2px 8px; font-size:12px;" onclick="removeBulkAdjRow(${index})">✕ Remove</button>
-          ` : ''}
+          <div class="simple-adj-card-title-wrap">
+            <span class="adj-picker-dot" style="background:${hex};"></span>
+            <span>#${index + 1} · ${escapeHtml(product.name)}</span>
+            <span class="simple-adj-card-meta">${escapeHtml(product.brand || '—')} · ${escapeHtml(cat)} · Stock: <b>${formatLiters(product.stock)}</b></span>
+          </div>
+          <button type="button" class="btn ghost small" style="color:var(--danger); padding:3px 9px; font-size:12px;" onclick="removeBulkAdjRow(${index})">✕ Remove</button>
         </div>
 
         <div class="simple-adj-card-body">
           <div class="simple-adj-grid">
-            <!-- Left Column: Product Selection, Reason, and Can Size -->
+            <!-- Left Column: Stock Breakdown, Reason, and Can Size -->
             <div class="simple-adj-col">
-              <!-- Step 1: Product -->
-              <div class="simple-form-group">
-                <label class="simple-label">
-                  <span>1. Select Product:</span>
-                  ${product ? `<span class="simple-label-help">Total Stock: <b>${formatLiters(product.stock)}</b></span>` : `<span class="simple-label-help" style="color:var(--orange);">Required</span>`}
-                </label>
-                <select class="simple-select" onchange="updateBulkAdjRow(${index}, 'productId', this.value)">
-                  <option value="">-- Choose Product to Adjust --</option>
-                  ${productOptionsHtml}
-                </select>
-                ${product ? `
-                  <div class="simple-stock-pills">
-                    <span class="muted small" style="font-size:11.5px;">Current stock breakdown:</span>
-                    ${productSizes(product).map(s => {
+              <div class="simple-stock-pills" style="margin-top:0;">
+                <span class="muted small" style="font-size:11.5px;">Current stock:</span>
+                ${productSizes(product).map(s => {
       const c = productCanCount(product, s);
       return `<span class="simple-stock-tag">🥫 ${s}L: <b>${c} unit${c === 1 ? '' : 's'}</b></span>`;
     }).join('')}
-                    ${productOpenedStock(product) > 0 ? `
-                      <span class="simple-stock-tag opened">🫙 ${formatLiters(productOpenedStock(product))} opened leftover</span>
-                    ` : ''}
-                  </div>
+                ${productOpenedStock(product) > 0 ? `
+                  <span class="simple-stock-tag opened">🫙 ${formatLiters(productOpenedStock(product))} opened leftover</span>
                 ` : ''}
               </div>
 
-              ${product ? `
-                <!-- Step 2: Reason -->
-                <div class="simple-form-group">
-                  <label class="simple-label">
-                    <span>2. Reason for Adjustment:</span>
-                  </label>
-                  <select class="simple-select" onchange="setAdjRowReason(${index}, this.value)">
-                    <option value="Damaged" ${row.reason === 'Damaged' ? 'selected' : ''}>🔻 Damaged / Leaking Unit (Deduct)</option>
-                    <option value="Expired" ${row.reason === 'Expired' ? 'selected' : ''}>🔻 Expired Shelf Life (Deduct)</option>
-                    <option value="Count Correction (deduct)" ${row.reason === 'Count Correction (deduct)' ? 'selected' : ''}>🔻 Missing / Inventory Count Shortage (Deduct)</option>
-                    <option value="Internal Use" ${row.reason === 'Internal Use' ? 'selected' : ''}>🔻 Store / Internal Use (Deduct)</option>
-                    <option value="Count Correction (add)" ${row.reason === 'Count Correction (add)' ? 'selected' : ''}>➕ Found Extra / Count Overage (Add)</option>
-                    <option value="Dispose Opened / Used Stock" ${row.reason === 'Dispose Opened / Used Stock' ? 'selected' : ''}>🫙 Dispose Leftover Opened Paint (Deduct)</option>
-                  </select>
-                </div>
+              <!-- Step 1: Reason -->
+              <div class="simple-form-group">
+                <label class="simple-label">
+                  <span>1. Reason for Adjustment:</span>
+                </label>
+                <select class="simple-select" onchange="setAdjRowReason(${index}, this.value)">
+                  <option value="Damaged" ${row.reason === 'Damaged' ? 'selected' : ''}>🔻 Damaged / Leaking Unit (Deduct)</option>
+                  <option value="Expired" ${row.reason === 'Expired' ? 'selected' : ''}>🔻 Expired Shelf Life (Deduct)</option>
+                  <option value="Count Correction (deduct)" ${row.reason === 'Count Correction (deduct)' ? 'selected' : ''}>🔻 Missing / Inventory Count Shortage (Deduct)</option>
+                  <option value="Internal Use" ${row.reason === 'Internal Use' ? 'selected' : ''}>🔻 Store / Internal Use (Deduct)</option>
+                  <option value="Count Correction (add)" ${row.reason === 'Count Correction (add)' ? 'selected' : ''}>➕ Found Extra / Count Overage (Add)</option>
+                  <option value="Dispose Opened / Used Stock" ${row.reason === 'Dispose Opened / Used Stock' ? 'selected' : ''}>🫙 Dispose Leftover Opened Paint (Deduct)</option>
+                </select>
+              </div>
 
-                <!-- Step 3: Container Size -->
-                <div class="simple-form-group">
-                  <label class="simple-label">
-                    <span>3. Container Size:</span>
-                    <span class="simple-label-help">${state.isOpened ? 'Opened leftover paint' : 'Sealed paint units'}</span>
-                  </label>
-                  <div class="simple-size-group">
-                    ${state.isOpened ? (
-          productOpenedEntries(product).length ? productOpenedEntries(product).map(e => {
-            const isSel = (row.size === openedValueForSize(e.size));
-            return `
-                          <button type="button" class="simple-size-btn ${isSel ? 'active' : ''}" onclick="setAdjRowSize(${index}, '${openedValueForSize(e.size)}')">
-                            <span class="simple-size-name">🫙 ${e.size}L Opened</span>
-                            <span class="simple-size-stock">${formatLiters(e.left)} leftover</span>
-                          </button>
-                        `;
-          }).join('') : `
-                        <div class="muted small" style="padding:6px 0; color:var(--danger);">⚠️ No opened leftover stock available for this product.</div>
-                      `
-        ) : (
-          productSizes(product).map(s => {
-            const cur = productCanCount(product, s);
-            const maxDeduct = maxAllowedAdjQty(product, row.reason, s);
-            const isSel = (Number(state.sizeNum) === s);
-            const isDis = (!state.isAdd && maxDeduct <= 0);
-            const variant = productSizeVariantBySize(product, s);
-            return `
-                          <button type="button" class="simple-size-btn ${isSel ? 'active' : ''} ${isDis ? 'disabled' : ''}" 
-                            onclick="setAdjRowSize(${index}, ${s})" ${isDis ? 'disabled' : ''}>
-                            <span class="simple-size-name">🥫 ${s}L ${s <= 1 ? 'Can' : (s <= 4 ? 'Gallon' : 'Drum')}</span>
-                            <span class="simple-size-stock">${state.isAdd ? `${cur} in stock` : (maxDeduct >= 1 ? `${cur} in stock · Max -${maxDeduct}` : (cur === 1 ? '1 unit (Protected)' : '0 in stock'))}</span>
-                          </button>
-                        `;
-          }).join('')
-        )}
-                  </div>
+              <!-- Step 2: Container Size -->
+              <div class="simple-form-group">
+                <label class="simple-label">
+                  <span>2. Container Size:</span>
+                  <span class="simple-label-help">${state.isOpened ? 'Opened leftover paint' : 'Sealed paint units'}</span>
+                </label>
+                <div class="simple-size-group">
+                  ${state.isOpened ? (
+        productOpenedEntries(product).length ? productOpenedEntries(product).map(e => {
+          const isSel = (row.size === openedValueForSize(e.size));
+          return `
+                        <button type="button" class="simple-size-btn ${isSel ? 'active' : ''}" onclick="setAdjRowSize(${index}, '${openedValueForSize(e.size)}')">
+                          <span class="simple-size-name">🫙 ${e.size}L Opened</span>
+                          <span class="simple-size-stock">${formatLiters(e.left)} leftover</span>
+                        </button>
+                      `;
+        }).join('') : `
+                      <div class="muted small" style="padding:6px 0; color:var(--danger);">⚠️ No opened leftover stock available for this product.</div>
+                    `
+      ) : (
+        productSizes(product).map(s => {
+          const cur = productCanCount(product, s);
+          const maxDeduct = maxAllowedAdjQty(product, row.reason, s);
+          const isSel = (Number(state.sizeNum) === s);
+          const isDis = (!state.isAdd && maxDeduct <= 0);
+          return `
+                        <button type="button" class="simple-size-btn ${isSel ? 'active' : ''} ${isDis ? 'disabled' : ''}" 
+                          onclick="setAdjRowSize(${index}, ${s})" ${isDis ? 'disabled' : ''}>
+                          <span class="simple-size-name">🥫 ${s}L ${s <= 1 ? 'Can' : (s <= 4 ? 'Gallon' : 'Drum')}</span>
+                          <span class="simple-size-stock">${state.isAdd ? `${cur} in stock` : (maxDeduct >= 1 ? `${cur} in stock · Max -${maxDeduct}` : (cur === 1 ? '1 unit (Protected)' : '0 in stock'))}</span>
+                        </button>
+                      `;
+        }).join('')
+      )}
                 </div>
-              ` : `
-                <div class="simple-guide-box">
-                  <div class="simple-guide-title">ℹ️ How Stock Adjustment Works</div>
-                  <div>Select a paint product from the dropdown above to adjust its inventory count. You can deduct damaged or expired units, record store use, or add extra counts discovered during physical audits.</div>
-                </div>
-              `}
+              </div>
             </div>
 
             <!-- Right Column: Quantity, Live Preview, and Remarks -->
             <div class="simple-adj-col">
-              ${product ? `
-                <!-- Step 4: Quantity -->
-                <div class="simple-form-group">
-                  <label class="simple-label">
-                    <span>4. Adjustment Quantity:</span>
-                    <span class="simple-label-help">${state.isOpened ? 'in Liters' : 'in Units'}</span>
-                  </label>
-                  <div class="simple-qty-container">
-                    <div class="simple-stepper">
-                      <button type="button" class="simple-step-btn" onclick="stepBulkAdjQty(${index}, -1)">−</button>
-                      <input type="number" 
-                        id="simple-qty-input-${index}"
-                        class="simple-qty-input" 
-                        min="${state.isOpened ? 0.01 : 1}" 
-                        max="${state.maxQty > 0 ? state.maxQty : 1}" 
-                        step="${state.isOpened ? 0.25 : 1}" 
-                        value="${row.qty}" 
-                        oninput="onBulkAdjQtyInput(${index}, this.value)">
-                      <button type="button" class="simple-step-btn" onclick="stepBulkAdjQty(${index}, 1)">+</button>
-                    </div>
-                    <span class="simple-qty-unit">${state.isOpened ? 'Liters' : (state.qtyNum === 1 ? 'Unit' : 'Units')}</span>
-                    ${state.maxQty > 1 ? `
-                      <button type="button" class="simple-btn-pill" onclick="setBulkAdjQtyMax(${index})">Set to Max (${state.maxQty})</button>
-                    ` : ''}
+              <!-- Step 3: Quantity -->
+              <div class="simple-form-group">
+                <label class="simple-label">
+                  <span>3. Adjustment Quantity:</span>
+                  <span class="simple-label-help">${state.isOpened ? 'in Liters' : 'in Units'}</span>
+                </label>
+                <div class="simple-qty-container">
+                  <div class="simple-stepper">
+                    <button type="button" class="simple-step-btn" onclick="stepBulkAdjQty(${index}, -1)">−</button>
+                    <input type="number" 
+                      id="simple-qty-input-${index}"
+                      class="simple-qty-input" 
+                      min="${state.isOpened ? 0.01 : 1}" 
+                      max="${state.maxQty > 0 ? state.maxQty : 1}" 
+                      step="${state.isOpened ? 0.25 : 1}" 
+                      value="${row.qty}" 
+                      oninput="onBulkAdjQtyInput(${index}, this.value)">
+                    <button type="button" class="simple-step-btn" onclick="stepBulkAdjQty(${index}, 1)">+</button>
                   </div>
-                  ${!state.isOpened && !state.isAdd && state.maxQty > 0 && state.maxQty < state.curCans ? `
-                    <div class="simple-safeguard-tip">🛡️ Up to ${state.maxQty} units can be deducted (50% safety safeguard) to prevent accidental stockout.</div>
-                  ` : ''}
-                  ${!state.isOpened && state.isAdd ? `
-                    <div class="simple-safeguard-tip">🛡️ Up to 10 units can be added via manual adjustment. For supplier deliveries, use the Stock Receiving tab.</div>
+                  <span class="simple-qty-unit">${state.isOpened ? 'Liters' : (state.qtyNum === 1 ? 'Unit' : 'Units')}</span>
+                  ${state.maxQty > 1 ? `
+                    <button type="button" class="simple-btn-pill" onclick="setBulkAdjQtyMax(${index})">Set to Max (${state.maxQty})</button>
                   ` : ''}
                 </div>
+                ${!state.isOpened && !state.isAdd && state.maxQty > 0 && state.maxQty < state.curCans ? `
+                  <div class="simple-safeguard-tip">🛡️ Up to ${state.maxQty} units can be deducted (50% safety safeguard) to prevent accidental stockout.</div>
+                ` : ''}
+                ${!state.isOpened && state.isAdd ? `
+                  <div class="simple-safeguard-tip">🛡️ Up to 10 units can be added via manual adjustment. For supplier deliveries, use the Stock Receiving tab.</div>
+                ` : ''}
+              </div>
 
-                <!-- Live Result Preview Bar -->
-                <div id="simple-preview-${index}" class="simple-preview-bar ${state.previewClass}">
-                  <span class="simple-preview-icon">${state.isInvalid ? '⚠️' : (state.isAdd ? '➕' : (state.isOpened ? '🫙' : '🔻'))}</span>
-                  <div class="simple-preview-content">
-                    <div class="simple-preview-title" id="simple-preview-title-${index}">${state.headline}</div>
-                    <div class="simple-preview-sub" id="simple-preview-sub-${index}">${state.subline}</div>
-                  </div>
+              <!-- Live Result Preview Bar -->
+              <div id="simple-preview-${index}" class="simple-preview-bar ${state.previewClass}">
+                <span class="simple-preview-icon">${state.isInvalid ? '⚠️' : (state.isAdd ? '➕' : (state.isOpened ? '🫙' : '🔻'))}</span>
+                <div class="simple-preview-content">
+                  <div class="simple-preview-title" id="simple-preview-title-${index}">${state.headline}</div>
+                  <div class="simple-preview-sub" id="simple-preview-sub-${index}">${state.subline}</div>
                 </div>
+              </div>
 
-                <!-- Note (optional) -->
-                <div class="simple-form-group">
-                  <label class="simple-label">
-                    <span>Remarks / Audit Note <span class="muted small" style="font-weight:normal;">(optional)</span>:</span>
-                  </label>
-                  <input type="text" class="simple-note-input" placeholder="e.g. Dropped in warehouse, dented lid, audit recount..." value="${escapeHtml(row.note || '')}" oninput="updateBulkAdjRow(${index}, 'note', this.value)">
-                </div>
-              ` : `
-                <div class="simple-guide-box" style="height:100%; justify-content:center; text-align:center;">
-                  <div style="font-size:24px; margin-bottom:4px;">📊</div>
-                  <div style="font-weight:700; color:var(--ink);">Real-time Stock Preview</div>
-                  <div>Once a product is selected, this panel displays the new inventory count and verifies all deduction safety rules before saving.</div>
-                </div>
-              `}
+              <!-- Note (optional) -->
+              <div class="simple-form-group">
+                <label class="simple-label">
+                  <span>Remarks / Audit Note <span class="muted small" style="font-weight:normal;">(optional)</span>:</span>
+                </label>
+                <input type="text" class="simple-note-input" placeholder="e.g. Dropped in warehouse, dented lid, audit recount..." value="${escapeHtml(row.note || '')}" oninput="updateBulkAdjRow(${index}, 'note', this.value)">
+              </div>
             </div>
           </div>
         </div>
       </div>
     `;
-  }).join('');
+  }).join('') : `
+    <div class="adj-selected-empty">
+      <div class="adj-selected-empty-icon">📦</div>
+      <div class="adj-selected-empty-title">No products selected yet</div>
+      <div class="muted small">Click one or more product cards above to configure stock adjustments.</div>
+    </div>
+  `;
 
   container.innerHTML = `
     <div class="simple-adj-container">
       <div class="simple-adj-header">
         <div>
           <div class="simple-adj-title">⚖️ Stock Adjustment</div>
-          <div class="simple-adj-subtitle">Deduct or add stock for damaged goods, expired paint, internal store use, or inventory audit corrections.</div>
+          <div class="simple-adj-subtitle">Search and select one or more products below to deduct damaged/expired stock, record store use, or apply audit corrections.</div>
         </div>
         <div class="simple-header-actions">
           <div class="simple-header-stats">
-            <span class="simple-stat-pill">Catalog: <b>${availableProducts.length}</b> products</span>
-            <span class="simple-stat-pill">Selected: <b>${validRows.length}</b> item${validRows.length === 1 ? '' : 's'}</span>
-          </div>
-          <div class="simple-adj-supplier-filter">
-            <span class="muted">Supplier:</span>
-            <select id="bulk-adj-supplier-filter" class="simple-adj-supplier-select" onchange="onBulkAdjSupplierFilterChange()">
-              <option value="">All Suppliers</option>
-              ${supplierOptions}
-            </select>
+            <span class="simple-stat-pill" id="adj-picker-match-count">Showing <b>${filteredProducts.length}</b> product${filteredProducts.length === 1 ? '' : 's'}</span>
+            <span class="simple-stat-pill adj-stat-selected">Selected: <b>${validRows.length}</b> product${validRows.length === 1 ? '' : 's'}</span>
           </div>
         </div>
       </div>
 
-      ${cardsHtml}
+      <!-- Searchable Product Picker -->
+      <div class="adj-picker-section">
+        <div class="adj-picker-toolbar">
+          <div class="adj-picker-search-wrap">
+            <span class="adj-picker-search-icon">🔍</span>
+            <input type="text" id="adj-picker-search" class="adj-picker-search" placeholder="Search by product name, brand, or code..." value="${escapeAttr(bulkAdjSearchQuery)}" oninput="onAdjPickerSearchInput(this.value)">
+          </div>
+          <select id="adj-picker-category" class="adj-picker-filter-select" onchange="onAdjPickerCategoryChange(this.value)" title="Filter by Category">
+            <option value="">All Categories</option>
+            ${categoryOptions}
+          </select>
+          <select id="bulk-adj-supplier-filter" class="adj-picker-filter-select" onchange="onBulkAdjSupplierFilterChange()" title="Filter by Supplier">
+            <option value="">All Suppliers</option>
+            ${supplierOptions}
+          </select>
+          <select id="adj-picker-sort" class="adj-picker-filter-select" onchange="onAdjPickerSortChange(this.value)" title="Sort Products">
+            <option value="name-asc" ${bulkAdjSortBy === 'name-asc' ? 'selected' : ''}>Sort: Name (A → Z)</option>
+            <option value="name-desc" ${bulkAdjSortBy === 'name-desc' ? 'selected' : ''}>Sort: Name (Z → A)</option>
+            <option value="stock-desc" ${bulkAdjSortBy === 'stock-desc' ? 'selected' : ''}>Sort: Stock (High → Low)</option>
+            <option value="stock-asc" ${bulkAdjSortBy === 'stock-asc' ? 'selected' : ''}>Sort: Stock (Low → High)</option>
+          </select>
+        </div>
+
+        <div id="adj-picker-grid" class="adj-picker-grid">
+          ${renderAdjPickerGridHtml(filteredProducts)}
+        </div>
+      </div>
+
+      <!-- Selected Products Adjustment Forms -->
+      <div class="adj-selected-section">
+        ${validRows.length ? `
+          <div class="adj-selected-header">
+            <span>Selected Products for Adjustment (${validRows.length})</span>
+            <button type="button" class="btn ghost small" style="color:var(--ink-soft);" onclick="clearBulkAdjRows()">Clear Selection</button>
+          </div>
+        ` : ''}
+        ${cardsHtml}
+      </div>
 
       <div class="simple-action-row">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -1000,9 +1364,8 @@ function renderBulkAdjustmentView() {
       ? `⏳ Submit for Admin Approval${validRows.length > 1 ? ` (${validRows.length} items)` : ''}`
       : `💾 Save Stock Adjustment${validRows.length > 1 ? ` (${validRows.length} items)` : ''}`}
           </button>
-          <button type="button" class="btn secondary small" onclick="addBulkAdjRow()">+ Add Another Product</button>
         </div>
-        <button type="button" class="btn ghost small" style="color:var(--ink-soft);" onclick="clearBulkAdjRows()">Clear Form</button>
+        ${validRows.length > 0 ? `<button type="button" class="btn ghost small" style="color:var(--ink-soft);" onclick="clearBulkAdjRows()">Clear Form</button>` : ''}
       </div>
     </div>
   `;
@@ -1125,23 +1488,13 @@ function updateBulkAdjRow(index, field, value) {
   }
 }
 
-function addBulkAdjRow(productId = '', reason = 'Damaged', qty = 1, note = '', size = 1) {
-  const p = productId ? productById(productId) : null;
-  const resolvedSize = defaultAdjSizeForProduct(p, reason, size);
-  const maxQty = maxAllowedAdjQty(p, reason, resolvedSize);
-  const resolvedQty = maxQty >= 1 ? Math.min(qty, maxQty) : qty;
-  bulkAdjustmentRows.push({ id: uid('adj'), productId, reason, size: resolvedSize, qty: resolvedQty, note });
-  renderBulkAdjustmentView();
-}
-
 function removeBulkAdjRow(index) {
-  if (bulkAdjustmentRows.length <= 1) return;
   bulkAdjustmentRows.splice(index, 1);
   renderBulkAdjustmentView();
 }
 
 function clearBulkAdjRows() {
-  bulkAdjustmentRows = [{ id: uid('adj'), productId: '', reason: 'Damaged', size: 1, qty: 1, note: '' }];
+  bulkAdjustmentRows = [];
   renderBulkAdjustmentView();
 }
 
@@ -1205,11 +1558,11 @@ function confirmAndSubmitAdjustments() {
     const changeTag = isAdd
       ? `<b style="color:var(--success);">+${qDisplay} unit${qDisplay === 1 ? '' : 's'} (+${formatLiters(state.litersAbs)})</b>`
       : (isOpened
-        ? `<b style="color:#9A6216;">Dispose ${formatLiters(qDisplay)}</b>`
+        ? `<b style="color:var(--warning-text);">Dispose ${formatLiters(qDisplay)}</b>`
         : `<b style="color:var(--danger);">-${qDisplay} unit${qDisplay === 1 ? '' : 's'} (-${formatLiters(state.litersAbs)})</b>`);
 
     return `
-      <div style="padding:9px 12px; background:#FAF7F2; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; font-size:13px; text-align:left;">
+      <div style="padding:9px 12px; background:var(--surface-2); border:1px solid var(--line); border-radius:6px; margin-bottom:6px; font-size:13px; text-align:left;">
         <div style="font-weight:700; color:var(--ink);">${escapeHtml(p.name)} (${isOpened ? 'Opened Leftover' : state.sizeNum + 'L ' + (state.sizeNum <= 1 ? 'Can' : (state.sizeNum <= 4 ? 'Gallon' : 'Drum'))})</div>
         <div style="display:flex; justify-content:space-between; margin-top:2px;">
           <span>${changeTag} · ${escapeHtml(r.reason)}</span>
@@ -1226,7 +1579,7 @@ function confirmAndSubmitAdjustments() {
         <div style="max-height:220px; overflow-y:auto; margin-bottom:10px;">
           ${reviewListHtml}
         </div>
-        <p class="muted small" style="color:#92400E; font-weight:600;">⏳ This will be submitted as <b>Pending Approval</b> for Admin review.</p>
+        <p class="muted small" style="color:var(--warning-text); font-weight:600;">⏳ This will be submitted as <b>Pending Approval</b> for Admin review.</p>
       </div>
     `;
 
@@ -1503,11 +1856,11 @@ function confirmApproveAdjRequest(reqId) {
     const actionLabel = isAdd
       ? `<span style="color:var(--success); font-weight:700;">➕ Add ${r.qty} × ${sizeNum}L</span>`
       : (isOpened
-        ? `<span style="color:#9A6216; font-weight:700;">🫙 Dispose ${formatLiters(r.qty)}</span>`
+        ? `<span style="color:var(--warning-text); font-weight:700;">🫙 Dispose ${formatLiters(r.qty)}</span>`
         : `<span style="color:var(--danger); font-weight:700;">🔻 Deduct ${r.qty} × ${sizeNum}L</span>`);
 
     return `
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:8px 12px; background:#FAF7F2; border-radius:6px; margin-bottom:6px; font-size:12.5px; border:1px solid var(--line);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:8px 12px; background:var(--surface-2); border-radius:6px; margin-bottom:6px; font-size:12.5px; border:1px solid var(--line);">
         <div>
           <b>${escapeHtml(p.name)}</b> <span class="muted small">(${escapeHtml(r.reason)})</span>
           <div class="muted small">${isOpened ? `Available opened leftover: <b>${formatLiters(curOpened)}</b>` : `Available in stock: <b>${curCans} can${curCans === 1 ? '' : 's'}</b>`}</div>
@@ -1532,7 +1885,7 @@ function confirmApproveAdjRequest(reqId) {
       `,
       confirmLabel: 'OK',
       confirmClass: 'btn secondary',
-      onConfirm: () => {}
+      onConfirm: () => { }
     });
     return;
   }
@@ -1544,7 +1897,7 @@ function confirmApproveAdjRequest(reqId) {
       <div style="text-align:left; font-size:13px; color:var(--ink-soft);">
         <p>Do you want to approve request <b>${escapeHtml(req.reqNumber)}</b> submitted by <b>${escapeHtml(req.requestedBy)}</b>?</p>
         <div style="max-height:200px; overflow-y:auto; margin:8px 0;">${reviewHtml}</div>
-        <p style="font-size:12px; color:var(--teal); font-weight:600;">✓ Warehouse stock will update automatically and be recorded in Movement History.</p>
+        <p style="font-size:12px; color:var(--teal-text); font-weight:600;">✓ Warehouse stock will update automatically and be recorded in Movement History.</p>
       </div>
     `,
     confirmLabel: '✓ Approve & Update Stock',
@@ -1626,7 +1979,7 @@ function viewAdjRequestDetails(reqId) {
     const actionLabel = isAdd
       ? `<span style="color:var(--success); font-weight:700;">➕ Add ${r.qty} × ${sizeNum}L</span>`
       : (isOpened
-        ? `<span style="color:#9A6216; font-weight:700;">🫙 Dispose ${formatLiters(r.qty)}</span>`
+        ? `<span style="color:var(--warning-text); font-weight:700;">🫙 Dispose ${formatLiters(r.qty)}</span>`
         : `<span style="color:var(--danger); font-weight:700;">🔻 Deduct ${r.qty} × ${sizeNum}L</span>`);
 
     const variant = p && !isOpened ? productSizeVariantBySize(p, sizeNum) : null;
@@ -1634,7 +1987,7 @@ function viewAdjRequestDetails(reqId) {
     const prodId = p ? (p.productId || p.id) : r.productId;
 
     return `
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#FAF7F2; border-radius:6px; margin-bottom:8px; border:1px solid var(--line);">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--surface-2); border-radius:6px; margin-bottom:8px; border:1px solid var(--line);">
         <div>
           <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
             <span style="font-weight:700; color:var(--ink);">${escapeHtml(p ? p.name : 'Unknown Product')}</span>
@@ -1650,7 +2003,7 @@ function viewAdjRequestDetails(reqId) {
   }).join('');
 
   let statusBadge = req.status === 'pending'
-    ? '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D;">⏳ Pending Approval</span>'
+    ? '<span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border);">⏳ Pending Approval</span>'
     : (req.status === 'approved' ? '<span class="badge ok">✅ Approved</span>' : '<span class="badge danger">✕ Rejected</span>');
 
   const bodyHtml = `
@@ -1663,8 +2016,8 @@ function viewAdjRequestDetails(reqId) {
         <div>${statusBadge}</div>
       </div>
 
-      ${req.batchNote ? `<div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:13px;"><b>Audit Note:</b> "${escapeHtml(req.batchNote)}"</div>` : ''}
-      ${req.rejectReason ? `<div style="background:#FDF2F2; border:1px solid #F8D7DA; color:#721C24; border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:13px;"><b>Rejection Reason:</b> ${escapeHtml(req.rejectReason)}</div>` : ''}
+      ${req.batchNote ? `<div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:13px;"><b>Audit Note:</b> "${escapeHtml(req.batchNote)}"</div>` : ''}
+      ${req.rejectReason ? `<div style="background:var(--danger-bg); border:1px solid var(--danger-border); color:var(--danger-text); border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:13px;"><b>Rejection Reason:</b> ${escapeHtml(req.rejectReason)}</div>` : ''}
 
       <div style="font-size:13px; font-weight:700; margin-bottom:8px;">Products (${rows.length}):</div>
       <div style="max-height:280px; overflow-y:auto; margin-bottom:12px;">
@@ -1713,7 +2066,7 @@ function renderAdjRequestsViewHtml() {
           <button type="button" class="btn ${adjRequestFilterStatus === 'all' ? 'secondary' : 'ghost'} small" onclick="setAdjReqFilter('all')">
             All (${counts.all})
           </button>
-          <button type="button" class="btn ${adjRequestFilterStatus === 'pending' ? 'secondary' : 'ghost'} small" style="${adjRequestFilterStatus === 'pending' ? 'border-color:#F59E0B; color:#92400E;' : ''}" onclick="setAdjReqFilter('pending')">
+          <button type="button" class="btn ${adjRequestFilterStatus === 'pending' ? 'secondary' : 'ghost'} small" style="${adjRequestFilterStatus === 'pending' ? 'border-color:#F59E0B; color:var(--warning-text);' : ''}" onclick="setAdjReqFilter('pending')">
             ⏳ Pending (${counts.pending})
           </button>
           <button type="button" class="btn ${adjRequestFilterStatus === 'approved' ? 'secondary' : 'ghost'} small" onclick="setAdjReqFilter('approved')">
@@ -1730,10 +2083,10 @@ function renderAdjRequestsViewHtml() {
         </div>
       </div>
 
-      <div class="table-scroll" style="background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm);">
+      <div class="table-scroll" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm);">
         <table style="width:100%; border-collapse:collapse;">
           <thead>
-            <tr style="background:#FAF8F5;">
+            <tr style="background:var(--surface-2);">
               <th style="padding:10px 14px; text-align:left;">Request # &amp; Date</th>
               <th style="padding:10px 14px; text-align:left;">Requested By</th>
               <th style="padding:10px 14px; text-align:left;">Items Summary</th>
@@ -1751,7 +2104,7 @@ function renderAdjRequestsViewHtml() {
 
     let statusBadge = '';
     if (isPending) {
-      statusBadge = '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D;">⏳ Awaiting Admin Approval</span>';
+      statusBadge = '<span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border);">⏳ Awaiting Admin Approval</span>';
     } else if (isApproved) {
       statusBadge = `<span class="badge ok" title="Approved at ${formatDateShort(req.reviewedAt)}">✅ Approved ${req.reviewedBy ? 'by ' + escapeHtml(req.reviewedBy) : ''}</span>`;
     } else {
@@ -1842,7 +2195,6 @@ async function submitMovement(e) {
       const val = Math.floor(rawVal);
       batchQtys[i] = val;
       totalToReceive += val;
-      const bnEl = document.getElementById(`rcv-batch-input-${i}`);
       const exEl = document.getElementById(`rcv-exp-input-${i}`);
       const ntEl = document.getElementById(`rcv-note-input-${i}`);
       const expVal = exEl ? exEl.value : '';
@@ -1855,7 +2207,7 @@ async function submitMovement(e) {
         if (!ok) return false;
       }
       batchMeta[i] = {
-        batchNumber: bnEl ? bnEl.value.trim() : '',
+        batchNumber: '',
         expirationDate: expVal || '',
         notes: ntEl ? ntEl.value.trim() : ''
       };

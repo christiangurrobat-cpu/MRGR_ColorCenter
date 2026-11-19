@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS `products` (
     `type` VARCHAR(100) NOT NULL,
     `category` VARCHAR(100) NULL,
     `color` VARCHAR(100) DEFAULT '-',
+    `color_id` VARCHAR(50) NULL,
     `color_hex` VARCHAR(20) NULL DEFAULT '#FFFFFF',
     `supplier_id` VARCHAR(50) NULL,
     `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -917,3 +918,47 @@ INSERT IGNORE INTO `purchase_orders` (`id`, `po_number`, `supplier_id`, `supplie
 INSERT IGNORE INTO `purchase_orders` (`id`, `po_number`, `supplier_id`, `supplier_name`, `order_date`, `expected_date`, `status`, `total_amount`, `items_json`, `notes`, `created_by`, `created_at`, `received_at`) VALUES ('po_mvsg1w98y8nkk', 'PO-20261029-0028', 's2', 'Boysen Regional Distributor', '2026-10-29 02:24:37', '2026-10-30', 'received', '2000.00', '[{\"productId\":\"p_mvc9g44lbdtyr\",\"productName\":\"Paint\",\"brand\":\"Boysen\",\"color\":\"Blue\",\"size\":1,\"qty\":5,\"unitCost\":400,\"receivedQty\":5}]', '', 'Jun Santos', '2026-10-29 02:24:37', '2026-10-29 02:25:09');
 INSERT IGNORE INTO `purchase_orders` (`id`, `po_number`, `supplier_id`, `supplier_name`, `order_date`, `expected_date`, `status`, `total_amount`, `items_json`, `notes`, `created_by`, `created_at`, `received_at`) VALUES ('po_mvsggzl7fgojd', 'PO-20261029-0029', 's2', 'Boysen Regional Distributor', '2026-10-29 02:36:21', '2026-10-30', 'received', '6240.00', '[{\"productId\":\"p8\",\"productName\":\"Boysen Permacoat Latex\",\"brand\":\"Boysen\",\"color\":\"White\",\"size\":1,\"qty\":10,\"unitCost\":624,\"receivedQty\":10}]', '', 'Jun Santos', '2026-10-29 02:36:22', '2026-10-29 02:47:53');
 INSERT IGNORE INTO `purchase_orders` (`id`, `po_number`, `supplier_id`, `supplier_name`, `order_date`, `expected_date`, `status`, `total_amount`, `items_json`, `notes`, `created_by`, `created_at`, `received_at`) VALUES ('po_mvsgycngpjgyk', 'PO-20261029-0030', 's2', 'Boysen Regional Distributor', '2026-10-29 02:49:52', '2026-10-30', 'ordered', '84000.00', '[{\"productId\":\"p_mvsfzwt3tl4zy\",\"productName\":\"Boysen Permacoat Latex\",\"brand\":\"Boysen\",\"color\":\"Orange\",\"size\":1,\"qty\":10,\"unitCost\":400},{\"productId\":\"p_mvsfzwt3tl4zy\",\"productName\":\"Boysen Permacoat Latex\",\"brand\":\"Boysen\",\"color\":\"Orange\",\"size\":4,\"qty\":10,\"unitCost\":1600},{\"productId\":\"p_mvsfzwt3tl4zy\",\"productName\":\"Boysen Permacoat Latex\",\"brand\":\"Boysen\",\"color\":\"Orange\",\"size\":16,\"qty\":10,\"unitCost\":6400}]', '', 'Mike Revadulla', '2026-10-29 02:49:52', NULL);
+
+-- ------------------------------------------------------------
+-- 14. CENTRALIZED COLOR LIBRARY
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `color_library` (
+    `id` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `name` VARCHAR(120) NOT NULL,
+    `hex` VARCHAR(7) NOT NULL,
+    `category` VARCHAR(60) NOT NULL,
+    `classification` VARCHAR(80) NOT NULL DEFAULT 'Neutral Colors',
+    `color_family` VARCHAR(60) NOT NULL DEFAULT '',
+    `variation` VARCHAR(30) NOT NULL DEFAULT 'Base',
+    `parent_color_id` VARCHAR(50) NULL,
+    `is_custom` TINYINT(1) NOT NULL DEFAULT 0,
+    `notes` TEXT NULL,
+    `created_by` VARCHAR(150) NULL,
+    `updated_by` VARCHAR(150) NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_color_lib_name` (`name`),
+    KEY `idx_color_lib_hex` (`hex`),
+    KEY `idx_color_lib_cat` (`category`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
+-- 15. CUSTOM COLOR FORMULAS (PAINT MIXING STUDIO)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `color_formulas` (
+    `id` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `color_id` VARCHAR(50) NULL,
+    `name` VARCHAR(150) NOT NULL,
+    `hex_reference` VARCHAR(7) NOT NULL,
+    `detected_name` VARCHAR(150) NULL,
+    `base_type` VARCHAR(100) NULL,
+    `sheen` VARCHAR(50) NULL,
+    `notes` TEXT NULL,
+    `pigment_formula` LONGTEXT NOT NULL,
+    `is_custom` TINYINT(1) NOT NULL DEFAULT 1,
+    `created_by` VARCHAR(150) NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY `idx_cf_color_id` (`color_id`),
+    KEY `idx_cf_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

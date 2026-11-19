@@ -179,46 +179,8 @@ function setSalesDatePreset(preset) {
   renderSalesHistoryTable();
 }
 
-function onSalesDateRangeChange() {
-  const fromEl = document.getElementById('sh-date-from');
-  const toEl = document.getElementById('sh-date-to');
-  const toIso = (v) => {
-    if (!v) return '';
-    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
-    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
-  };
-  let f = toIso(fromEl ? fromEl.value : '');
-  let t = toIso(toEl ? toEl.value : '');
-  if (f && t && f > t) {
-    const tmp = f;
-    f = t;
-    t = tmp;
-    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
-    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
-  }
-  salesDateFrom = f;
-  salesDateTo = t;
-  updateSalesDatePresetsUI();
-  renderSalesHistoryTable();
-}
-
 function clearSalesDates() {
   setSalesDatePreset('all');
-}
-
-function setSalesDateRange(daysAgo) {
-  if (daysAgo === null || daysAgo === undefined) setSalesDatePreset('all');
-  else if (daysAgo === 0) setSalesDatePreset('today');
-  else if (daysAgo === 1) setSalesDatePreset('yesterday');
-  else if (daysAgo === 6) setSalesDatePreset('7d');
-  else if (daysAgo === 29) setSalesDatePreset('30d');
-  else {
-    salesDateFrom = daysAgoISO(daysAgo);
-    salesDateTo = todayISO();
-    syncSalesDateInputs();
-    renderSalesHistoryTable();
-  }
 }
 
 function resetAllSalesFilters() {
@@ -260,9 +222,9 @@ function renderCashierSalesSummaryHtml(cashierSales, fromDate, toDate) {
   const totalNet = typeof sumSales === 'function'
     ? sumSales(completedSales)
     : completedSales.reduce((sum, s) => {
-        const refund = Number(s.refundTotal || 0);
-        return sum + (Number(s.total || 0) - refund);
-      }, 0);
+      const refund = Number(s.refundTotal || 0);
+      return sum + (Number(s.total || 0) - refund);
+    }, 0);
   const totalTx = completedSales.length;
   const returnTx = cashierSales.filter(s => Array.isArray(s.returns) && s.returns.length > 0).length;
 
@@ -271,7 +233,7 @@ function renderCashierSalesSummaryHtml(cashierSales, fromDate, toDate) {
       <div class="sh-period-banner" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
           <span style="font-weight:700; color:var(--ink-soft); text-transform:uppercase; font-size:11px; letter-spacing:0.04em;">Cashier Overview:</span>
-          <span class="badge" style="background:#E6F4F1; color:#0F766E; font-weight:700; border:1px solid #B5D2CD;">👤 ${escapeHtml(currentUser.name)}</span>
+          <span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); font-weight:700; border:1px solid var(--teal-tint-border);">👤 ${escapeHtml(currentUser.name)}</span>
           <span class="sh-period-pill">${periodInfo.icon} ${escapeHtml(periodInfo.badge)}</span>
           <strong style="font-family:'Space Grotesk',sans-serif; font-size:13.5px; color:var(--ink);">${escapeHtml(periodInfo.rangeText)}</strong>
         </div>
@@ -282,7 +244,7 @@ function renderCashierSalesSummaryHtml(cashierSales, fromDate, toDate) {
       <div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
         <div class="stat-card" style="border-left:4px solid var(--teal); padding:12px 16px;">
           <div class="label" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">My Total Net Sales</div>
-          <div class="value" style="color:var(--teal); font-size:22px; font-family:'Space Grotesk',sans-serif; font-weight:700;">${peso(totalNet)}</div>
+          <div class="value" style="color:var(--teal-text); font-size:22px; font-family:'Space Grotesk',sans-serif; font-weight:700;">${peso(totalNet)}</div>
           <div class="sub" style="font-size:11px;">Total net revenue collected</div>
         </div>
         <div class="stat-card sage" style="padding:12px 16px;">
@@ -298,7 +260,7 @@ function renderCashierSalesSummaryHtml(cashierSales, fromDate, toDate) {
         ${returnTx > 0 ? `
         <div class="stat-card" style="border-left:4px solid #D97706; padding:12px 16px;">
           <div class="label" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">My Returns &amp; Exchanges</div>
-          <div class="value" style="color:#D97706; font-size:22px; font-family:'Space Grotesk',sans-serif; font-weight:700;">${returnTx.toLocaleString()}</div>
+          <div class="value" style="color:var(--warning-text); font-size:22px; font-family:'Space Grotesk',sans-serif; font-weight:700;">${returnTx.toLocaleString()}</div>
           <div class="sub" style="font-size:11px;">Transactions with return / exchange slips</div>
         </div>
         ` : ''}
@@ -330,7 +292,7 @@ function salesHistoryPage() {
       <div class="spacer"></div>
       <div class="row wrap" style="gap:8px; align-items:center;">
         ${isCashier ? `
-          <span class="badge" style="background:#E6F4F1; color:#0F766E; font-weight:700; border:1px solid #B5D2CD; padding:4px 10px; border-radius:12px;">
+          <span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); font-weight:700; border:1px solid var(--teal-tint-border); padding:4px 10px; border-radius:12px;">
             👤 ${escapeHtml(currentUser.name)} (Cashier)
           </span>
         ` : ''}
@@ -340,7 +302,7 @@ function salesHistoryPage() {
     </div>
 
     <!-- Filter Tabs -->
-    <div style="padding:10px 18px; display:flex; gap:8px; border-bottom:1px solid var(--line-light); background:#FAF7F2; flex-wrap:wrap;">
+    <div style="padding:10px 18px; display:flex; gap:8px; border-bottom:1px solid var(--line-light); background:var(--surface-2); flex-wrap:wrap;">
       <button class="btn ghost small filter-tab ${salesFilterStatus === 'all' ? 'active' : ''}" onclick="setSalesFilter('all')">All Transactions</button>
       <button class="btn ghost small filter-tab ${salesFilterStatus === 'completed' ? 'active' : ''}" onclick="setSalesFilter('completed')">Completed</button>
       <button class="btn ghost small filter-tab ${salesFilterStatus === 'pending_void' ? 'active' : ''}" onclick="setSalesFilter('pending_void')">⏳ Pending Void (${pendingVoidCount})</button>
@@ -350,7 +312,7 @@ function salesHistoryPage() {
     </div>
 
     <!-- Dedicated Date Range Bar, Year Selector & Historical Records Option -->
-    <div class="audit-date-bar" style="padding:10px 18px; border-top:none; border-bottom:1px solid var(--line-light); background:#FBF9F4;">
+    <div class="audit-date-bar" style="padding:10px 18px; border-top:none; border-bottom:1px solid var(--line-light); background:var(--surface-2);">
       <div class="audit-date-group">
         <!-- Year Selector (Defaults to Current Year) -->
         <div class="audit-year-wrap">
@@ -453,10 +415,10 @@ function normalizeSaleStatus(status) {
 function saleStatusBadge(status) {
   const norm = normalizeSaleStatus(status);
   if (norm === 'pending_void') {
-    return `<span class="badge warning" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D; font-weight:700;">⏳ Pending Void Approval</span>`;
+    return `<span class="badge warning" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-weight:700;">⏳ Pending Void Approval</span>`;
   }
   if (norm === 'void_rejected') {
-    return `<span class="badge danger" style="background:#FEE2E2; color:#991B1B; border:1px solid #FCA5A5; font-weight:700;">✕ Void Rejected</span>`;
+    return `<span class="badge danger" style="background:var(--danger-bg); color:var(--danger-text); border:1px solid var(--danger-border); font-weight:700;">✕ Void Rejected</span>`;
   }
   if (norm === 'voided') {
     return `<span class="badge out">🚫 Voided</span>`;
@@ -574,7 +536,7 @@ function salesHistoryTableHtml() {
       <div>
         🏛️ <b>${escapeHtml(histLabel)}:</b> <b>${list.length}</b> transaction(s) found. All historical business records are permanently retained in the database.
       </div>
-      <button type="button" class="btn ghost small" onclick="setSalesDatePreset('year')" style="color:#7B4F09; border-color:#D19A42; background:#fff;">Return to Current Year (${curY}) &rarr;</button>
+      <button type="button" class="btn ghost small" onclick="setSalesDatePreset('year')" style="color:var(--warning-text); border-color:var(--warning-border); background:var(--surface);">Return to Current Year (${curY}) &rarr;</button>
     </div>
   ` : '';
 
@@ -584,13 +546,13 @@ function salesHistoryTableHtml() {
     const decided = (db.sales || []).filter(s => isCurrentUserSale(s) && (normalizeSaleStatus(s.status) === 'voided' || normalizeSaleStatus(s.status) === 'void_rejected') && !dismissed.has(s.id));
     if (decided.length > 0) {
       cashierNoticeHtml = `
-        <div style="margin:12px 18px 0; background:#F0FDF4; border:1.5px solid #BBF7D0; border-radius:8px; padding:12px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div style="margin:12px 18px 0; background:var(--success-bg); border:1.5px solid var(--success-border); border-radius:8px; padding:12px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
           <div>
-            <div style="font-weight:700; color:#166534; font-size:13px; display:flex; align-items:center; gap:6px;">
+            <div style="font-weight:700; color:var(--success-text); font-size:13px; display:flex; align-items:center; gap:6px;">
               <span>🔔 Void Request Decision Notice</span>
               <span class="badge ok" style="font-size:10px;">${decided.length} Notification${decided.length === 1 ? '' : 's'}</span>
             </div>
-            <div style="margin-top:6px; font-size:12px; color:#14532D; display:flex; flex-direction:column; gap:4px;">
+            <div style="margin-top:6px; font-size:12px; color:var(--success-text); display:flex; flex-direction:column; gap:4px;">
               ${decided.slice(0, 4).map(ds => {
         const isApproved = normalizeSaleStatus(ds.status) === 'voided';
         const rNo = getReceiptNo(ds);
@@ -601,15 +563,15 @@ function salesHistoryTableHtml() {
                   <div>
                     • <b>Receipt ${escapeHtml(rNo)}</b>:
                     ${isApproved
-            ? `<span style="color:#166534; font-weight:700;">Approved</span> by ${escapeHtml(decAdmin)} ${decTimeStr ? `(${decTimeStr})` : ''} — Sale voided &amp; eligible inventory restored.`
-            : `<span style="color:#991B1B; font-weight:700;">Rejected</span> by ${escapeHtml(decAdmin)} ${decTimeStr ? `(${decTimeStr})` : ''} — Original transaction kept Completed. Reason: "${escapeHtml(ds.voidAdminRemarks || ds.voidRejectReason || 'No note')}".`}
+            ? `<span style="color:var(--success-text); font-weight:700;">Approved</span> by ${escapeHtml(decAdmin)} ${decTimeStr ? `(${decTimeStr})` : ''} — Sale voided &amp; eligible inventory restored.`
+            : `<span style="color:var(--danger-text); font-weight:700;">Rejected</span> by ${escapeHtml(decAdmin)} ${decTimeStr ? `(${decTimeStr})` : ''} — Original transaction kept Completed. Reason: "${escapeHtml(ds.voidAdminRemarks || ds.voidRejectReason || 'No note')}".`}
                     <a href="#" onclick="openVoidDetailsModal('${ds.id}'); return false;" style="margin-left:6px; text-decoration:underline; font-weight:600; color:inherit;">View Details</a>
                   </div>
                 `;
       }).join('')}
             </div>
           </div>
-          <button type="button" class="btn ghost small" onclick="dismissAllCashierVoidNotifs()" style="font-size:11px; padding:2px 8px; color:#166534;" title="Dismiss notifications">✕ Dismiss</button>
+          <button type="button" class="btn ghost small" onclick="dismissAllCashierVoidNotifs()" style="font-size:11px; padding:2px 8px; color:var(--success-text);" title="Dismiss notifications">✕ Dismiss</button>
         </div>
       `;
     }
@@ -646,48 +608,48 @@ function salesHistoryTableHtml() {
 
         return `
         <tr>
-          <td><code style="color:var(--teal); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code></td>
+          <td><code style="color:var(--teal-text); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code></td>
           <td>${formatDateTime(s.date)}</td>
           <td>${escapeHtml(s.cashierName)}</td>
           <td>${s.items.length} item${s.items.length === 1 ? '' : 's'}</td>
           <td class="center">${saleStatusBadge(status)}</td>
           <td class="right">
             ${(returnedVal > 0 || refundTotal > 0)
-            ? `<div><strong style="font-family:'Space Grotesk'; font-size:13.5px;">${peso(netTotal)}</strong></div>
+            ? `<div><strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13.5px;">${peso(netTotal)}</strong></div>
                  <div class="muted small" style="color:${exchangeTotal > 0 ? 'var(--teal)' : 'var(--danger)'}; font-size:11px;">
                    ${exchangeTotal > 0
               ? `Exchanged: ${peso(exchangeTotal)}`
               : `Returned: -${peso(returnedVal || refundTotal)}`}
                  </div>`
-            : `<div><strong style="font-family:'Space Grotesk'; font-size:13.5px;">${peso(s.total)}</strong></div>
-           ${(Number(s.discountAmount || s.discount || 0) > 0) ? `<div class="muted small" style="color:var(--teal); font-size:11px; font-weight:600;">10% Disc: -${peso(Number(s.discountAmount || s.discount || 0))}</div>` : ''}`}
+            : `<div><strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13.5px;">${peso(s.total)}</strong></div>
+           ${(Number(s.discountAmount || s.discount || 0) > 0) ? `<div class="muted small" style="color:var(--teal-text); font-size:11px; font-weight:600;">${Number(s.discountPct || s.discountPercentage || 10)}% Discount: -${peso(Number(s.discountAmount || s.discount || 0))}</div>` : ''}`}
           </td>
           <td class="right" style="white-space:nowrap;">
             <div class="row wrap" style="justify-content:flex-end; gap:6px;">
               <button class="btn ghost small" onclick='viewSale("${s.id}")' title="View Sales Receipt">🧾 Receipt</button>
               ${normStatus === 'completed' && !hasReturns ? `
-                <button class="btn ghost small" style="color:var(--danger); border-color:#F0C4BF; background:#FFF8F7;" onclick='openVoidSaleModal("${s.id}")' title="Submit Void Request for Admin Approval">🚫 Void</button>
+                <button class="btn ghost small" style="color:var(--danger); border-color:var(--danger-border); background:var(--danger-bg);" onclick='openVoidSaleModal("${s.id}")' title="Submit Void Request for Admin Approval">🚫 Void</button>
               ` : ''}
               ${normStatus === 'pending_void' ? `
-                <button class="btn ghost small" style="color:#B45309; border-color:#FCD34D; background:#FEF3C7; font-weight:600;" onclick='openVoidDetailsModal("${s.id}")' title="Void request submitted. Awaiting Admin review. Click to view details.">⏳ Pending Void</button>
+                <button class="btn ghost small" style="color:var(--warning-text); border-color:var(--warning-border); background:var(--warning-bg); font-weight:600;" onclick='openVoidDetailsModal("${s.id}")' title="Void request submitted. Awaiting Admin review. Click to view details.">⏳ Pending Void</button>
               ` : ''}
               ${normStatus === 'voided' ? `
                 <button class="btn ghost small" style="color:var(--ink-soft); font-size:11px;" onclick='openVoidDetailsModal("${s.id}")' title="View void approval details">ℹ️ Void Details</button>
               ` : ''}
               ${normStatus === 'void_rejected' ? `
-                <button class="btn ghost small" style="color:var(--danger); border-color:#FCA5A5; background:#FEE2E2; font-size:11px;" onclick='openVoidDetailsModal("${s.id}")' title="View Admin rejection details">✕ Void Rejected</button>
+                <button class="btn ghost small" style="color:var(--danger); border-color:var(--danger-border); background:var(--danger-bg); font-size:11px;" onclick='openVoidDetailsModal("${s.id}")' title="View Admin rejection details">✕ Void Rejected</button>
               ` : ''}
               ${normStatus !== 'refunded' && normStatus !== 'voided' && normStatus !== 'pending_void' && normStatus !== 'cancelled' ? (
             hasSaleReturnableItems(s)
               ? `<button class="btn secondary small" onclick='openReturnRefundModal("${s.id}")' title="Process Return &amp; Exchange under store policy">↩️ Return / Exchange</button>`
               : (saleHasOnlyCustomMixItems(s)
                 ? (currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager')
-                  ? `<button class="btn ghost small" onclick='openReturnRefundModal("${s.id}")' style="border-color:#D8A868; color:#8A5A24;" title="Custom Color Mix is strictly Final Sale under standard policy. Click to open Administrator Review for store mixing errors.">🛡️ Custom Mix (Admin Review)</button>`
+                  ? `<button class="btn ghost small" onclick='openReturnRefundModal("${s.id}")' style="border-color:var(--warning-border); color:var(--warning-text);" title="Custom Color Mix is strictly Final Sale under standard policy. Click to open Administrator Review for store mixing errors.">🛡️ Custom Mix (Admin Review)</button>`
                   : `<button class="btn ghost small" disabled style="opacity:0.65; cursor:not-allowed;" title="Custom Color Mix cannot be returned or exchanged once mixed (Final Sale)">🔒 Custom Mix (Final Sale)</button>`)
                 : `<button class="btn ghost small" disabled style="opacity:0.55; cursor:not-allowed;" title="All items from this transaction have already been returned or exchanged">✓ Fully Returned</button>`)
           ) : ''}
               ${hasReturns ? `
-                <button class="btn ghost small" onclick='viewReturnVouchers("${s.id}")' title="View return &amp; exchange slips" style="color:#856404; background:#FFF3CD; border:1px solid #FFEBAA;">📋 Slip (${s.returns.length})</button>
+                <button class="btn ghost small" onclick='viewReturnVouchers("${s.id}")' title="View return &amp; exchange slips" style="color:var(--warning-text); background:var(--warning-bg); border:1px solid var(--warning-border);">📋 Slip (${s.returns.length})</button>
               ` : ''}
             </div>
           </td>
@@ -783,27 +745,27 @@ function openVoidSaleModal(saleId) {
 
   const bodyHtml = `
     <div style="display:flex; flex-direction:column; gap:14px; max-width:540px;">
-      <div style="background:#FFFBEB; border:1.5px solid #FCD34D; border-radius:8px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start;">
+      <div style="background:var(--warning-bg); border:1.5px solid var(--warning-border); border-radius:8px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start;">
         <span style="font-size:24px; line-height:1;">⏳</span>
         <div>
-          <div style="font-weight:700; color:#92400E; font-size:13.5px;">Void Sale Request — Receipt ${escapeHtml(receiptNo)}</div>
-          <div style="font-size:12px; color:#78350F; margin-top:2px;">
+          <div style="font-weight:700; color:var(--warning-text); font-size:13.5px;">Void Sale Request — Receipt ${escapeHtml(receiptNo)}</div>
+          <div style="font-size:12px; color:var(--warning-text); margin-top:2px;">
             Submitting will send this void request to the Administrator's <b>Pending Approvals Hub</b> for review. The transaction will be marked as <b>Pending Void Approval</b>.
             Inventory will remain unchanged until an Administrator reviews and approves the request.
           </div>
         </div>
       </div>
 
-      <div style="background:#FAF8F5; border:1px solid var(--line-light); border-radius:6px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center;">
+      <div style="background:var(--surface-2); border:1px solid var(--line-light); border-radius:6px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center;">
         <span style="font-size:12.5px; color:var(--ink-soft);">Total Transaction Amount:</span>
         <span style="font-family:'Space Grotesk',monospace; font-size:16px; font-weight:700; color:var(--ink);">${peso(sale.total)}</span>
       </div>
 
       <div>
         <label style="font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em;">Purchased Items in Transaction</label>
-        <div style="max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; margin-top:4px; background:#fff;">
+        <div style="max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; margin-top:4px; background:var(--surface);">
           <table style="width:100%; border-collapse:collapse; font-size:12px;">
-            <thead style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+            <thead style="background:var(--surface-2); border-bottom:1px solid var(--line);">
               <tr>
                 <th style="padding:6px 8px; text-align:left;">Item</th>
                 <th style="padding:6px 8px; text-align:center;">Size</th>
@@ -817,7 +779,7 @@ function openVoidSaleModal(saleId) {
           </table>
         </div>
         ${hasCustomMix ? `
-          <div style="margin-top:6px; font-size:11px; color:#6B6259; background:#FAF6EE; padding:6px 10px; border-radius:4px; border:1px dashed #D6CBBA;">
+          <div style="margin-top:6px; font-size:11px; color:var(--ink-soft); background:var(--surface-2); padding:6px 10px; border-radius:4px; border:1px dashed var(--line);">
             ℹ️ <b>Custom Color Mix Notice</b>: Blended paint cannot be returned to regular sealed inventory upon approval and will be quarantined as miscast stock per store policy.
           </div>
         ` : ''}
@@ -842,7 +804,7 @@ function openVoidSaleModal(saleId) {
           style="width:100%; box-sizing:border-box; padding:8px 10px; font-size:12.5px; border:1px solid var(--line); border-radius:6px; font-family:inherit; resize:vertical;"></textarea>
       </div>
 
-      <div style="background:#EDF5F4; border:1px solid #C4DFDC; border-radius:6px; padding:8px 12px; font-size:12px; color:#1F6F6B;">
+      <div style="background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:6px; padding:8px 12px; font-size:12px; color:var(--teal-dark);">
         <span>👤 Requesting Cashier: <b>${escapeHtml((currentUser && currentUser.name) || sale.cashierName || 'Cashier')}</b></span>
       </div>
     </div>
@@ -928,7 +890,7 @@ async function submitVoidSale(saleId) {
   const cashierName = (currentUser && currentUser.name) || sale.cashierName || 'Cashier';
   let voidReqId = uid('vr');
 
-  // Attempt backend API submission
+  // Submit via backend API (authoritatively updates sales, void_requests, and audit_logs)
   try {
     const vrResp = await fetch('api/void.php?action=submit_request', {
       method: 'POST',
@@ -936,82 +898,24 @@ async function submitVoidSale(saleId) {
       body: JSON.stringify({
         saleId: sale.id,
         reason: reason,
-        explanation: explanation,
-        currentUser: (typeof currentUser !== 'undefined' && currentUser) ? { id: currentUser.id, role: currentUser.role, username: currentUser.username, name: currentUser.name } : null
+        explanation: explanation
       })
     });
-    if (vrResp.ok) {
-      const vrData = await vrResp.json();
-      if (vrData && vrData.voidRequestId) {
-        voidReqId = vrData.voidRequestId;
-      }
+    const vrData = await vrResp.json().catch(() => ({}));
+    if (!vrResp.ok || !vrData.success) {
+      showToast(vrData.error || ('Failed to submit void request (HTTP ' + vrResp.status + ').'), 'error');
+      return;
+    }
+    if (vrData.voidRequestId) {
+      voidReqId = vrData.voidRequestId;
     }
   } catch (err) {
-    console.warn('api/void.php submit fallback to db sync:', err.message);
+    showToast('Could not connect to server to submit void request.', 'error');
+    return;
   }
 
-  // Update sale status to Pending Void Approval
-  sale.status = 'Pending Void Approval';
-  sale.voidRequestId = voidReqId;
-  sale.voidReason = reason;
-  sale.voidExplanation = explanation;
-  sale.voidRequestedAt = now;
-  sale.voidRequestedBy = cashierName;
-
-  // Add void request record to db.voidRequests
-  if (!Array.isArray(db.voidRequests)) db.voidRequests = [];
-  const existingIndex = db.voidRequests.findIndex(vr => vr.saleId === sale.id && vr.status === 'pending');
-  if (existingIndex >= 0) {
-    db.voidRequests[existingIndex].reason = reason;
-    db.voidRequests[existingIndex].explanation = explanation;
-    db.voidRequests[existingIndex].date = now;
-  } else {
-    db.voidRequests.push({
-      id: voidReqId,
-      saleId: sale.id,
-      receiptNo: receiptNo,
-      date: now,
-      requestDate: now,
-      cashierId: cashierId,
-      cashierName: cashierName,
-      reason: reason,
-      explanation: explanation,
-      total: Number(sale.total || 0),
-      items: sale.items || [],
-      status: 'pending',
-      reviewedBy: null,
-      reviewedAt: null,
-      adminRemarks: null,
-      inventoryRestored: false
-    });
-  }
-
-  // Log Audit Event
-  logAudit(
-    'SALE_VOID_REQUEST',
-    `Receipt ${receiptNo}`,
-    `Void request submitted by ${cashierName} for receipt ${receiptNo} (${peso(sale.total)}) — Reason: ${reason}${explanation ? ` · Note: ${explanation}` : ''}. Transaction status set to Pending Void Approval.`,
-    {
-      entityName: `Receipt ${receiptNo}`,
-      fieldChanged: 'Transaction Status',
-      oldValue: 'Completed',
-      newValue: 'Pending Void Approval',
-      referenceNo: receiptNo,
-      reason: reason,
-      meta: {
-        receiptNo,
-        cashierId,
-        cashierName,
-        total: sale.total,
-        voidReason: reason,
-        explanation: explanation,
-        requestDate: now
-      }
-    }
-  );
-
-  // Persist to database and update UI
-  await saveDB();
+  // Reload authoritative state from database so no duplicate audit/records are written
+  await loadDB();
   closeModal();
   renderSalesHistoryTable(true);
   if (typeof updateNavBadges === 'function') updateNavBadges();
@@ -1038,11 +942,11 @@ function openVoidDetailsModal(saleId) {
   let decisionBoxHtml = '';
   if (norm === 'pending_void') {
     decisionBoxHtml = `
-      <div style="background:#FFFBEB; border:1.5px solid #FCD34D; border-radius:8px; padding:12px 14px;">
-        <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:#92400E; font-size:13px;">
+      <div style="background:var(--warning-bg); border:1.5px solid var(--warning-border); border-radius:8px; padding:12px 14px;">
+        <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:var(--warning-text); font-size:13px;">
           <span>⏳ Awaiting Administrator Review</span>
         </div>
-        <p style="margin:4px 0 0; font-size:12px; color:#78350F;">
+        <p style="margin:4px 0 0; font-size:12px; color:var(--warning-text);">
           This void request is currently queued in the <b>Pending Approvals Hub</b>. No inventory has been restored yet.
         </p>
         ${isAdmin ? `
@@ -1059,11 +963,11 @@ function openVoidDetailsModal(saleId) {
     const decisionDate = sale.voidedAt || vr.reviewedAt;
     const remarks = sale.voidAdminRemarks || vr.adminRemarks;
     decisionBoxHtml = `
-      <div style="background:#F0FDF4; border:1.5px solid #BBF7D0; border-radius:8px; padding:12px 14px;">
-        <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:#166534; font-size:13px;">
+      <div style="background:var(--success-bg); border:1.5px solid var(--success-border); border-radius:8px; padding:12px 14px;">
+        <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:var(--success-text); font-size:13px;">
           <span>✅ Void Request Approved</span>
         </div>
-        <div style="margin-top:6px; font-size:12px; color:#14532D; line-height:1.5;">
+        <div style="margin-top:6px; font-size:12px; color:var(--success-text); line-height:1.5;">
           <div><b>Authorized by Administrator:</b> ${escapeHtml(adminName)}</div>
           <div><b>Approval Date &amp; Time:</b> ${decisionDate ? formatDateTime(decisionDate) : 'Recorded'}</div>
           <div><b>Inventory Restoration:</b> Eligible sealed merchandise restored to active stock exactly once. Custom-mix items quarantined per store policy.</div>
@@ -1076,16 +980,16 @@ function openVoidDetailsModal(saleId) {
     const decisionDate = sale.voidRejectedAt || vr.reviewedAt;
     const remarks = sale.voidAdminRemarks || sale.voidRejectReason || vr.adminRemarks || 'Void request was not approved by administration';
     decisionBoxHtml = `
-      <div style="background:#FEF2F2; border:1.5px solid #FECACA; border-radius:8px; padding:12px 14px;">
-        <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:#991B1B; font-size:13px;">
+      <div style="background:var(--danger-bg); border:1.5px solid var(--danger-border); border-radius:8px; padding:12px 14px;">
+        <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:var(--danger-text); font-size:13px;">
           <span>✕ Void Request Rejected</span>
         </div>
-        <div style="margin-top:6px; font-size:12px; color:#7F1D1D; line-height:1.5;">
+        <div style="margin-top:6px; font-size:12px; color:var(--danger-text); line-height:1.5;">
           <div><b>Reviewed by Administrator:</b> ${escapeHtml(adminName)}</div>
           <div><b>Decision Date &amp; Time:</b> ${decisionDate ? formatDateTime(decisionDate) : 'Recorded'}</div>
           <div><b>Original Sale Status:</b> Maintained as Completed. Store merchandise remains sold; no inventory was restored.</div>
-          <div style="margin-top:4px; background:#fff; border:1px solid #FCA5A5; border-radius:4px; padding:6px 10px;">
-            <b>Admin Rejection Reason:</b> <span style="color:#991B1B; font-weight:600;">"${escapeHtml(remarks)}"</span>
+          <div style="margin-top:4px; background:var(--surface); border:1px solid var(--danger-border); border-radius:4px; padding:6px 10px;">
+            <b>Admin Rejection Reason:</b> <span style="color:var(--danger-text); font-weight:600;">"${escapeHtml(remarks)}"</span>
           </div>
         </div>
       </div>
@@ -1112,10 +1016,10 @@ function openVoidDetailsModal(saleId) {
     <div style="display:flex; flex-direction:column; gap:14px; max-width:560px;">
       ${decisionBoxHtml}
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-size:12px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 14px; font-size:12px;">
         <div>
           <div class="muted small" style="text-transform:uppercase; font-size:10px; font-weight:700;">Receipt Number</div>
-          <div style="font-weight:700; color:var(--teal); font-size:13px;"><code style="font-size:12.5px;">${escapeHtml(receiptNo)}</code></div>
+          <div style="font-weight:700; color:var(--teal-text); font-size:13px;"><code style="font-size:12.5px;">${escapeHtml(receiptNo)}</code></div>
         </div>
         <div>
           <div class="muted small" style="text-transform:uppercase; font-size:10px; font-weight:700;">Transaction Total</div>
@@ -1131,7 +1035,7 @@ function openVoidDetailsModal(saleId) {
         </div>
       </div>
 
-      <div style="border:1px solid var(--line); border-radius:6px; padding:10px 14px; background:#fff;">
+      <div style="border:1px solid var(--line); border-radius:6px; padding:10px 14px; background:var(--surface);">
         <div style="font-weight:700; font-size:12px; color:var(--ink-soft); text-transform:uppercase; margin-bottom:4px;">Void Reason &amp; Cashier Explanation</div>
         <div style="font-size:13px; font-weight:700; color:var(--danger);">${escapeHtml(reason)}</div>
         ${explanation ? `<div style="font-size:12px; color:var(--ink-soft); margin-top:4px; font-style:italic;">"${escapeHtml(explanation)}"</div>` : ''}
@@ -1139,9 +1043,9 @@ function openVoidDetailsModal(saleId) {
 
       <div>
         <label style="font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em;">Purchased Products (${items.length})</label>
-        <div style="max-height:130px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; margin-top:4px; background:#fff;">
+        <div style="max-height:130px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; margin-top:4px; background:var(--surface);">
           <table style="width:100%; border-collapse:collapse; font-size:12px;">
-            <thead style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+            <thead style="background:var(--surface-2); border-bottom:1px solid var(--line);">
               <tr>
                 <th style="padding:5px 8px; text-align:left;">Item</th>
                 <th style="padding:5px 8px; text-align:center;">Size</th>
@@ -1212,119 +1116,11 @@ async function executeApproveVoid(vrId, remarks = '') {
     return;
   }
 
-  // 1. Revert Inventory: Exactly once
-  items.forEach(c => {
-    if (c.type === 'product') {
-      const p = productById(c.productId);
-      const size = Number(c.size) || 1;
-      const count = Number(c.qty) || 0;
-      const litersReverted = Number((count * size).toFixed(2));
-      const variant = p ? productSizeVariantBySize(p, size) : null;
-      const sizeId = c.sizeId || (variant ? variant.sizeId : null);
-
-      if (p) {
-        const beforeStock = Number(p.stock) || 0;
-        const beforeCans = productCanCount(p, size);
-        p.stock = Number((p.stock + litersReverted).toFixed(2));
-        if (!p.canStock || typeof p.canStock !== 'object' || Array.isArray(p.canStock)) {
-          p.canStock = {};
-        }
-        p.canStock[size] = (Number(p.canStock[size]) || 0) + count;
-        syncProductVariants(p);
-        const afterCans = productCanCount(p, size);
-
-        revertSummary.push(`${p.name} (${count} × ${size}L)`);
-
-        const trailNote = ` · ${size}L Units: ${beforeCans}→${afterCans}, Stock: ${formatStock(beforeStock)}L→${formatStock(p.stock)}L`;
-
-        db.movements.push({
-          id: uid('mv'),
-          date: now,
-          type: 'adjustment',
-          productId: p.productId || p.id,
-          product_id: p.productId || p.id,
-          sizeId: sizeId,
-          size_id: sizeId,
-          container_size: size,
-          containerSize: size,
-          productName: p.name,
-          qtyChange: litersReverted,
-          note: `Void Sale Reversal (${receiptNo}) [Reverted ${count} × ${size}L${trailNote}] · Reason: ${vr ? vr.reason : (sale.voidReason || 'Admin Void')} (Auth: ${adminName})`,
-          staffName: adminName
-        });
-      }
-    } else if (c.type === 'colormix') {
-      // Custom Color Mix rule: Do NOT return mixed paint to regular sealed inventory!
-      // Quarantined per miscast / defective custom-mix stock rules.
-      const mixLiters = Number(c.liters || c.qty || 1);
-      revertSummary.push(`Quarantined Mix: ${c.colorName || c.name} (${mixLiters}L)`);
-
-      db.movements.push({
-        id: uid('mv'),
-        date: now,
-        type: 'adjustment',
-        productId: null,
-        product_id: null,
-        sizeId: null,
-        size_id: null,
-        productName: `Quarantined Custom Mix — ${c.colorName || c.name}`,
-        colorName: c.colorName || 'Custom Shade',
-        qtyChange: 0,
-        note: `Void Sale Reversal (${receiptNo}): ${mixLiters}L Custom Mix quarantined as miscast/defective stock. NOT restored to regular sealed units. Reason: ${vr ? vr.reason : (sale.voidReason || 'Admin Void')} (Auth: ${adminName})`,
-        staffName: adminName
-      });
-    }
-  });
-
-  // 2. Mark Sale as Voided and flag inventory as restored
-  sale.status = 'Voided';
-  sale.voidedAt = now;
-  sale.voidedBy = adminName;
-  sale.voidAdminRemarks = remarks;
-  sale.voidInventoryRestored = true;
-
-  // 3. Mark Void Request as Approved
-  if (vr) {
-    vr.status = 'approved';
-    vr.reviewedBy = adminName;
-    vr.reviewedAt = now;
-    vr.adminRemarks = remarks;
-    vr.inventoryRestored = true;
-  }
-
-  // 4. Record Audit Log
-  const cashierName = (vr && vr.cashierName) || sale.cashierName || 'Cashier';
-  const voidReason = (vr && vr.reason) || sale.voidReason || 'Void Sale Approved';
-  const explanation = (vr && vr.explanation) || sale.voidExplanation || '';
-  logAudit(
-    'SALE_VOID_APPROVE',
-    `Receipt ${receiptNo}`,
-    `Void request approved by Admin ${adminName} for receipt ${receiptNo} (${peso(sale.total)}) — Sale reversed and eligible inventory restored: ${revertSummary.join(', ')}. ${remarks ? `Admin remarks: "${remarks}"` : ''}`,
-    {
-      entityName: `Receipt ${receiptNo}`,
-      fieldChanged: 'Transaction Status',
-      oldValue: 'Pending Void Approval',
-      newValue: 'Voided',
-      referenceNo: receiptNo,
-      reason: voidReason,
-      meta: {
-        receiptNo,
-        cashierName,
-        requestDate: (vr && vr.date) || sale.voidRequestedAt || sale.date,
-        voidReason,
-        explanation,
-        adminName,
-        approvalDate: now,
-        adminRemarks: remarks,
-        previousStatus: 'Pending Void Approval',
-        resultingStatus: 'Voided',
-        revertSummary
-      }
-    }
-  );
-
-  // 5. Persist to MySQL and update UI
-  await saveDB();
+  // Reload authoritative state from MySQL (api/void.php already restored inventory, batches, movements, and audit logs atomically)
+  await loadDB();
+  if (typeof EXP !== 'undefined') { EXP.loaded = false; EXP.summaryTs = 0; }
+  if (typeof posBatchStatusLoadedAt !== 'undefined') posBatchStatusLoadedAt = 0;
+  if (typeof broadcastDbUpdate === 'function') broadcastDbUpdate();
   if (typeof updateNavBadges === 'function') updateNavBadges();
   if (typeof renderSalesHistoryTable === 'function') renderSalesHistoryTable(true);
   if (typeof refreshApprovalsTabContent === 'function') refreshApprovalsTabContent();
@@ -1376,53 +1172,9 @@ async function executeRejectVoid(vrId, rejectNote = '') {
     return;
   }
 
-  // 1. Update Sale Status to Void Rejected (Keeps original completed sale & inventory intact)
-  sale.status = 'Void Rejected';
-  sale.voidRejectReason = note;
-  sale.voidAdminRemarks = note;
-  sale.voidRejectedAt = now;
-  sale.voidRejectedBy = adminName;
-
-  // 2. Update Void Request to Rejected
-  if (vr) {
-    vr.status = 'rejected';
-    vr.reviewedBy = adminName;
-    vr.reviewedAt = now;
-    vr.adminRemarks = note;
-  }
-
-  // 3. Record Audit Log
-  const cashierName = (vr && vr.cashierName) || sale.cashierName || 'Cashier';
-  const voidReason = (vr && vr.reason) || sale.voidReason || 'Void Sale Request';
-  const explanation = (vr && vr.explanation) || sale.voidExplanation || '';
-  logAudit(
-    'SALE_VOID_REJECT',
-    `Receipt ${receiptNo}`,
-    `Void request rejected by Admin ${adminName} for receipt ${receiptNo} (${peso(sale.total)}) — Original sale kept Completed. Rejection note: "${note}".`,
-    {
-      entityName: `Receipt ${receiptNo}`,
-      fieldChanged: 'Transaction Status',
-      oldValue: 'Pending Void Approval',
-      newValue: 'Void Rejected',
-      referenceNo: receiptNo,
-      reason: note,
-      meta: {
-        receiptNo,
-        cashierName,
-        requestDate: (vr && vr.date) || sale.voidRequestedAt || sale.date,
-        voidReason,
-        explanation,
-        adminName,
-        rejectionDate: now,
-        adminRemarks: note,
-        previousStatus: 'Pending Void Approval',
-        resultingStatus: 'Void Rejected'
-      }
-    }
-  );
-
-  // 4. Persist to MySQL and update UI
-  await saveDB();
+  // Reload authoritative state from MySQL (api/void.php already updated sales, void_requests, and audit_logs)
+  await loadDB();
+  if (typeof broadcastDbUpdate === 'function') broadcastDbUpdate();
   if (typeof updateNavBadges === 'function') updateNavBadges();
   if (typeof renderSalesHistoryTable === 'function') renderSalesHistoryTable(true);
   if (typeof refreshApprovalsTabContent === 'function') refreshApprovalsTabContent();
@@ -1563,9 +1315,16 @@ function openReturnRefundModal(saleId, keepState = false) {
 
   const saleSubtotal = Number(sale.subtotal || 0);
   const saleTotal = Number(sale.total || 0);
-  const discountRatio = (saleSubtotal > 0 && saleTotal > 0 && saleTotal < saleSubtotal)
-    ? (saleTotal / saleSubtotal)
-    : (Number(sale.discountPct || 0) > 0 ? Math.max(0, 1 - Number(sale.discountPct) / 100) : 1);
+  const saleDiscountPct = Number(sale.discountPct || sale.discountPercentage || 0);
+  const salePricingType = sale.pricingType || sale.pricing_type || 'inclusive';
+  const saleTaxStatus = sale.taxStatus || sale.tax_status || 'vat_registered';
+  const saleVatRate = Number(sale.vatRate ?? sale.vat_rate ?? 12);
+  const isExclusiveVat = salePricingType === 'exclusive' && saleTaxStatus === 'vat_registered' && saleVatRate > 0;
+  const discountRatio = isExclusiveVat
+    ? (saleDiscountPct > 0 ? Math.max(0, 1 - saleDiscountPct / 100) : 1)
+    : ((saleSubtotal > 0 && saleTotal > 0 && saleTotal < saleSubtotal)
+      ? (saleTotal / saleSubtotal)
+      : (saleDiscountPct > 0 ? Math.max(0, 1 - saleDiscountPct / 100) : 1));
 
   const rowsHtml = saleItems.map((item, idx) => {
     const qtyPurchased = Number(item.qty || 0);
@@ -1573,7 +1332,10 @@ function openReturnRefundModal(saleId, keepState = false) {
     const returnable = Math.max(0, Number((qtyPurchased - qtyReturned).toFixed(2)));
 
     const rawUnitPrice = Number(item.unitPrice !== undefined ? item.unitPrice : (item.price !== undefined ? item.price : (Number(item.lineTotal || 0) / Math.max(1, Number(item.qty || 1))))) || 0;
-    const effectiveUnitPrice = Number((rawUnitPrice * discountRatio).toFixed(2));
+    const itemProd = item.type === 'product' ? productById(item.productId) : null;
+    const itemTaxClass = item.taxClassification || item.tax_classification || (itemProd && (itemProd.taxClassification || itemProd.tax_classification)) || 'vatable';
+    const vatMult = (isExclusiveVat && itemTaxClass === 'vatable') ? (1 + saleVatRate / 100) : 1;
+    const effectiveUnitPrice = Number((rawUnitPrice * discountRatio * vatMult).toFixed(2));
 
     const isBlend = item.type === 'colormix';
     const policy = getItemReturnPolicy(item, isSameDay, adminReviewApproved);
@@ -1606,7 +1368,7 @@ function openReturnRefundModal(saleId, keepState = false) {
       : `<div>
            <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
              <b>${escapeHtml(item.name)}</b>
-             ${hex ? `<code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal);">(${hex})</code>` : ''}
+             ${hex ? `<code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:600; color:var(--teal-text);">(${hex})</code>` : ''}
              ${item.color && item.color !== '-' ? `(${escapeHtml(item.color)})` : ''}
              <span class="badge ghost" style="font-size:10px; padding:1px 6px;">🥫 ${escapeHtml(policy.paintClass)}</span>
            </div>
@@ -1621,14 +1383,14 @@ function openReturnRefundModal(saleId, keepState = false) {
     const initVal = prevInputs[idx] !== undefined ? Math.min(prevInputs[idx], returnable) : 0;
 
     return `
-    <tr data-ret-row="${idx}" style="${isBlend ? 'background:#FDFBF7;' : ''}">
+    <tr data-ret-row="${idx}" style="${isBlend ? 'background:var(--surface-2);' : ''}">
       <td style="vertical-align:top; padding:10px 8px;">${desc}</td>
       <td class="right" style="vertical-align:top; padding:10px 8px;">${formatStock(qtyPurchased)}${isBlend ? 'L' : ''}</td>
       <td class="right" style="vertical-align:top; padding:10px 8px; color:var(--ink-soft);">${formatStock(qtyReturned)}${isBlend ? 'L' : ''}</td>
       <td class="right" style="vertical-align:top; padding:10px 8px; font-weight:700; color:${returnable > 0 ? 'var(--teal)' : 'var(--ink-soft)'};" id="ret-max-${idx}">
         ${formatStock(returnable)}${isBlend ? 'L' : ''}
       </td>
-      <td class="right" style="vertical-align:top; padding:10px 8px; font-family:'Space Grotesk'; font-size:12.5px;">
+      <td class="right" style="vertical-align:top; padding:10px 8px; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:12.5px;">
         ${peso(effectiveUnitPrice)}
       </td>
       <td style="vertical-align:top; padding:10px 8px; width:140px;">
@@ -1644,7 +1406,7 @@ function openReturnRefundModal(saleId, keepState = false) {
       <td style="vertical-align:top; padding:10px 8px; width:125px;">
         <div style="display:flex; gap:4px; align-items:center;">
           <input type="number" id="ret-qty-input-${idx}" min="0" max="${returnable}" step="any" value="${initVal}"
-            style="width:70px; text-align:right; font-weight:700; font-family:'Space Grotesk';"
+            style="width:70px; text-align:right; font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;"
             ${isInputDisabled ? 'disabled' : ''}
             data-is-colormix="${isBlend ? '1' : '0'}"
             data-unit-price="${effectiveUnitPrice}"
@@ -1655,7 +1417,7 @@ function openReturnRefundModal(saleId, keepState = false) {
           ` : ''}
         </div>
       </td>
-      <td class="right" style="vertical-align:top; padding:10px 8px; font-weight:700; font-family:'Space Grotesk'; color:var(--danger);" id="ret-line-total-${idx}">
+      <td class="right" style="vertical-align:top; padding:10px 8px; font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--danger);" id="ret-line-total-${idx}">
         ${peso(initVal * effectiveUnitPrice)}
       </td>
     </tr>`;
@@ -1663,10 +1425,10 @@ function openReturnRefundModal(saleId, keepState = false) {
 
   openModal(`↩️ Return &amp; Exchange — ${escapeHtml(receiptNo)}`, `
     <!-- RECEIPT & POLICY HEADER -->
-    <div style="background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+    <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
       <div>
         <div>
-          <span class="muted">Receipt #:</span> <code style="font-weight:700; color:var(--teal);">${escapeHtml(receiptNo)}</code>
+          <span class="muted">Receipt #:</span> <code style="font-weight:700; color:var(--teal-text);">${escapeHtml(receiptNo)}</code>
           ${isSameDay
       ? `<span class="badge ok" style="font-size:10.5px; margin-left:6px;">✓ Same-Day Return Eligible</span>`
       : `<span class="badge mid" style="font-size:10.5px; margin-left:6px;">🔄 Post-Purchase Return (Replacement Only)</span>`}
@@ -1682,7 +1444,7 @@ function openReturnRefundModal(saleId, keepState = false) {
     </div>
 
     <!-- RESOLUTION SELECTOR (REPLACEMENT VS REFUND) -->
-    <div style="background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div>
         <span style="font-weight:700; font-size:13px; color:var(--ink);">Approved Resolution Option:</span>
         <div class="muted small" style="font-size:11.5px;">
@@ -1737,7 +1499,7 @@ function openReturnRefundModal(saleId, keepState = false) {
     </div>
 
     <!-- PHYSICAL INSPECTION VERIFICATION (MANDATORY) -->
-    <div id="ret-inspection-box" style="margin-top:12px; padding:10px 14px; background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); transition:all 0.15s ease;">
+    <div id="ret-inspection-box" style="margin-top:12px; padding:10px 14px; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); transition:all 0.15s ease;">
       <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; font-weight:700; font-size:12.5px; margin:0;">
         <input type="checkbox" id="ret-inspection-verified" style="margin-top:2px;" onchange="recalcReturnGrandTotal('${sale.id}')">
         <div>
@@ -1750,9 +1512,9 @@ function openReturnRefundModal(saleId, keepState = false) {
     </div>
 
     <!-- STEP 2: REPLACEMENT ITEMS FOR EXCHANGE (FIXED SIZE, QTY & SAME PRICE) -->
-    <div id="ret-exchange-step-container" style="margin-top:16px; padding:12px 14px; background:#F4F8F7; border:1px solid #C8DDD9; border-radius:var(--radius-sm);">
+    <div id="ret-exchange-step-container" style="margin-top:16px; padding:12px 14px; background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:var(--radius-sm);">
       <div class="ret-exchange-header" style="display:${currentReturnResolution === 'refund' ? 'none' : 'block'}; margin-bottom:10px;">
-        <strong style="font-size:13.5px; color:var(--teal);">2. Replacement Item(s) for Exchange <span class="badge mid" style="font-size:10.5px; margin-left:6px;">🔒 Fixed Size, Qty &amp; Same Price Only</span></strong>
+        <strong style="font-size:13.5px; color:var(--teal-text);">2. Replacement Item(s) for Exchange <span class="badge mid" style="font-size:10.5px; margin-left:6px;">🔒 Fixed Size, Qty &amp; Same Price Only</span></strong>
         <div class="muted small">Container size, quantity, and unit price are automatically fixed to match each item being returned above. Only products with the <b>exact same price</b> and container size are eligible for replacement:</div>
       </div>
 
@@ -1781,9 +1543,9 @@ function openReturnRefundModal(saleId, keepState = false) {
 
     <!-- ADMIN REVIEW EXCEPTION PANEL (for Custom Color Mix or Post-Purchase-Day Exceptions) -->
     ${(anyRestrictedMixItems || !isSameDay) ? `
-      <div style="margin-top:10px; background:#FFF8EB; border:1px solid #F2D29B; border-radius:var(--radius-sm); padding:10px 14px;">
+      <div style="margin-top:10px; background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 14px;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-          <div style="font-size:12px; color:#7B4F09; font-weight:700;">
+          <div style="font-size:12px; color:var(--warning-text); font-weight:700;">
             🛡️ Administrator Exception Review ${adminReviewApproved ? `<span class="badge ok" style="margin-left:6px;">✓ Authorized (${escapeHtml(adminReviewAdminName || 'Admin')})</span>` : '<span class="badge mid" style="margin-left:6px;">Restricted Items Require Admin Review</span>'}
           </div>
           ${adminReviewApproved ? `
@@ -1792,7 +1554,7 @@ function openReturnRefundModal(saleId, keepState = false) {
             <button type="button" class="btn secondary small" onclick="toggleAdminReviewSection()" style="font-size:11px;">🔐 Admin Review / Authorize</button>
           `}
         </div>
-        <div id="ret-admin-review-panel" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #E5C17B;">
+        <div id="ret-admin-review-panel" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--warning-border);">
           <div class="form-grid" style="gap:8px;">
             <div class="field">
               <label style="font-size:11px;">Exception Reason</label>
@@ -1825,8 +1587,8 @@ function openReturnRefundModal(saleId, keepState = false) {
     ` : ''}
 
     <!-- INVENTORY RESTORATION DISPOSITION SECTION -->
-    <div id="ret-restock-section" style="margin-top:10px; background:#F8FAF9; border:1px solid #D1E5E1; border-radius:var(--radius-sm); padding:10px 14px;">
-      <div style="font-weight:700; font-size:12px; color:var(--teal); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.03em;">
+    <div id="ret-restock-section" style="margin-top:10px; background:var(--surface-2); border:1px solid var(--teal-tint-border); border-radius:var(--radius-sm); padding:10px 14px;">
+      <div style="font-weight:700; font-size:12px; color:var(--teal-text); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.03em;">
         📦 Inventory Restoration Handling
       </div>
       <div id="ret-restock-summary-text" class="small" style="font-size:11.5px; color:var(--ink);">
@@ -1841,23 +1603,23 @@ function openReturnRefundModal(saleId, keepState = false) {
     </div>
 
     <!-- SETTLEMENT SUMMARY -->
-    <div style="margin-top:14px; padding:12px 14px; background:#FAF7F2; border:1px dashed var(--line); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:6px;">
+    <div style="margin-top:14px; padding:12px 14px; background:var(--surface-2); border:1px dashed var(--line); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:6px;">
       <div style="display:flex; justify-content:space-between; align-items:center; font-size:13px;">
         <span class="muted">Return Credit (Returned Items):</span>
-        <strong id="ret-grand-total" style="font-family:'Space Grotesk'; color:var(--danger);">₱0.00</strong>
+        <strong id="ret-grand-total" style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--danger);">₱0.00</strong>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; font-size:13px;">
         <span class="muted">Replacement Items Value (Exchange):</span>
-        <strong id="ret-exchange-total" style="font-family:'Space Grotesk'; color:var(--teal);">₱0.00</strong>
+        <strong id="ret-exchange-total" style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--teal-text);">₱0.00</strong>
       </div>
       <div style="border-top:1px solid var(--line); padding-top:8px; margin-top:2px; display:flex; justify-content:space-between; align-items:center;">
         <span id="ret-settlement-label" style="font-size:14px; font-weight:700;">Exchange Balance / Settlement:</span>
-        <span id="ret-settlement-value" style="font-size:18px; font-weight:700; color:var(--ink); font-family:'Space Grotesk';">₱0.00</span>
+        <span id="ret-settlement-value" style="font-size:18px; font-weight:700; color:var(--ink); font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">₱0.00</span>
       </div>
     </div>
   `, `
     <button class="btn secondary" onclick="closeModal()">Cancel</button>
-    <button class="btn" id="btn-submit-return" onclick="processSaleReturn('${sale.id}')" disabled style="background:#DDD6CA; color:#8C8275; border-color:#CFC7B8; cursor:not-allowed; opacity:0.65; box-shadow:none;">Confirm Return &amp; Exchange</button>
+    <button class="btn" id="btn-submit-return" onclick="processSaleReturn('${sale.id}')" disabled style="background:var(--surface-3); color:var(--ink-soft); border-color:var(--line); cursor:not-allowed; opacity:0.65; box-shadow:none;">Confirm Return &amp; Exchange</button>
   `, 'wide');
 
   if (currentReturnResolution === 'exchange') {
@@ -1963,19 +1725,6 @@ function cancelInlineAdminReview(saleId) {
   adminReviewReason = '';
   adminReviewAdminName = '';
   showToast('Admin review exception revoked.', 'ok');
-  openReturnRefundModal(saleId, true);
-}
-
-function onToggleColorMixOverride(saleId, unlocked) {
-  if (unlocked) {
-    adminReviewApproved = true;
-    adminReviewReason = 'Store mixing error / off-shade formula re-mix remedy';
-    adminReviewAdminName = (currentUser && currentUser.name) || 'Administrator';
-  } else {
-    adminReviewApproved = false;
-    adminReviewReason = '';
-    adminReviewAdminName = '';
-  }
   openReturnRefundModal(saleId, true);
 }
 
@@ -2227,13 +1976,13 @@ function buildExchangePickerCardsHtml(saleId, ex) {
 
     return `
       <div onclick="${enoughStock ? `onChangeFixedReplacementProduct('${saleId}', ${ex.sourceRowIdx}, '${p.id}')` : ''}"
-           style="display:flex; align-items:center; gap:10px; padding:9px 11px; border-radius:8px; border:${isSelected ? '2px solid var(--teal)' : '1px solid var(--line)'}; background:${isSelected ? '#EDF7F6' : (enoughStock ? '#fff' : '#F7F4EE')}; opacity:${enoughStock ? '1' : '0.55'}; cursor:${enoughStock ? 'pointer' : 'not-allowed'}; transition:all 0.15s ease; box-shadow:${isSelected ? '0 2px 8px rgba(31,111,107,0.15)' : 'none'};"
+           style="display:flex; align-items:center; gap:10px; padding:9px 11px; border-radius:8px; border:${isSelected ? '2px solid var(--teal)' : '1px solid var(--line)'}; background:${isSelected ? 'var(--teal-tint)' : (enoughStock ? 'var(--surface)' : 'var(--surface-2)')}; opacity:${enoughStock ? '1' : '0.55'}; cursor:${enoughStock ? 'pointer' : 'not-allowed'}; transition:all 0.15s ease; box-shadow:${isSelected ? '0 2px 8px rgba(31,111,107,0.15)' : 'none'};"
            title="${enoughStock ? `Click to select ${escapeHtml(p.name)} (${colorLabel})` : `Insufficient stock for ${fixedQty} × ${fixedSize}L`}">
         <span style="width:28px; height:28px; border-radius:50%; background:${escapeHtml(hex)}; border:2px solid rgba(0,0,0,0.15); box-shadow:inset 0 1px 2px rgba(255,255,255,0.4); flex-shrink:0;"></span>
         <div style="flex:1; min-width:0;">
           <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
             <strong style="font-size:12.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(p.name)}</strong>
-            ${code ? `<code style="font-size:10.5px; color:var(--teal); font-weight:700;">(${code})</code>` : ''}
+            ${code ? `<code style="font-size:10.5px; color:var(--teal-text); font-weight:700;">(${code})</code>` : ''}
           </div>
           <div class="muted small" style="font-size:11px; display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-top:2px;">
             <span style="font-weight:600; color:var(--ink);">${escapeHtml(colorLabel)}</span>
@@ -2241,11 +1990,11 @@ function buildExchangePickerCardsHtml(saleId, ex) {
             <span>· <b style="color:${enoughStock ? 'var(--success)' : 'var(--danger)'};">${stockLabel}</b></span>
           </div>
           <div style="margin-top:4px; display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap;">
-            <span style="font-family:'Space Grotesk'; font-weight:700; font-size:12.5px; color:var(--ink);">${peso(unitP)} <span class="muted small" style="font-weight:400;">/${fixedSize}L</span></span>
+            <span style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-weight:700; font-size:12.5px; color:var(--ink);">${peso(unitP)} <span class="muted small" style="font-weight:400;">/${fixedSize}L</span></span>
             ${diffTag}
           </div>
         </div>
-        ${isSelected ? `<span style="color:var(--teal); font-weight:800; font-size:15px; flex-shrink:0;" title="Currently Selected">✓</span>` : ''}
+        ${isSelected ? `<span style="color:var(--teal-text); font-weight:800; font-size:15px; flex-shrink:0;" title="Currently Selected">✓</span>` : ''}
       </div>`;
   }).join('');
 }
@@ -2265,10 +2014,10 @@ function renderExchangeReplacementCart(saleId) {
 
   if (currentReturnResolution === 'refund') {
     wrap.innerHTML = `
-      <div style="padding:14px 16px; background:#FFF8EC; border:1px solid #F0D9B5; border-radius:6px; display:flex; align-items:center; gap:12px;">
+      <div style="padding:14px 16px; background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:6px; display:flex; align-items:center; gap:12px;">
         <span style="font-size:24px;">💵</span>
         <div>
-          <div style="font-weight:700; color:#8A5A24; font-size:13px;">Refund Resolution Selected</div>
+          <div style="font-weight:700; color:var(--warning-text); font-size:13px;">Refund Resolution Selected</div>
           <div class="muted small" style="margin-top:2px; font-size:11.5px;">
             No replacement merchandise will be issued. Total approved return credit will be refunded to the customer upon transaction completion.
           </div>
@@ -2279,14 +2028,14 @@ function renderExchangeReplacementCart(saleId) {
   }
 
   if (!returnExchangeCart.length) {
-    wrap.innerHTML = `<div class="muted small" style="padding:10px 12px; background:#fff; border:1px dashed #C8DDD9; border-radius:4px; text-align:center;">Enter a <b>Return Qty</b> in Step 1 above — the replacement item card with matching <b>fixed Container Size</b> and <b>fixed Quantity</b> will appear here automatically.</div>`;
+    wrap.innerHTML = `<div class="muted small" style="padding:10px 12px; background:var(--surface); border:1px dashed var(--teal-tint-border); border-radius:4px; text-align:center;">Enter a <b>Return Qty</b> in Step 1 above — the replacement item card with matching <b>fixed Container Size</b> and <b>fixed Quantity</b> will appear here automatically.</div>`;
     return;
   }
 
   const allProds = activeProducts();
 
   wrap.innerHTML = `
-    <div class="bulk-adj-wrap" style="max-height:360px; overflow-y:auto; background:#fff;">
+    <div class="bulk-adj-wrap" style="max-height:360px; overflow-y:auto; background:var(--surface);">
       <table class="bulk-adj-table" style="font-size:12.5px;">
         <thead>
           <tr>
@@ -2304,7 +2053,7 @@ function renderExchangeReplacementCart(saleId) {
         ? ex.components.map(cp => `${cp.percentage}% ${escapeHtml(cp.name)} (${formatStock(cp.liters)}L)`).join(' + ')
         : 'Fresh custom mix batch';
       return `
-              <tr style="background:#F8FBFB;">
+              <tr style="background:var(--teal-tint);">
                 <td>
                   <div style="display:flex; align-items:center; gap:8px;">
                     <span class="cm-color-dot" style="background:${escapeHtml(ex.hexColor || '#1F6F6B')}; width:24px; height:24px; display:inline-block; border-radius:50%; border:2px solid rgba(0,0,0,0.15);"></span>
@@ -2319,8 +2068,8 @@ function renderExchangeReplacementCart(saleId) {
                 </td>
                 <td class="center"><span class="badge mid">🔒 ${formatStock(ex.liters || ex.qty)}L Mix</span></td>
                 <td class="center"><span class="badge ok">🔒 ${formatStock(ex.qty)}L</span></td>
-                <td class="right" style="font-family:'Space Grotesk';">${peso(ex.unitPrice)}</td>
-                <td class="right" style="font-weight:700; font-family:'Space Grotesk'; color:var(--teal);">${peso(ex.lineTotal)}</td>
+                <td class="right" style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">${peso(ex.unitPrice)}</td>
+                <td class="right" style="font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--teal-text);">${peso(ex.lineTotal)}</td>
               </tr>`;
     }
 
@@ -2356,13 +2105,13 @@ function renderExchangeReplacementCart(saleId) {
     return `
             <tr>
               <td>
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#FAF7F2; border:1px solid var(--line); border-radius:8px; padding:8px 12px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px;">
                   <div style="display:flex; align-items:center; gap:10px; min-width:0;">
                     <span style="width:28px; height:28px; border-radius:50%; background:${escapeHtml(selHex)}; border:2px solid rgba(0,0,0,0.18); flex-shrink:0;" title="${escapeHtml(selColorLabel)} (${selHex})"></span>
                     <div style="min-width:0;">
                       <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                         <b style="font-size:13px; color:var(--ink);">${escapeHtml(selectedProd ? selectedProd.name : ex.name)}</b>
-                        ${selCode ? `<code style="font-size:11px; color:var(--teal); font-weight:700;">(${selCode})</code>` : ''}
+                        ${selCode ? `<code style="font-size:11px; color:var(--teal-text); font-weight:700;">(${selCode})</code>` : ''}
                         <span class="color-presentation-pill" style="font-size:11px; padding:1px 7px;">
                           <span class="cm-color-dot" style="background:${escapeHtml(selHex)}; width:8px; height:8px;"></span>
                           ${escapeHtml(selColorLabel)}
@@ -2381,7 +2130,7 @@ function renderExchangeReplacementCart(saleId) {
                 </div>
 
                 ${isPickerOpen ? `
-                  <div style="margin-top:8px; padding:12px; background:#F4F8F7; border:1px solid #B5D2CD; border-radius:8px;">
+                  <div style="margin-top:8px; padding:12px; background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
                       <div class="row wrap" style="gap:6px;">
                         <button type="button" class="pos-cat-pill ${exchangePickerTab === 'recommended' ? 'active' : ''}" onclick="setExchangePickerTab('${saleId}', 'recommended')">
@@ -2398,7 +2147,7 @@ function renderExchangeReplacementCart(saleId) {
                       </div>
                       <input type="text" placeholder="🔍 Search same-price shade or brand..." value="${escapeHtml(exchangePickerQuery)}"
                              oninput="onExchangePickerSearch('${saleId}', this.value)"
-                             style="width:220px; padding:5px 10px; font-size:12px; border-radius:6px; background:#fff;">
+                             style="width:220px; padding:5px 10px; font-size:12px; border-radius:6px; background:var(--surface);">
                     </div>
                     <div id="ret-ex-card-grid-${ex.sourceRowIdx}" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(235px, 1fr)); gap:8px; max-height:230px; overflow-y:auto; padding-right:2px;">
                       ${buildExchangePickerCardsHtml(saleId, ex)}
@@ -2408,8 +2157,8 @@ function renderExchangeReplacementCart(saleId) {
               </td>
               <td class="center"><span class="badge mid">🔒 ${fixedSize}L</span></td>
               <td class="center"><span class="badge ok">🔒 ${formatStock(fixedQty)}</span></td>
-              <td class="right" style="font-family:'Space Grotesk';">${peso(ex.unitPrice)}</td>
-              <td class="right" style="font-weight:700; font-family:'Space Grotesk'; color:var(--teal);">${peso(ex.lineTotal)}</td>
+              <td class="right" style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">${peso(ex.unitPrice)}</td>
+              <td class="right" style="font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--teal-text);">${peso(ex.lineTotal)}</td>
             </tr>`;
   }).join('')}
         </tbody>
@@ -2471,7 +2220,7 @@ function openStartReturnPickerModal() {
     container.innerHTML = `
       <table style="width:100%; border-collapse:collapse; font-size:13px;">
         <thead>
-          <tr style="border-bottom:1px solid var(--line); background:#FAF7F2;">
+          <tr style="border-bottom:1px solid var(--line); background:var(--surface-2);">
             <th style="padding:8px 10px; text-align:left;">Receipt #</th>
             <th style="padding:8px 10px; text-align:left;">Date of Sale</th>
             <th style="padding:8px 10px; text-align:left;">Policy Status</th>
@@ -2490,9 +2239,9 @@ function openStartReturnPickerModal() {
           : '<span class="badge mid" style="font-size:10px;">🔄 Replacement (Single-Color)</span>');
       const isActionAllowed = hasSaleReturnableItems(s) || (isAdmin && onlyMix);
       return `
-            <tr style="border-bottom:1px solid #F0EAE0;">
+            <tr style="border-bottom:1px solid var(--line);">
               <td style="padding:8px 10px;">
-                <code style="color:var(--teal); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code>
+                <code style="color:var(--teal-text); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code>
                 ${s.customerName ? `<div class="muted small" style="font-size:11px;">${escapeHtml(s.customerName)}</div>` : ''}
               </td>
               <td style="padding:8px 10px;">
@@ -2500,7 +2249,7 @@ function openStartReturnPickerModal() {
                 <div class="muted small" style="font-size:11px;">Cashier: ${escapeHtml(s.cashierName || 'Staff')}</div>
               </td>
               <td style="padding:8px 10px;">${statusTag}</td>
-              <td style="padding:8px 10px; text-align:right; font-weight:700; font-family:'Space Grotesk';">${peso(s.total)}</td>
+              <td style="padding:8px 10px; text-align:right; font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">${peso(s.total)}</td>
               <td style="padding:8px 10px; text-align:right;">
                 ${isActionAllowed
           ? `<button type="button" class="btn secondary small" onclick='closeModal(); openReturnRefundModal("${s.id}")'>↩️ Return / Exchange</button>`
@@ -2516,13 +2265,13 @@ function openStartReturnPickerModal() {
   window.onReturnPickerSearch = renderPickerList;
 
   openModal('↩️ Select Sale to Process Return &amp; Exchange', `
-    <div style="margin-bottom:10px; padding:8px 12px; background:#EDF7F6; border:1px solid #B5D2CD; border-radius:var(--radius-sm); font-size:12px; color:var(--ink);">
+    <div style="margin-bottom:10px; padding:8px 12px; background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:var(--radius-sm); font-size:12px; color:var(--ink);">
       <b>Official Return &amp; Exchange Policy:</b> All returns require a valid receipt, physical product inspection, and authorized approval. Single-color paint is eligible for same-day refund/replacement, or replacement only after purchase day. Custom Color Mix paint is strictly Final Sale (non-returnable and non-exchangeable once mixed) unless approved by Administrator Review for store mixing defects.
     </div>
     <div style="margin-bottom:12px;">
       <input type="text" id="ret-picker-search" placeholder="Search official receipt # (e.g. OR-2026...), customer, or cashier..." style="width:100%; padding:9px 12px; font-size:13.5px;" oninput="onReturnPickerSearch(this.value)">
     </div>
-    <div id="ret-picker-list" style="max-height:360px; overflow-y:auto; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff;"></div>
+    <div id="ret-picker-list" style="max-height:360px; overflow-y:auto; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface);"></div>
   `, `
     <button class="btn secondary" onclick="closeModal()">Cancel</button>
   `, 'wide');
@@ -2686,16 +2435,16 @@ function recalcReturnGrandTotal(saleId) {
 
   const inspectionBox = document.getElementById('ret-inspection-box');
   if (inspectionBox) {
-    inspectionBox.style.background = inspectionVerified ? '#EDF7F6' : '#FAF7F2';
+    inspectionBox.style.background = inspectionVerified ? 'var(--teal-tint)' : 'var(--surface-2)';
     inspectionBox.style.borderColor = inspectionVerified ? 'var(--teal)' : 'var(--line)';
   }
 
   if (submitBtn) {
     const canSubmit = Boolean(inspectionVerified);
     submitBtn.disabled = !canSubmit;
-    submitBtn.style.background = canSubmit ? 'var(--teal)' : '#DDD6CA';
-    submitBtn.style.color = canSubmit ? '#FFFFFF' : '#8C8275';
-    submitBtn.style.borderColor = canSubmit ? 'transparent' : '#CFC7B8';
+    submitBtn.style.background = canSubmit ? 'var(--teal)' : 'var(--surface-3)';
+    submitBtn.style.color = canSubmit ? '#FFFFFF' : 'var(--ink-soft)';
+    submitBtn.style.borderColor = canSubmit ? 'transparent' : 'var(--line)';
     submitBtn.style.cursor = canSubmit ? 'pointer' : 'not-allowed';
     submitBtn.style.opacity = canSubmit ? '1' : '0.65';
     submitBtn.style.boxShadow = canSubmit ? '' : 'none';
@@ -3165,7 +2914,7 @@ function showReturnVoucherModal(saleId, voucherId) {
       <td style="padding:6px 4px;">
         <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
           <b>${escapeHtml(it.name)}</b>
-          ${itHex ? `<span class="muted small" style="font-family:monospace; font-weight:600; color:var(--teal);">(${itHex})</span>` : ''}
+          ${itHex ? `<span class="muted small" style="font-family:monospace; font-weight:600; color:var(--teal-text);">(${itHex})</span>` : ''}
           ${it.color ? `<span class="muted small"> (${escapeHtml(it.color)})</span>` : ''}
         </div>
         <div class="muted small" style="font-size:11px; margin-top:2px;">
@@ -3192,7 +2941,7 @@ function showReturnVoucherModal(saleId, voucherId) {
   const isRefund = voucher.resolution === 'refund';
 
   const exchangeHtml = (!isRefund && exItems.length) ? `
-    <div style="margin-top:14px; font-weight:700; font-size:11.5px; text-transform:uppercase; color:var(--teal); letter-spacing:0.03em;">Replacement Items Issued (Exchange)</div>
+    <div style="margin-top:14px; font-weight:700; font-size:11.5px; text-transform:uppercase; color:var(--teal-text); letter-spacing:0.03em;">Replacement Items Issued (Exchange)</div>
     <table style="width:100%; border-collapse:collapse; margin-top:4px;">
       <thead>
         <tr style="border-bottom:1px solid var(--line); font-size:11px; text-transform:uppercase; color:var(--ink-soft);">
@@ -3218,7 +2967,7 @@ function showReturnVoucherModal(saleId, voucherId) {
               <td class="center" style="padding:6px 8px;"><span class="badge mid">${formatStock(ex.liters || ex.qty)}L Mix</span></td>
               <td class="right" style="padding:6px 8px;">${formatStock(ex.qty)}L</td>
               <td class="right" style="padding:6px 8px;">${peso(ex.unitPrice)}</td>
-              <td class="right" style="padding:6px 0; font-weight:700; color:var(--teal);">${peso(ex.lineTotal)}</td>
+              <td class="right" style="padding:6px 0; font-weight:700; color:var(--teal-text);">${peso(ex.lineTotal)}</td>
             </tr>`;
     }
     const prod = ex.productId ? productById(ex.productId) : null;
@@ -3227,7 +2976,7 @@ function showReturnVoucherModal(saleId, voucherId) {
           <tr>
             <td style="padding:6px 0;">
               <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
-                <b>${escapeHtml(ex.name)}</b> ${exHex ? `<span class="muted small" style="font-family:monospace; font-weight:600; color:var(--teal);">(${exHex})</span>` : ''}
+                <b>${escapeHtml(ex.name)}</b> ${exHex ? `<span class="muted small" style="font-family:monospace; font-weight:600; color:var(--teal-text);">(${exHex})</span>` : ''}
                 ${ex.color && ex.color !== '-' ? `<span class="muted small"> (${escapeHtml(ex.color)})</span>` : ''}
               </div>
               <div class="muted small">${escapeHtml(ex.brand || '')}</div>
@@ -3235,7 +2984,7 @@ function showReturnVoucherModal(saleId, voucherId) {
             <td class="center" style="padding:6px 8px;"><span class="badge mid">${ex.size || 1}L</span></td>
             <td class="right" style="padding:6px 8px;">${formatStock(ex.qty)}</td>
             <td class="right" style="padding:6px 8px;">${peso(ex.unitPrice)}</td>
-            <td class="right" style="padding:6px 0; font-weight:700; color:var(--teal);">${peso(ex.lineTotal)}</td>
+            <td class="right" style="padding:6px 0; font-weight:700; color:var(--teal-text);">${peso(ex.lineTotal)}</td>
           </tr>`;
   }).join('')}
       </tbody>
@@ -3247,12 +2996,12 @@ function showReturnVoucherModal(saleId, voucherId) {
   const diff = Number((exVal - retVal).toFixed(2));
 
   openModal('📋 Return &amp; Exchange Voucher', `
-    <div id="printable-return-slip" style="background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); padding:18px 20px; font-family:'Inter',system-ui,sans-serif; color:#26211C; font-size:12.5px;">
+    <div id="printable-return-slip" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:18px 20px; font-family:'Inter',system-ui,sans-serif; color:var(--ink); font-size:12.5px;">
       <div style="text-align:center; padding-bottom:12px; border-bottom:1px dashed var(--line); margin-bottom:12px;">
         <img src="assets/images/logo.png" alt="MRGR Logo" style="width:44px; height:44px; border-radius:50%; margin:0 auto 8px auto; display:block; object-fit:cover;">
-        <div style="font-family:'Space Grotesk'; font-weight:700; font-size:16px; letter-spacing:-0.01em;">MRGR COLOR CENTER</div>
+        <div style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-weight:700; font-size:16px; letter-spacing:-0.01em;">MRGR COLOR CENTER</div>
         <div class="muted small">Official Return, Refund &amp; Exchange Slip</div>
-        <div style="display:inline-block; margin-top:8px; padding:4px 12px; background:#FBEAE8; border:1px solid #F3C4BF; border-radius:4px; font-family:'Space Grotesk'; font-weight:700; font-size:13px; color:var(--danger);">
+        <div style="display:inline-block; margin-top:8px; padding:4px 12px; background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:4px; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-weight:700; font-size:13px; color:var(--danger);">
           Voucher #: <span>${escapeHtml(voucher.voucherNo || voucher.id)}</span>
         </div>
       </div>
@@ -3273,12 +3022,12 @@ function showReturnVoucherModal(saleId, voucherId) {
       </div>
 
       ${voucher.adminException ? `
-        <div style="margin-bottom:8px; font-size:11.5px; background:#FFF8EC; border:1px solid #F0D9B5; padding:6px 10px; border-radius:4px; color:#8A5A24;">
+        <div style="margin-bottom:8px; font-size:11.5px; background:var(--warning-bg); border:1px solid var(--warning-border); padding:6px 10px; border-radius:4px; color:var(--warning-text);">
           <b>🛡️ Authorized Administrator Exception:</b> ${escapeHtml(voucher.adminExceptionReason || 'Approved under Administrator Review')}
         </div>
       ` : ''}
 
-      <div style="margin-bottom:10px; font-size:12px; background:#FAF7F2; padding:6px 10px; border-radius:4px;">
+      <div style="margin-bottom:10px; font-size:12px; background:var(--surface-2); padding:6px 10px; border-radius:4px;">
         <span class="muted">Reason:</span> <b>${escapeHtml(voucher.reason)}</b>
         ${voucher.note ? `<br><span class="muted">Notes:</span> <i>${escapeHtml(voucher.note)}</i>` : ''}
       </div>
@@ -3305,34 +3054,34 @@ function showReturnVoucherModal(saleId, voucherId) {
       <div style="margin-top:14px; padding-top:10px; border-top:1px dashed var(--line); display:flex; flex-direction:column; gap:5px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <span class="muted">Total Returned Credit:</span>
-          <strong style="font-family:'Space Grotesk'; color:var(--danger);">${peso(retVal)}</strong>
+          <strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--danger);">${peso(retVal)}</strong>
         </div>
         ${(!isRefund && exItems.length) ? `
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span class="muted">Total Replacement Issued:</span>
-            <strong style="font-family:'Space Grotesk'; color:var(--teal);">${peso(exVal)}</strong>
+            <strong style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--teal-text);">${peso(exVal)}</strong>
           </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px solid #ECE4D8;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px solid var(--line);">
             <span style="font-weight:700; font-size:14px;">${Math.abs(diff) < 0.005 ? 'Exchange Settlement:' : (diff > 0 ? 'Additional Amount Paid:' : 'Remaining Return Credit:')}</span>
-            <span style="font-size:17px; font-weight:700; color:${diff >= 0 ? 'var(--teal)' : 'var(--danger)'}; font-family:'Space Grotesk';">
+            <span style="font-size:17px; font-weight:700; color:${diff >= 0 ? 'var(--teal)' : 'var(--danger)'}; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">
               ${Math.abs(diff) < 0.005 ? '₱0.00 (Even Exchange)' : (diff > 0 ? `+${peso(diff)}` : peso(Math.abs(diff)))}
             </span>
           </div>
         ` : `
-          <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px solid #ECE4D8;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px solid var(--line);">
             <span style="font-weight:700; font-size:14px;">Total Approved Refund Paid:</span>
-            <span style="font-size:18px; font-weight:700; color:var(--danger); font-family:'Space Grotesk';">${peso(retVal)}</span>
+            <span style="font-size:18px; font-weight:700; color:var(--danger); font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">${peso(retVal)}</span>
           </div>
         `}
       </div>
 
-      <div class="row wrap" style="justify-content:space-between; margin-top:30px; padding-top:20px; border-top:1px solid #ECE4D8; gap:20px;">
+      <div class="row wrap" style="justify-content:space-between; margin-top:30px; padding-top:20px; border-top:1px solid var(--line); gap:20px;">
         <div style="text-align:center; min-width:140px;">
-          <div style="border-bottom:1px solid #8A8070; width:100%; height:20px; margin-bottom:4px; font-weight:700; font-size:11px;">${escapeHtml(voucher.authorizedBy || 'Administrator')}</div>
+          <div style="border-bottom:1px solid var(--line); width:100%; height:20px; margin-bottom:4px; font-weight:700; font-size:11px;">${escapeHtml(voucher.authorizedBy || 'Administrator')}</div>
           <span class="muted small" style="font-size:11px;">Authorized Administrator Approval</span>
         </div>
         <div style="text-align:center; min-width:140px;">
-          <div style="border-bottom:1px solid #8A8070; width:100%; height:20px; margin-bottom:4px; font-weight:700; font-size:11px;">${escapeHtml(voucher.cashierName)}</div>
+          <div style="border-bottom:1px solid var(--line); width:100%; height:20px; margin-bottom:4px; font-weight:700; font-size:11px;">${escapeHtml(voucher.cashierName)}</div>
           <span class="muted small" style="font-size:11px;">Processing Staff Member</span>
         </div>
       </div>

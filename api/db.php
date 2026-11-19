@@ -21,6 +21,9 @@ $action = $_GET['action'] ?? '';
 require_once __DIR__ . '/batch_lib.php';
 try { batchEnsureSchema($conn); } catch (Throwable $e) { error_log('Batch schema: ' . $e->getMessage()); }
 
+require_once __DIR__ . '/color_library_lib.php';
+try { colorLibraryEnsureSchema($conn); } catch (Throwable $e) { error_log('Color Library schema: ' . $e->getMessage()); }
+
 // Schema migration helper: ensures schema consistency without running 30+ redundant DDL queries on every request
 function ensureDBSchemaMigrated($conn, $force = false) {
     $flagFile = __DIR__ . '/.schema_migrated';
@@ -417,6 +420,47 @@ function ensureDBSchemaMigrated($conn, $force = false) {
             }
         } catch (Throwable $e) {}
 
+        // Auto-migrate: heal empty or duplicate receipt_no values in sales table
+        try {
+            $sRes = $conn->query("SELECT id, receipt_no, date FROM sales ORDER BY date ASC, id ASC");
+            if ($sRes) {
+                $seenReceipts = [];
+                $maxSeq = $sRes->num_rows;
+                $rowsToFix = [];
+                while ($sRow = $sRes->fetch_assoc()) {
+                    $rn = trim((string)($sRow['receipt_no'] ?? ''));
+                    if ($rn !== '' && preg_match('/^OR-\d{8}-(\d+)$/i', $rn, $m)) {
+                        $seqNum = (int)$m[1];
+                        if ($seqNum > $maxSeq) $maxSeq = $seqNum;
+                    }
+                    $upperRn = strtoupper($rn);
+                    if ($rn === '' || isset($seenReceipts[$upperRn])) {
+                        $rowsToFix[] = $sRow;
+                    } else {
+                        $seenReceipts[$upperRn] = true;
+                    }
+                }
+                if (!empty($rowsToFix)) {
+                    $upSaleRn = $conn->prepare("UPDATE sales SET receipt_no = ? WHERE id = ?");
+                    if ($upSaleRn) {
+                        $seqIdx = 1;
+                        foreach ($rowsToFix as $fixRow) {
+                            $ts = strtotime((string)($fixRow['date'] ?? ''));
+                            $datePart = ($ts !== false) ? date('Ymd', $ts) : date('Ymd');
+                            do {
+                                $cand = sprintf('OR-%s-%04d', $datePart, $seqIdx);
+                                $seqIdx++;
+                            } while (isset($seenReceipts[strtoupper($cand)]));
+                            $seenReceipts[strtoupper($cand)] = true;
+                            $upSaleRn->bind_param("ss", $cand, $fixRow['id']);
+                            $upSaleRn->execute();
+                        }
+                        $upSaleRn->close();
+                    }
+                }
+            }
+        } catch (Throwable $e) {}
+
         @file_put_contents($flagFile, date('Y-m-d H:i:s'));
     } catch (Throwable $e) {
         error_log('ensureDBSchemaMigrated error: ' . $e->getMessage());
@@ -602,7 +646,7 @@ if ($action === 'check_product_dependencies') {
         exit;
     }
     $id = $_GET['id'] ?? '';
-    $pid = $_GET['product_id'] ?? $id;
+    $pid = $_GET['product_id'] ?? ($_GET['productId'] ?? $id);
     $deps = getProductBackendDependencies($conn, $pid, $id);
     echo json_encode([
         'success' => true,
@@ -801,6 +845,168 @@ if ($action === 'get_sale' || $action === 'receipt') {
     exit;
 }
 
+// Admin-only Product Category Creation Endpoint
+if ($action === 'add_category' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    if ($actingRole !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Access denied: Only Administrators can create product categories.']);
+        exit;
+    }
+
+    $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+    $rawName = isset($payload['name']) ? (string)$payload['name'] : '';
+    $name = trim(preg_replace('/\s+/', ' ', $rawName));
+
+    if ($name === '' || mb_strlen($name) < 2) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Category name must be at least 2 characters long.']);
+        exit;
+    }
+    if (mb_strlen($name) > 80) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Category name must not exceed 80 characters.']);
+        exit;
+    }
+    if (preg_match('/[\x00-\x1F\x7F<>]/u', $name)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Category name contains invalid characters.']);
+        exit;
+    }
+
+    $lowerName = mb_strtolower($name);
+    $reserved = ['__add_category__', 'all', 'all categories', 'accessory', 'accessories'];
+    if (in_array($lowerName, $reserved, true)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => "Category name '$name' is reserved and cannot be used."]);
+        exit;
+    }
+
+    try {
+        $defaults = ['House Paint', 'Automotive Paint', 'Specialty Paint'];
+        $stored = [];
+        $sStmt = $conn->prepare("SELECT setting_value FROM settings WHERE setting_key = 'product_categories' LIMIT 1");
+        if ($sStmt) {
+            $sStmt->execute();
+            $sRes = $sStmt->get_result();
+            if ($sRow = $sRes->fetch_assoc()) {
+                $decoded = json_decode($sRow['setting_value'] ?? '', true);
+                if (is_array($decoded)) {
+                    $stored = $decoded;
+                }
+            }
+            $sStmt->close();
+        }
+
+        // Gather existing categories from defaults, settings, and products table for case-insensitive duplicate check
+        $allCategories = [];
+        $seenLower = [];
+        $addUnique = function ($cat) use (&$allCategories, &$seenLower) {
+            $c = trim(preg_replace('/\s+/', ' ', (string)$cat));
+            if ($c === '' || mb_strtolower($c) === 'accessory') return;
+            $key = mb_strtolower($c);
+            if (!isset($seenLower[$key])) {
+                $seenLower[$key] = true;
+                $allCategories[] = $c;
+            }
+        };
+
+        foreach ($defaults as $d) $addUnique($d);
+        foreach ($stored as $st) $addUnique($st);
+
+        $pRes = $conn->query("SELECT DISTINCT type, category FROM products");
+        if ($pRes) {
+            while ($pRow = $pRes->fetch_assoc()) {
+                if (!empty($pRow['type'])) $addUnique($pRow['type']);
+                if (!empty($pRow['category'])) $addUnique($pRow['category']);
+            }
+        }
+
+        if (isset($seenLower[$lowerName])) {
+            http_response_code(409);
+            echo json_encode(['success' => false, 'error' => "Category '$name' already exists."]);
+            exit;
+        }
+
+        $addUnique($name);
+        $jsonVal = json_encode(array_values($allCategories), JSON_UNESCAPED_UNICODE);
+
+        $upStmt = $conn->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('product_categories', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+        if (!$upStmt) {
+            throw new Exception('Failed to prepare category save statement: ' . $conn->error);
+        }
+        $upStmt->bind_param("s", $jsonVal);
+        if (!$upStmt->execute()) {
+            $err = $upStmt->error;
+            $upStmt->close();
+            throw new Exception('Failed to save category: ' . $err);
+        }
+        $upStmt->close();
+
+        echo json_encode([
+            'success' => true,
+            'category' => $name,
+            'categories' => array_values($allCategories)
+        ]);
+        exit;
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Database error while saving category: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+// Centralized Color Library & Formula Endpoints
+if ($action === 'color_library_list') {
+    $all = colorLibraryFetchAll($conn);
+    echo json_encode([
+        'success' => true,
+        'colorLibrary' => $all['colors'],
+        'colorFormulas' => $all['formulas']
+    ]);
+    exit;
+}
+
+if ($action === 'color_library_save' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+    $res = colorLibrarySaveColor($conn, $payload, $actingUser);
+    http_response_code($res['status'] ?? 200);
+    unset($res['status']);
+    echo json_encode($res);
+    exit;
+}
+
+if ($action === 'color_library_delete' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+    $res = colorLibraryDeleteColor(
+        $conn,
+        (string)($payload['id'] ?? ''),
+        $actingUser,
+        (string)($payload['reassignToColorId'] ?? '')
+    );
+    http_response_code($res['status'] ?? 200);
+    unset($res['status']);
+    echo json_encode($res);
+    exit;
+}
+
+if ($action === 'color_formula_save' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+    $res = colorLibrarySaveFormula($conn, $payload, $actingUser);
+    http_response_code($res['status'] ?? 200);
+    unset($res['status']);
+    echo json_encode($res);
+    exit;
+}
+
+if ($action === 'color_formula_delete' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+    $res = colorLibraryDeleteFormula($conn, (string)($payload['id'] ?? ''), $actingUser);
+    http_response_code($res['status'] ?? 200);
+    unset($res['status']);
+    echo json_encode($res);
+    exit;
+}
+
 // GET: Fetch all data from MySQL
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
     // RBAC Security Check: Cashier parameter tampering protection
@@ -924,6 +1130,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
                 'type' => $r['type'],
                 'category' => $category,
                 'color' => $r['color'],
+                'colorId' => $r['color_id'] ?? null,
+                'color_id' => $r['color_id'] ?? null,
                 'colorHex' => $r['color_hex'] ?? null,
                 'color_hex' => $r['color_hex'] ?? null,
                 'supplierId' => $r['supplier_id'] ?? null,
@@ -1103,7 +1311,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
 
         // Movements
         $movements = [];
-        $res = $conn->query("SELECT m.*, p.name AS current_product_name
+        $res = $conn->query("SELECT m.*, p.name AS current_product_name,
+                (SELECT GROUP_CONCAT(DISTINCT ib.batch_number ORDER BY bm.id ASC SEPARATOR ', ')
+                 FROM batch_movements bm
+                 JOIN inventory_batches ib ON ib.batch_id = bm.batch_id
+                 WHERE bm.movement_id = m.id) AS batch_numbers
             FROM movements m
             LEFT JOIN products p ON p.id = m.product_id
             ORDER BY m.date DESC");
@@ -1135,7 +1347,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
                 'components' => $components,
                 'qtyChange' => (float)$r['qty_change'],
                 'staffName' => $r['staff_name'],
-                'note' => $r['note'] ?? ''
+                'note' => $r['note'] ?? '',
+                'batchNumber' => $r['batch_numbers'] ?? ''
             ];
         }
 
@@ -1229,11 +1442,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
             }
         }
 
+        $clAll = colorLibraryFetchAll($conn);
+
         echo json_encode([
             'success' => true,
             'db' => [
                 'settings' => $settings,
                 'vatSettings' => $vatSettings,
+                'colorLibrary' => $clAll['colors'],
+                'colorFormulas' => $clAll['formulas'],
                 'products' => $products,
                 'productSizes' => $allProductSizes,
                 'productSuppliers' => $productSuppliers,
@@ -1310,8 +1527,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
         // 1. Sync Products
         if (!empty($dbData['products']) && is_array($dbData['products'])) {
-            $stmt = $conn->prepare("INSERT INTO products (id, product_id, product_name, name, brand, type, category, tax_classification, color, color_hex, supplier_id, price, recent_price, pending_price, price_history, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, deactivated_at, deactivated_by, updated_by, discontinue_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            $stmt = $conn->prepare("INSERT INTO products (id, product_id, product_name, name, brand, type, category, tax_classification, color, color_id, color_hex, supplier_id, price, recent_price, pending_price, price_history, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, deactivated_at, deactivated_by, updated_by, discontinue_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     product_id = VALUES(product_id),
                     product_name = VALUES(product_name),
@@ -1321,6 +1538,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     category = VALUES(category),
                     tax_classification = VALUES(tax_classification),
                     color = VALUES(color),
+                    color_id = VALUES(color_id),
                     color_hex = VALUES(color_hex),
                     supplier_id = VALUES(supplier_id),
                     price = VALUES(price),
@@ -1359,12 +1577,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     opened_quantity = VALUES(opened_quantity),
                     remaining_volume = VALUES(remaining_volume)");
 
-            // Pre-fetch all existing size IDs to avoid collisions
-            $existingSizesRes = $conn->query("SELECT size_id, product_id, container_size FROM product_sizes");
+            // Pre-fetch all existing size IDs and pricing to avoid collisions and enforce RBAC
+            $existingSizesRes = $conn->query("SELECT size_id, product_id, container_size, price_per_liter, price_per_can, minimum_stock, is_active FROM product_sizes");
             $existingSizeMap = []; // [prodId_containerSize] => size_id
+            $existingSizeMeta = []; // [size_id] => row
             $maxSizeNum = 0;
             while ($esRow = $existingSizesRes->fetch_assoc()) {
                 $existingSizeMap[$esRow['product_id'] . '_' . (float)$esRow['container_size']] = $esRow['size_id'];
+                $existingSizeMeta[$esRow['size_id']] = $esRow;
                 $sNum = (int)str_replace('SZ-', '', $esRow['size_id']);
                 if ($sNum > $maxSizeNum) $maxSizeNum = $sNum;
             }
@@ -1378,9 +1598,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 if ($iNum > $maxInvNum) $maxInvNum = $iNum;
             }
 
-            // Pre-fetch all existing products to detect and skip unchanged products
+            // Pre-fetch all existing products to detect and skip unchanged products & enforce RBAC
             $existingProdMap = [];
-            $epRes = $conn->query("SELECT id, product_id, name, brand, type, category, tax_classification, color, color_hex, supplier_id, price, recent_price, pending_price, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, discontinue_reason, updated_at FROM products");
+            $epRes = $conn->query("SELECT id, product_id, product_name, name, brand, type, category, tax_classification, color, color_id, color_hex, supplier_id, price, recent_price, pending_price, price_history, stock, can_stock, opened_stock, opened_can_size, opened_by_size, sizes, pending_sizes, pending_edit, threshold, threshold_by_size, status, deactivation_reason, deactivated_at, deactivated_by, updated_by, discontinue_reason, updated_at FROM products");
             if ($epRes) {
                 while ($epRow = $epRes->fetch_assoc()) {
                     $pidKey = (string)$epRow['id'];
@@ -1404,6 +1624,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $pCategory = (string)($p['category'] ?? $pType);
                     $pTaxClass = (string)($p['taxClassification'] ?? ($p['tax_classification'] ?? 'vatable'));
                     $pColor = (string)($p['color'] ?? '-');
+                    $pColorId = !empty($p['colorId']) ? (string)$p['colorId'] : (!empty($p['color_id']) ? (string)$p['color_id'] : '');
                     $pColorHex = !empty($p['colorHex']) ? (string)$p['colorHex'] : (!empty($p['color_hex']) ? (string)$p['color_hex'] : '');
                     $pSupplierId = !empty($p['supplierId']) ? (string)$p['supplierId'] : (!empty($p['supplier_id']) ? (string)$p['supplier_id'] : '');
                     $pDeactReason = !empty($p['deactivationReason']) ? (string)$p['deactivationReason'] : '';
@@ -1441,6 +1662,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                         (string)($existingP['category'] ?? '') === $pCategory &&
                         (string)($existingP['tax_classification'] ?? 'vatable') === $pTaxClass &&
                         (string)$existingP['color'] === $pColor &&
+                        (string)($existingP['color_id'] ?? '') === $pColorId &&
                         (string)($existingP['color_hex'] ?? '') === $pColorHex &&
                         (string)($existingP['supplier_id'] ?? '') === $pSupplierId &&
                         (string)($existingP['deactivation_reason'] ?? '') === $pDeactReason &&
@@ -1465,6 +1687,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $type = (string)($p['type'] ?? '');
                 $category = (string)($p['category'] ?? $type);
                 $color = (string)($p['color'] ?? '-');
+                $colorId = !empty($p['colorId']) ? (string)$p['colorId'] : (!empty($p['color_id']) ? (string)$p['color_id'] : null);
                 $colorHex = !empty($p['colorHex']) ? (string)$p['colorHex'] : (!empty($p['color_hex']) ? (string)$p['color_hex'] : null);
                 $supplierId = !empty($p['supplierId']) ? (string)$p['supplierId'] : (!empty($p['supplier_id']) ? (string)$p['supplier_id'] : null);
                 $price = (float)($p['price'] ?? 0);
@@ -1505,7 +1728,68 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $discReason = !empty($p['discontinueReason']) ? (string)$p['discontinueReason'] : null;
                 $taxClassification = (string)($p['taxClassification'] ?? ($p['tax_classification'] ?? 'vatable'));
 
-                $stmt->bind_param("sssssssssssdddsdsdissssdsssssss", $id, $productId, $productName, $name, $brand, $type, $category, $taxClassification, $color, $colorHex, $supplierId, $price, $recentPrice, $pendingPrice, $priceHistoryJson, $stock, $canStock, $openedStock, $openedCanSize, $openedBySize, $sizesJson, $pendingSizesJson, $pendingEditJson, $threshold, $thresholdBySize, $status, $deactReason, $deactAt, $deactBy, $updatedBy, $discReason);
+                // Strict Backend RBAC for Products:
+                // Only Admin may edit restricted product metadata, selling prices, or status.
+                if ($actingRole === 'cashier') {
+                    if ($existingP === null) {
+                        continue; // Cashiers cannot create new products
+                    }
+                    $productId = (string)($existingP['product_id'] ?: $existingP['id']);
+                    $name = (string)$existingP['name'];
+                    $productName = (string)($existingP['product_name'] ?: $existingP['name']);
+                    $brand = (string)$existingP['brand'];
+                    $type = (string)$existingP['type'];
+                    $category = (string)($existingP['category'] ?: $existingP['type']);
+                    $taxClassification = (string)($existingP['tax_classification'] ?: 'vatable');
+                    $color = (string)$existingP['color'];
+                    $colorId = $existingP['color_id'];
+                    $colorHex = $existingP['color_hex'];
+                    $supplierId = $existingP['supplier_id'];
+                    $price = (float)$existingP['price'];
+                    $recentPrice = $existingP['recent_price'] !== null ? (float)$existingP['recent_price'] : null;
+                    $pendingPrice = $existingP['pending_price'] !== null ? (float)$existingP['pending_price'] : null;
+                    $priceHistoryJson = (string)($existingP['price_history'] ?? '[]');
+                    $sizesJson = (string)($existingP['sizes'] ?? '[]');
+                    $sizesArr = json_decode($sizesJson, true) ?: [];
+                    $pendingSizesJson = (string)($existingP['pending_sizes'] ?? '[]');
+                    $pendingEditJson = $existingP['pending_edit'];
+                    $threshold = (float)$existingP['threshold'];
+                    $thresholdBySize = (string)($existingP['threshold_by_size'] ?? '{}');
+                    $thresholdBySizeArr = json_decode($thresholdBySize, true) ?: [];
+                    $status = (string)$existingP['status'];
+                    $deactReason = $existingP['deactivation_reason'];
+                    $deactAt = $existingP['deactivated_at'];
+                    $deactBy = $existingP['deactivated_by'];
+                    $discReason = $existingP['discontinue_reason'];
+                } elseif ($actingRole === 'staff') {
+                    if ($existingP === null) {
+                        // Staff-created products must enter as pending_approval
+                        $status = 'pending_approval';
+                    } else {
+                        // Staff cannot directly overwrite admin-controlled catalog/price/status fields;
+                        // edits must go through pending_edit / pending_price / pending_sizes.
+                        $productId = (string)($existingP['product_id'] ?: $existingP['id']);
+                        $name = (string)$existingP['name'];
+                        $productName = (string)($existingP['product_name'] ?: $existingP['name']);
+                        $brand = (string)$existingP['brand'];
+                        $type = (string)$existingP['type'];
+                        $category = (string)($existingP['category'] ?: $existingP['type']);
+                        $taxClassification = (string)($existingP['tax_classification'] ?: 'vatable');
+                        $color = (string)$existingP['color'];
+                        $colorId = $existingP['color_id'];
+                        $colorHex = $existingP['color_hex'];
+                        $price = (float)$existingP['price'];
+                        $recentPrice = $existingP['recent_price'] !== null ? (float)$existingP['recent_price'] : null;
+                        $priceHistoryJson = (string)($existingP['price_history'] ?? '[]');
+                        $status = (string)$existingP['status'];
+                        $deactReason = $existingP['deactivation_reason'];
+                        $deactAt = $existingP['deactivated_at'];
+                        $deactBy = $existingP['deactivated_by'];
+                        $discReason = $existingP['discontinue_reason'];
+                    }
+                }
+
+                $stmt->bind_param("ssssssssssssdddsdsdissssdsssssss", $id, $productId, $productName, $name, $brand, $type, $category, $taxClassification, $color, $colorId, $colorHex, $supplierId, $price, $recentPrice, $pendingPrice, $priceHistoryJson, $stock, $canStock, $openedStock, $openedCanSize, $openedBySize, $sizesJson, $pendingSizesJson, $pendingEditJson, $threshold, $thresholdBySize, $status, $deactReason, $deactAt, $deactBy, $updatedBy, $discReason);
                 $stmt->execute();
 
                 // Sync sizes to product_sizes and inventory
@@ -1528,25 +1812,42 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     }
                 }
 
+                $syncedSizeIds = [];
                 foreach ($variantsToSync as $v) {
                     $cSz = (float)($v['containerSize'] ?? 1);
                     $mapKey = $productId . '_' . $cSz;
-                    $sizeId = !empty($v['sizeId']) ? (string)$v['sizeId'] : ($existingSizeMap[$mapKey] ?? null);
+                    // Always prefer existing DB size_id for (product_id, container_size) to avoid uk_product_size / FK collisions
+                    $sizeId = $existingSizeMap[$mapKey] ?? (!empty($v['sizeId']) ? (string)$v['sizeId'] : null);
                     if (!$sizeId) {
                         $maxSizeNum++;
                         $sizeId = sprintf('SZ-%03d', $maxSizeNum);
                         $existingSizeMap[$mapKey] = $sizeId;
                     }
+                    $syncedSizeIds[] = $sizeId;
+
                     $pricePerLiter = isset($v['pricePerLiter']) ? (float)$v['pricePerLiter'] : $price;
                     $pricePerCan = isset($v['pricePerCan']) ? (float)$v['pricePerCan'] : round($pricePerLiter * $cSz, 2);
                     $minStock = isset($v['minimumStock']) ? (int)$v['minimumStock'] : ($cSz >= 16 ? 1 : ($cSz >= 4 ? 2 : 5));
                     $isActive = isset($v['isActive']) ? ($v['isActive'] ? 1 : 0) : 1;
 
-                    $stmtSizeUpsert->bind_param("ssdddis", $sizeId, $productId, $cSz, $pricePerLiter, $pricePerCan, $minStock, $isActive);
+                    // RBAC: Non-admin roles cannot alter selling prices (or minimum_stock/is_active for cashiers) on existing sizes
+                    if ($actingRole !== 'admin' && isset($existingSizeMeta[$sizeId])) {
+                        $exSz = $existingSizeMeta[$sizeId];
+                        $pricePerLiter = (float)$exSz['price_per_liter'];
+                        $pricePerCan = (float)$exSz['price_per_can'];
+                        $isActive = (int)$exSz['is_active'];
+                        if ($actingRole === 'cashier') {
+                            $minStock = (int)$exSz['minimum_stock'];
+                        }
+                    } elseif ($actingRole === 'cashier' && !isset($existingSizeMeta[$sizeId])) {
+                        continue; // Cashiers cannot create new container sizes
+                    }
+
+                    $stmtSizeUpsert->bind_param("ssdddii", $sizeId, $productId, $cSz, $pricePerLiter, $pricePerCan, $minStock, $isActive);
                     $stmtSizeUpsert->execute();
 
-                    // Inventory
-                    $invId = !empty($v['inventoryId']) ? (string)$v['inventoryId'] : ($existingInvMap[$sizeId] ?? null);
+                    // Inventory: always prefer existing inventory_id for this size_id to prevent duplicate PK collisions
+                    $invId = $existingInvMap[$sizeId] ?? (!empty($v['inventoryId']) ? (string)$v['inventoryId'] : null);
                     if (!$invId) {
                         $maxInvNum++;
                         $invId = sprintf('INV-%03d', $maxInvNum);
@@ -1562,6 +1863,72 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
                     $stmtInvUpsert->bind_param("ssiid", $invId, $sizeId, $sealedQty, $openedQty, $remVol);
                     $stmtInvUpsert->execute();
+                }
+
+                // Clean up removed container sizes only if Admin and they have zero stock and no batch/PO history
+                if ($actingRole === 'admin' && $existingP !== null && !empty($syncedSizeIds)) {
+                    $chkSzStmt = $conn->prepare("SELECT ps.size_id, COALESCE(inv.sealed_quantity, 0) AS sealed_qty, COALESCE(inv.remaining_volume, 0) AS rem_vol
+                        FROM product_sizes ps
+                        LEFT JOIN inventory inv ON inv.size_id = ps.size_id
+                        WHERE ps.product_id = ?");
+                    if ($chkSzStmt) {
+                        $chkSzStmt->bind_param("s", $productId);
+                        $chkSzStmt->execute();
+                        $chkSzRes = $chkSzStmt->get_result();
+                        $toRemoveSizeIds = [];
+                        while ($szRow = $chkSzRes->fetch_assoc()) {
+                            if (!in_array($szRow['size_id'], $syncedSizeIds, true)) {
+                                if ((int)$szRow['sealed_qty'] === 0 && (float)$szRow['rem_vol'] <= 0.0001) {
+                                    $toRemoveSizeIds[] = $szRow['size_id'];
+                                }
+                            }
+                        }
+                        $chkSzStmt->close();
+
+                        foreach ($toRemoveSizeIds as $remSzId) {
+                            $hasRefs = false;
+                            $bChk = $conn->prepare("SELECT 1 FROM inventory_batches WHERE size_id = ? LIMIT 1");
+                            if ($bChk) {
+                                $bChk->bind_param("s", $remSzId);
+                                $bChk->execute();
+                                if ($bChk->get_result()->num_rows > 0) $hasRefs = true;
+                                $bChk->close();
+                            }
+                            if (!$hasRefs) {
+                                $poChk = $conn->prepare("SELECT 1 FROM purchase_order_items WHERE size_id = ? LIMIT 1");
+                                if ($poChk) {
+                                    $poChk->bind_param("s", $remSzId);
+                                    $poChk->execute();
+                                    if ($poChk->get_result()->num_rows > 0) $hasRefs = true;
+                                    $poChk->close();
+                                }
+                            }
+                            if (!$hasRefs) {
+                                $delInvSz = $conn->prepare("DELETE FROM inventory WHERE size_id = ?");
+                                if ($delInvSz) {
+                                    $delInvSz->bind_param("s", $remSzId);
+                                    $delInvSz->execute();
+                                    $delInvSz->close();
+                                }
+                                $delPsSz = $conn->prepare("DELETE FROM product_sizes WHERE size_id = ?");
+                                if ($delPsSz) {
+                                    $delPsSz->bind_param("s", $remSzId);
+                                    $delPsSz->execute();
+                                    $delPsSz->close();
+                                }
+                            }
+                        }
+                    }
+
+                    // Keep denormalized product_name & brand in inventory_batches synced without touching quantities or expiration dates
+                    if ((string)$existingP['name'] !== $name || (string)$existingP['brand'] !== $brand) {
+                        $updBatchStmt = $conn->prepare("UPDATE inventory_batches SET product_name = ?, brand = ? WHERE product_id = ?");
+                        if ($updBatchStmt) {
+                            $updBatchStmt->bind_param("sss", $name, $brand, $id);
+                            $updBatchStmt->execute();
+                            $updBatchStmt->close();
+                        }
+                    }
                 }
             }
             $stmt->close();
@@ -1665,6 +2032,42 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $stmt->execute();
             }
             $stmt->close();
+        }
+        if ($actingRole === 'admin' && !empty($dbData['deletedSupplierIds']) && is_array($dbData['deletedSupplierIds'])) {
+            foreach ($dbData['deletedSupplierIds'] as $rawDelSupId) {
+                $delSupId = trim((string)$rawDelSupId);
+                if ($delSupId === '') continue;
+                $chkPo = $conn->prepare("SELECT COUNT(*) AS cnt FROM purchase_orders WHERE supplier_id = ?");
+                $poCnt = 0;
+                if ($chkPo) {
+                    $chkPo->bind_param("s", $delSupId);
+                    $chkPo->execute();
+                    $poRow = $chkPo->get_result()->fetch_assoc();
+                    $poCnt = (int)($poRow['cnt'] ?? 0);
+                    $chkPo->close();
+                }
+                if ($poCnt > 0) {
+                    continue; // Preserve supplier with historical purchase orders
+                }
+                $delPs = $conn->prepare("DELETE FROM product_suppliers WHERE supplier_id = ?");
+                if ($delPs) {
+                    $delPs->bind_param("s", $delSupId);
+                    $delPs->execute();
+                    $delPs->close();
+                }
+                $clrProdSup = $conn->prepare("UPDATE products SET supplier_id = NULL WHERE supplier_id = ?");
+                if ($clrProdSup) {
+                    $clrProdSup->bind_param("s", $delSupId);
+                    $clrProdSup->execute();
+                    $clrProdSup->close();
+                }
+                $delSup = $conn->prepare("DELETE FROM suppliers WHERE id = ?");
+                if ($delSup) {
+                    $delSup->bind_param("s", $delSupId);
+                    $delSup->execute();
+                    $delSup->close();
+                }
+            }
         }
 
         // 2b. Sync Product-Supplier Relationships (Multi-supplier per product/container size)
@@ -1772,8 +2175,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         if ($actingRole !== 'staff' && !empty($dbData['sales']) && is_array($dbData['sales'])) {
             $existingSalesMap = [];
             $existingSalesOwner = [];
-            $esRes = $conn->query("SELECT id, status, total, refund_total, discount_amount, customer_name, void_request_id, voided_at, void_rejected_at, returns_json, void_reason, void_admin_remarks FROM sales");
+            $existingReceiptsBySaleId = [];
+            $usedReceiptsUpper = [];
+            $maxGlobalReceiptSeq = 0;
+            $esRes = $conn->query("SELECT id, receipt_no, cashier_id, cashier_name, status, total, refund_total, discount_amount, customer_name, void_request_id, voided_at, void_rejected_at, returns_json, void_reason, void_admin_remarks FROM sales");
             if ($esRes) {
+                $maxGlobalReceiptSeq = $esRes->num_rows;
                 while ($esRow = $esRes->fetch_assoc()) {
                     $existingSalesMap[$esRow['id']] = $esRow['status'] . '_' . (float)$esRow['total'] . '_' . (float)$esRow['refund_total'] . '_' . (float)($esRow['discount_amount'] ?? 0) . '_' . ($esRow['customer_name'] ?? '') . '_' . ($esRow['void_request_id'] ?? '') . '_' . ($esRow['voided_at'] ?? '') . '_' . ($esRow['void_rejected_at'] ?? '') . '_' . ($esRow['returns_json'] ?? '[]') . '_' . ($esRow['void_reason'] ?? '') . '_' . ($esRow['void_admin_remarks'] ?? '');
                     $existingSalesOwner[$esRow['id']] = [
@@ -1781,6 +2188,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                         'cashier_name' => (string)($esRow['cashier_name'] ?? ''),
                         'status' => (string)($esRow['status'] ?? 'completed')
                     ];
+                    $rnExisting = trim((string)($esRow['receipt_no'] ?? ''));
+                    if ($rnExisting !== '') {
+                        $existingReceiptsBySaleId[$esRow['id']] = $rnExisting;
+                        $usedReceiptsUpper[strtoupper($rnExisting)] = $esRow['id'];
+                        if (preg_match('/^OR-\d{8}-(\d+)$/i', $rnExisting, $mRn)) {
+                            $seqN = (int)$mRn[1];
+                            if ($seqN > $maxGlobalReceiptSeq) $maxGlobalReceiptSeq = $seqN;
+                        }
+                    }
                 }
             }
 
@@ -1901,8 +2317,23 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     continue; // Skip unchanged sale record
                 }
 
-                $receiptNo = (string)($sale['receiptNo'] ?? '');
+                $receiptNo = trim((string)($sale['receiptNo'] ?? ''));
                 $date = safeDateSql($sale['date'] ?? null, 'Y-m-d H:i:s', date('Y-m-d H:i:s'));
+                if (isset($existingReceiptsBySaleId[$id]) && $existingReceiptsBySaleId[$id] !== '') {
+                    $receiptNo = $existingReceiptsBySaleId[$id];
+                } else {
+                    $datePart = date('Ymd', strtotime($date) ?: time());
+                    $upperCand = strtoupper($receiptNo);
+                    if ($receiptNo === '' || (isset($usedReceiptsUpper[$upperCand]) && $usedReceiptsUpper[$upperCand] !== $id)) {
+                        do {
+                            $maxGlobalReceiptSeq++;
+                            $receiptNo = sprintf('OR-%s-%04d', $datePart, $maxGlobalReceiptSeq);
+                            $upperCand = strtoupper($receiptNo);
+                        } while (isset($usedReceiptsUpper[$upperCand]) && $usedReceiptsUpper[$upperCand] !== $id);
+                    }
+                    $usedReceiptsUpper[$upperCand] = $id;
+                    $existingReceiptsBySaleId[$id] = $receiptNo;
+                }
                 $paymentMethod = !empty($sale['paymentMethod']) ? (string)$sale['paymentMethod'] : 'Cash';
                 $cashTendered = isset($sale['cashTendered']) ? (float)$sale['cashTendered'] : (float)$total;
                 $changeAmount = isset($sale['changeAmount']) ? (float)$sale['changeAmount'] : 0.0;
@@ -1991,18 +2422,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         // 5b. Expiration Tracking: route new movements into batch ledger (FIFO / receiving batches),
         //     then reconcile so batch totals always equal the centralized inventory.
         //     If batch processing fails (e.g. attempting to sell expired stock), abort transaction.
+        $hasColorMixMovement = false;
         foreach ($mvNewRows as $nm) {
+            if ($nm['type'] === 'colormix') {
+                $hasColorMixMovement = true;
+            }
             batchProcessMovement($conn, $nm['m'], $nm['type'], $nm['sizeId'], $nm['productId'], $nm['containerSize'], $nm['qtyChange'], $nm['staff'], $nm['note'], $nm['date']);
         }
-        batchReconcile($conn, !empty($actingUser['name']) ? (string)$actingUser['name'] : 'System');
+        batchReconcile($conn, !empty($actingUser['name']) ? (string)$actingUser['name'] : 'System', $hasColorMixMovement);
 
         // 6. Sync Purchase Orders (Admin & Staff only; skips unchanged POs)
         if (in_array($actingRole, ['admin', 'staff'], true) && !empty($dbData['purchaseOrders']) && is_array($dbData['purchaseOrders'])) {
             $existingPOMap = [];
+            $existingPOStatus = [];
             $epoRes = $conn->query("SELECT id, status, total_amount, received_at, expected_date, notes, items_json FROM purchase_orders");
             if ($epoRes) {
                 while ($epoRow = $epoRes->fetch_assoc()) {
                     $existingPOMap[$epoRow['id']] = $epoRow['status'] . '_' . (float)$epoRow['total_amount'] . '_' . (string)$epoRow['received_at'] . '_' . (string)$epoRow['expected_date'] . '_' . (string)$epoRow['notes'] . '_' . (string)$epoRow['items_json'];
+                    $existingPOStatus[$epoRow['id']] = (string)$epoRow['status'];
                 }
             }
 
@@ -2024,6 +2461,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             foreach ($dbData['purchaseOrders'] as $po) {
                 $id = (string)$po['id'];
                 $status = (string)($po['status'] ?? 'ordered');
+                // RBAC: Only Admin may approve a pending PO to ordered, or create an already-ordered PO
+                if ($actingRole !== 'admin') {
+                    if (isset($existingPOStatus[$id])) {
+                        if ($existingPOStatus[$id] === 'pending' && $status === 'ordered') {
+                            $status = 'pending';
+                        }
+                    } elseif ($status === 'ordered') {
+                        $status = 'pending';
+                    }
+                }
                 $totalAmount = (float)($po['totalAmount'] ?? 0);
                 $receivedAt = safeDateSql($po['receivedAt'] ?? null, 'Y-m-d H:i:s', null);
                 $expectedDate = safeDateSql($po['expectedDate'] ?? null, 'Y-m-d', null);
@@ -2079,8 +2526,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $stmt->close();
         }
 
-        // 7. Sync Adjustment Requests (Optimized: skips unchanged adjustment requests)
-        if (!empty($dbData['adjustmentRequests']) && is_array($dbData['adjustmentRequests'])) {
+        // 7. Sync Adjustment Requests (Admin & Staff only; skips unchanged adjustment requests)
+        if (in_array($actingRole, ['admin', 'staff'], true) && !empty($dbData['adjustmentRequests']) && is_array($dbData['adjustmentRequests'])) {
             $existingARMap = [];
             $earRes = $conn->query("SELECT id, status, reviewed_at FROM adjustment_requests");
             if ($earRes) {

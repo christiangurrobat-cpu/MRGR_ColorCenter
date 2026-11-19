@@ -573,22 +573,24 @@ function batchProcessMovement(mysqli $conn, array $m, string $type, ?string $siz
     }
 
     // Negative: FIFO deduction (a module-selected batch is consumed first when explicitly targeted)
-    // If it's a sale, expired batches are strictly blocked from FIFO deduction.
-    // Adjustments or explicit write-offs (e.g. removing expired stock) allow expired batches.
-    $allowExpired = ($type !== 'sale');
+    // Sales and exchange replacements ('return' negative qty) strictly block expired batches.
+    // Adjustments / explicit write-offs (e.g. removing expired stock) allow expired batches.
+    $allowExpired = ($type === 'adjustment');
     $logType = ($type === 'sale') ? 'fifo_deduction' : ($targetBatch ? 'adjustment' : 'fifo_deduction');
     $deducted = batchFifoDeduct($conn, $sizeId, abs($cans), $mid, $logType, $ref, $shortNote, $staffName, $dateSql, $targetBatch, $allowExpired);
     if ($deducted < abs($cans) && !$allowExpired) {
-        // If unexpired batches were insufficient to cover the sale, throw exception to roll back the transaction!
-        throw new Exception("Sale blocked: Available non-expired batch stock is insufficient for size {$sizeId}. Expired batches cannot be sold.");
+        // If unexpired batches were insufficient to cover the sale/exchange, throw exception to roll back the transaction!
+        throw new Exception("Transaction blocked: Available non-expired batch stock is insufficient for size {$sizeId}. Expired batches cannot be dispensed.");
     }
 }
 
 /**
  * Enforce SUM(batch remaining) == inventory.sealed_quantity for every size.
  * Surplus inventory -> a "reconciliation" batch (expiry Not Specified); surplus batches -> FIFO trim.
+ * When $blockExpiredReduction is true (e.g. a color-mixing transaction opened sealed cans),
+ * expired sealed batches are strictly blocked from being consumed.
  */
-function batchReconcile(mysqli $conn, string $staff = 'System'): int {
+function batchReconcile(mysqli $conn, string $staff = 'System', bool $blockExpiredReduction = false): int {
     $fixed = 0;
     $sql = "SELECT ps.size_id, ps.product_id, inv.sealed_quantity AS sealed,
                    COALESCE((SELECT SUM(b.remaining_qty) FROM inventory_batches b WHERE b.size_id = ps.size_id), 0) AS batched,
@@ -621,7 +623,19 @@ function batchReconcile(mysqli $conn, string $staff = 'System'): int {
             ]);
             batchLog($conn, $bid, null, $first ? 'opening' : 'reconciliation', $diff, $diff, null, $first ? 'Opening balance' : 'Inventory exceeded batch total', $staff);
         } else {
-            batchFifoDeduct($conn, $sizeId, $batched - $sealed, null, 'reconciliation', null, 'Inventory decreased without a movement record (e.g. color-mix opened a sealed can)', $staff, null, null, true);
+            $needTrim = $batched - $sealed;
+            if ($blockExpiredReduction) {
+                $deducted = batchFifoDeduct($conn, $sizeId, $needTrim, null, 'reconciliation', null, 'Color-mix opened a non-expired sealed can', $staff, null, null, false);
+                if ($deducted < $needTrim) {
+                    throw new Exception("Color mixing blocked: Available non-expired sealed batch stock is insufficient for size {$sizeId}. Expired sealed paint batches cannot be used for mixing.");
+                }
+            } else {
+                // Prefer non-expired batches first, then fall back to expired only for non-mix administrative reconciliation
+                $deducted = batchFifoDeduct($conn, $sizeId, $needTrim, null, 'reconciliation', null, 'Inventory decreased without a movement record (e.g. color-mix opened a sealed can)', $staff, null, null, false);
+                if ($deducted < $needTrim) {
+                    batchFifoDeduct($conn, $sizeId, $needTrim - $deducted, null, 'reconciliation', null, 'Inventory reconciliation trim (remaining expired batch units)', $staff, null, null, true);
+                }
+            }
         }
         $fixed++;
     }

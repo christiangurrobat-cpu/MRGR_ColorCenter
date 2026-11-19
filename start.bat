@@ -14,5 +14,5 @@ taskkill /F /IM php.exe >nul 2>&1
 
 echo Starting MRGR Color Center on http://MRGR_ColorCenter...
 start http://MRGR_ColorCenter
-php -S 0.0.0.0:80
+php -S 0.0.0.0:80 index.php
 pause

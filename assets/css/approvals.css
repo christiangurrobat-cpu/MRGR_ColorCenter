@@ -36,7 +36,7 @@
 }
 
 .approvals-metric-card {
-  background: #FFFFFF;
+  background: var(--surface);
   border: 1px solid var(--line, #E2DACD);
   border-radius: var(--radius, 10px);
   padding: 14px 18px;
@@ -58,7 +58,7 @@
 .approvals-metric-card.active {
   border-color: var(--teal, #1F6F6B);
   box-shadow: 0 0 0 2px rgba(31, 111, 107, 0.2);
-  background: #FAFDFC;
+  background: var(--surface);
 }
 
 .approvals-metric-card .card-top {
@@ -92,11 +92,11 @@
 }
 
 .approvals-metric-card.has-pending .card-value {
-  color: #C1443D;
+  color: var(--danger-text);
 }
 
 .approvals-metric-card.all-clear .card-value {
-  color: var(--teal, #1F6F6B);
+  color: var(--teal-text, #1F6F6B);
 }
 
 /* Tabs bar */
@@ -134,12 +134,12 @@
 }
 
 .approvals-tab-btn:hover {
-  background: #F4EFE6;
+  background: var(--surface-3);
   color: var(--ink, #26211C);
 }
 
 .approvals-tab-btn.active {
-  background: #FFFFFF;
+  background: var(--surface);
   border-color: var(--line, #E2DACD);
   color: var(--teal-dark, #17524F);
   font-weight: 700;
@@ -165,8 +165,8 @@
 }
 
 .approvals-tab-badge.zero {
-  background: #E5E7EB;
-  color: #6B7280;
+  background: var(--surface-3);
+  color: var(--ink-soft);
   box-shadow: none;
 }
 
@@ -177,24 +177,24 @@
   gap: 6px;
   font-family: 'Space Grotesk', system-ui, monospace;
   font-size: 13px;
-  background: #FAF7F0;
+  background: var(--surface-2);
   padding: 3px 8px;
   border-radius: 4px;
   border: 1px solid var(--line, #E2DACD);
 }
 
 .price-diff-old {
-  color: #8C8275;
+  color: var(--ink-soft);
   text-decoration: line-through;
 }
 
 .price-diff-arrow {
-  color: var(--teal, #1F6F6B);
+  color: var(--teal-text, #1F6F6B);
   font-weight: 700;
 }
 
 .price-diff-new {
-  color: #17524F;
+  color: var(--teal-dark);
   font-weight: 700;
 }
 
@@ -206,20 +206,20 @@
 }
 
 .price-diff-percent.up {
-  background: #FEF2F2;
-  color: #B91C1C;
+  background: var(--danger-bg);
+  color: var(--danger-text);
 }
 
 .price-diff-percent.down {
-  background: #ECFDF5;
-  color: #047857;
+  background: var(--success-bg);
+  color: var(--success-text);
 }
 
 /* Empty State Card */
 .approvals-empty-state {
   text-align: center;
   padding: 48px 24px;
-  background: #FFFFFF;
+  background: var(--surface);
   border-radius: var(--radius, 10px);
   border: 1px dashed var(--line, #E2DACD);
 }
@@ -267,7 +267,7 @@
 }
 
 .po-preview-table th {
-  background: #FAF7F0;
+  background: var(--surface-2);
   padding: 9px 12px;
   font-weight: 600;
   text-align: left;
@@ -277,11 +277,11 @@
 
 .po-preview-table td {
   padding: 10px 12px;
-  border-bottom: 1px solid #EFEAE1;
+  border-bottom: 1px solid var(--line);
 }
 
 .po-preview-total-row td {
-  background: #FAF8F5;
+  background: var(--surface-2);
   font-weight: 700;
   border-top: 2px solid var(--line, #E2DACD);
 }
@@ -290,7 +290,7 @@
 .filter-pills {
   display: inline-flex;
   gap: 4px;
-  background: #F4EFE6;
+  background: var(--surface-3);
   padding: 3px;
   border-radius: var(--radius-sm, 6px);
   border: 1px solid var(--line, #E2DACD);
@@ -311,11 +311,11 @@
 
 .filter-pill:hover {
   color: var(--ink, #26211C);
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--surface-hover);
 }
 
 .filter-pill.active {
-  background: #FFFFFF;
+  background: var(--surface);
   color: var(--teal-dark, #17524F);
   font-weight: 700;
   box-shadow: 0 1px 3px rgba(38, 33, 28, 0.08);
@@ -335,7 +335,7 @@
 
 /* Chips in rejection modal */
 .reason-chip-btn {
-  background: #F4EFE6;
+  background: var(--surface-3);
   border: 1px solid var(--line, #E2DACD);
   border-radius: 4px;
   padding: 4px 9px;
@@ -347,7 +347,7 @@
 }
 
 .reason-chip-btn:hover {
-  background: #FFFFFF;
+  background: var(--surface);
   color: var(--ink, #26211C);
   border-color: var(--teal, #1F6F6B);
 }

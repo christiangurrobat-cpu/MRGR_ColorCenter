@@ -23,7 +23,7 @@ End If
 ' 2. Stop any prior php.exe built-in server and start on port 80
 WshShell.Run "taskkill /F /IM php.exe", 0, True
 WshShell.CurrentDirectory = ScriptDir
-WshShell.Run "php -S 0.0.0.0:80", 0, False
+WshShell.Run "php -S 0.0.0.0:80 index.php", 0, False
 
 ' 3. Give PHP a moment to bind, then open http://MRGR_ColorCenter on the login screen
 WScript.Sleep 600

@@ -92,10 +92,10 @@ function renderSupplierProductChip(id, isExtra, sId, isExpanded) {
   const hex = getProductHex(p);
   const extraClass = isExtra ? ` sp-extra-chip-${sId}` : '';
   const displayStyle = isExtra ? (isExpanded ? 'display:inline-flex;' : 'display:none;') : 'display:inline-flex;';
-  return `<span class="supplier-prod-chip${extraClass}" style="${displayStyle} align-items:center; gap:5px; background:#F4EFE7; padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:500; max-width:240px; white-space:nowrap;" title="${escapeHtml(p.name)}${hex ? ' (' + hex + ')' : ''}">
+  return `<span class="supplier-prod-chip${extraClass}" style="${displayStyle} align-items:center; gap:5px; background:var(--surface-3); padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:500; max-width:240px; white-space:nowrap;" title="${escapeHtml(p.name)}${hex ? ' (' + hex + ')' : ''}">
     <span style="width:8px; height:8px; border-radius:2px; background:${hex && hex.startsWith('#') ? hex : '#ccc'}; display:inline-block; flex-shrink:0;"></span>
     <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(p.name)}</span>
-    ${hex ? `<code style="color:var(--teal); font-size:10.5px; flex-shrink:0;">(${hex})</code>` : ''}
+    ${hex ? `<code style="color:var(--teal-text); font-size:10.5px; flex-shrink:0;">(${hex})</code>` : ''}
   </span>`;
 }
 
@@ -190,10 +190,6 @@ function suppliersPage() {
   </div>`;
 }
 
-function suppliersViewPage() {
-  return suppliersPage();
-}
-
 function supplierTableHtml(editable) {
   const isAdmin = typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin';
   const canEdit = Boolean(editable && isAdmin);
@@ -281,11 +277,11 @@ function supplierTableHtml(editable) {
                  title="Click to view full supplier profile, PO history, and catalog">
                 ${escapeHtml(s.name)}
               </a>
-              ${hasPendingPO ? `<span class="badge warning small" style="margin-left:6px; font-size:10px; background:#FEF3C7; color:#92400E; border:1px solid #FCD34D;">Pending PO</span>` : ''}
+              ${hasPendingPO ? `<span class="badge warning small" style="margin-left:6px; font-size:10px; background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border);">Pending PO</span>` : ''}
             </td>
             <td>${escapeHtml(s.contact || '—')}</td>
             <td style="font-size:12.5px;">${escapeHtml(s.phone || '—')}</td>
-            <td style="font-size:12.5px;">${s.email ? `<a href="mailto:${escapeHtml(s.email)}" style="color:var(--teal); text-decoration:none;">${escapeHtml(s.email)}</a>` : '<span class="muted">—</span>'}</td>
+            <td style="font-size:12.5px;">${s.email ? `<a href="mailto:${escapeHtml(s.email)}" style="color:var(--teal-text); text-decoration:none;">${escapeHtml(s.email)}</a>` : '<span class="muted">—</span>'}</td>
             <td style="font-size:12px; max-width:180px; color:var(--ink-soft);">${escapeHtml(s.address || '—')}</td>
             <td class="small">
               ${validProductIds.length ? `
@@ -355,7 +351,7 @@ function openSupplierDetailsModal(id) {
 
   // Recent transactions (receiving movements for this supplier specifically)
   const prodIdSet = new Set(validProductIds);
-  const supPoNums = new Set(supplierPOs.map(po => po.poNumber).filter(Boolean));
+  const supPoNums = new Set(pos.map(po => po.poNumber).filter(Boolean));
   const recentMovements = (db.movements || [])
     .filter(m => {
       if (m.type !== 'receiving' || !prodIdSet.has(m.productId)) return false;
@@ -380,7 +376,7 @@ function openSupplierDetailsModal(id) {
             <h3 style="margin:0; font-size:18px; color:var(--ink);">${escapeHtml(s.name)}</h3>
             ${s.status === 'active' ? '<span class="badge ok">Active</span>' : '<span class="badge inactive">Inactive</span>'}
           </div>
-          <div class="muted small" style="margin-top:4px;">ID: <code style="font-family:'Space Grotesk',monospace; color:var(--teal);">${escapeHtml(s.id)}</code></div>
+          <div class="muted small" style="margin-top:4px;">ID: <code style="font-family:'Space Grotesk',monospace; color:var(--teal-text);">${escapeHtml(s.id)}</code></div>
         </div>
         <div style="text-align:right;">
           ${isAdmin ? `<button class="btn secondary small" onclick="closeModal(); openSupplierModal('${s.id}')">✏️ Edit Details</button>` : ''}
@@ -389,19 +385,19 @@ function openSupplierDetailsModal(id) {
 
       <!-- Contact Information Cards -->
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-bottom:16px;">
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
           <div class="muted small">Contact Person</div>
           <div style="font-weight:600; color:var(--ink); margin-top:2px;">${escapeHtml(s.contact || '—')}</div>
         </div>
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
           <div class="muted small">Phone / Mobile</div>
           <div style="font-weight:600; color:var(--ink); margin-top:2px;">${escapeHtml(s.phone || '—')}</div>
         </div>
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
           <div class="muted small">Email Address</div>
-          <div style="font-weight:600; color:var(--ink); margin-top:2px;">${s.email ? `<a href="mailto:${escapeHtml(s.email)}" style="color:var(--teal);">${escapeHtml(s.email)}</a>` : '—'}</div>
+          <div style="font-weight:600; color:var(--ink); margin-top:2px;">${s.email ? `<a href="mailto:${escapeHtml(s.email)}" style="color:var(--teal-text);">${escapeHtml(s.email)}</a>` : '—'}</div>
         </div>
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;">
           <div class="muted small">Business Address</div>
           <div style="font-weight:600; color:var(--ink); margin-top:2px;">${escapeHtml(s.address || '—')}</div>
         </div>
@@ -436,7 +432,7 @@ function openSupplierDetailsModal(id) {
           <div class="table-scroll" style="max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;">
             <table>
               <thead>
-                <tr style="background:#FAF8F5;">
+                <tr style="background:var(--surface-2);">
                   <th>Product</th>
                   <th>Brand</th>
                   <th>Category</th>
@@ -468,7 +464,7 @@ function openSupplierDetailsModal(id) {
               </tbody>
             </table>
           </div>
-        ` : '<div class="muted small" style="padding:16px; background:#FAF8F5; border-radius:6px; text-align:center;">No catalog products currently linked to this supplier.</div>'}
+        ` : '<div class="muted small" style="padding:16px; background:var(--surface-2); border-radius:6px; text-align:center;">No catalog products currently linked to this supplier.</div>'}
       </div>
 
       <!-- Purchase Order History -->
@@ -480,7 +476,7 @@ function openSupplierDetailsModal(id) {
           <div class="table-scroll" style="max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;">
             <table>
               <thead>
-                <tr style="background:#FAF8F5;">
+                <tr style="background:var(--surface-2);">
                   <th>PO #</th>
                   <th>Date</th>
                   <th>Items Summary</th>
@@ -496,7 +492,7 @@ function openSupplierDetailsModal(id) {
                   const stBadge = po.status === 'received' || po.status === 'completed'
                     ? '<span class="badge ok small">✓ Received</span>'
                     : (po.status === 'pending'
-                      ? '<span class="badge warning small" style="background:#FEF3C7; color:#92400E;">⏳ Pending</span>'
+                      ? '<span class="badge warning small" style="background:var(--warning-bg); color:var(--warning-text);">⏳ Pending</span>'
                       : (po.status === 'ordered'
                         ? '<span class="badge teal small">Ordered</span>'
                         : '<span class="badge danger small">✕ Cancelled</span>'));
@@ -517,7 +513,7 @@ function openSupplierDetailsModal(id) {
               </tbody>
             </table>
           </div>
-        ` : '<div class="muted small" style="padding:16px; background:#FAF8F5; border-radius:6px; text-align:center;">No purchase orders issued to this supplier yet.</div>'}
+        ` : '<div class="muted small" style="padding:16px; background:var(--surface-2); border-radius:6px; text-align:center;">No purchase orders issued to this supplier yet.</div>'}
       </div>
 
       <!-- Recent Transactions / Stock Receipts -->
@@ -527,7 +523,7 @@ function openSupplierDetailsModal(id) {
           <div class="table-scroll" style="max-height:180px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;">
             <table>
               <thead>
-                <tr style="background:#FAF8F5;">
+                <tr style="background:var(--surface-2);">
                   <th>Date &amp; Time</th>
                   <th>Product</th>
                   <th class="right">Quantity Received</th>
@@ -566,7 +562,7 @@ function openSupplierDetailsModal(id) {
    Add / Edit Supplier Modal
    ------------------------------------------------------------ */
 function openSupplierModal(id) {
-  if (typeof currentUser !== 'undefined' && currentUser && currentUser.role !== 'admin') {
+  if (typeof currentUser === 'undefined' || !currentUser || currentUser.role !== 'admin') {
     showToast('Permission denied: Only administrators can add or edit suppliers.', 'error');
     return;
   }
@@ -717,7 +713,7 @@ function filterSupplierProducts(q) {
 
 async function submitSupplier(e, id) {
   e.preventDefault();
-  if (typeof currentUser !== 'undefined' && currentUser && currentUser.role !== 'admin') {
+  if (typeof currentUser === 'undefined' || !currentUser || currentUser.role !== 'admin') {
     logAudit(
       'UNAUTHORIZED_ACCESS',
       'Supplier Management',
@@ -876,7 +872,7 @@ async function submitSupplier(e, id) {
 }
 
 async function toggleSupplierStatus(id) {
-  if (typeof currentUser !== 'undefined' && currentUser && currentUser.role !== 'admin') {
+  if (typeof currentUser === 'undefined' || !currentUser || currentUser.role !== 'admin') {
     logAudit(
       'UNAUTHORIZED_ACCESS',
       'Supplier Management',
@@ -915,50 +911,3 @@ async function toggleSupplierStatus(id) {
   }
 }
 
-async function deleteSupplier(id) {
-  if (typeof currentUser !== 'undefined' && currentUser && currentUser.role !== 'admin') {
-    showToast('Permission denied: Only administrators can manage suppliers.', 'error');
-    return;
-  }
-  const s = supplierById(id);
-  if (!s) return;
-
-  // Prevent deletion of suppliers with historical purchase order references
-  const hasPOs = (db.purchaseOrders || []).some(po => po.supplierId === id);
-  if (hasPOs) {
-    showToast(`Cannot delete supplier "${s.name}": Historical purchase orders exist for this supplier. You may deactivate the account instead.`, 'error');
-    return;
-  }
-
-  const confirmed = await showConfirmDialog({
-    title: `Delete Supplier "${s.name}"?`,
-    message: `Are you sure you want to permanently delete this supplier? If you wish to preserve records, choose Deactivate instead.`,
-    icon: '🗑️',
-    confirmText: 'Delete Supplier',
-    cancelText: 'Cancel',
-    danger: true
-  });
-  if (!confirmed) return;
-
-  db.suppliers = (db.suppliers || []).filter(sup => sup.id !== id);
-  if (Array.isArray(db.productSuppliers)) {
-    db.productSuppliers = db.productSuppliers.filter(ps => (ps.supplierId || ps.supplier_id) !== id);
-  }
-  (db.products || []).forEach(p => {
-    if (p.supplierId === id || p.supplier_id === id) {
-      p.supplierId = null;
-      p.supplier_id = null;
-    }
-  });
-  logAudit('SUPPLIER_DELETE', s.name, `Deleted supplier "${s.name}"`, {
-    entityName: s.name,
-    fieldChanged: 'Supplier Account',
-    oldValue: s.name,
-    newValue: 'Deleted'
-  });
-  const savedOk = await saveDB();
-  if (savedOk) {
-    renderPage();
-    showToast(`Supplier "${s.name}" deleted.`, 'ok');
-  }
-}

@@ -50,9 +50,9 @@
 
 /* ---------- alert banner ---------- */
 .alert-banner {
-  background: #FDF3E3;
-  border: 1px solid #F0DBA8;
-  color: #7A5A0F;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
   padding: 11px 14px;
   border-radius: var(--radius-sm);
   font-size: 13px;
@@ -64,7 +64,7 @@
 
 .alert-banner.danger {
   background: var(--danger-bg);
-  border-color: #EFC3BE;
+  border-color: var(--danger-border);
   color: var(--danger);
 }
 
@@ -74,7 +74,7 @@
   align-items: center;
   gap: 6px;
   padding: 10px 18px;
-  background: #FAF7F2;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
@@ -102,7 +102,7 @@
 }
 
 .report-toggle-btn.active {
-  background: #FFFFFF;
+  background: var(--surface);
   color: var(--teal-dark);
   font-weight: 600;
   border-color: var(--line);
@@ -128,7 +128,7 @@
 }
 
 .report-date-shortcuts .btn.ghost.small:hover {
-  background: #EFE8DC;
+  background: var(--surface-3);
   color: var(--ink);
 }
 
@@ -156,10 +156,11 @@
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--ink, #1F1C18);
+  background: var(--toast-bg, #1F1C18);
   color: #fff;
   padding: 12px 22px;
   border-radius: 40px;
+  border: 1px solid var(--line);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
   display: flex;
   align-items: center;
@@ -208,7 +209,7 @@ tr.row-selected:hover {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--ink-soft);
-  background: #FBF8F2;
+  background: var(--surface-2);
   border-bottom: 2px solid var(--line, #E2DACD);
   white-space: nowrap;
 }
@@ -220,11 +221,11 @@ tr.row-selected:hover {
 }
 
 .table-grouped-product tr.product-row-last td {
-  border-bottom: 2px solid #D8D1C4 !important;
+  border-bottom: 2px solid var(--line) !important;
 }
 
 .table-grouped-product tbody tr:hover td {
-  background-color: #F8F5EE;
+  background-color: var(--surface-2);
 }
 
 .table-grouped-product tr.row-selected td {
@@ -256,7 +257,7 @@ tr.row-selected:hover {
 }
 
 .restock-card {
-  background: #FFFFFF;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 14px 16px;
@@ -276,7 +277,7 @@ tr.row-selected:hover {
 }
 
 .restock-card.active {
-  background: #FFFDF9;
+  background: var(--surface);
   box-shadow: 0 0 0 2px var(--teal), var(--shadow-md);
 }
 
@@ -349,17 +350,17 @@ tr.row-selected:hover {
 }
 
 .restock-tab-pill.danger {
-  background: #FDE8E8;
-  color: #9B1C1C;
+  background: var(--danger-bg);
+  color: var(--danger-text);
 }
 
 .restock-tab-pill.info {
-  background: #EBF5FB;
-  color: #1B4F72;
+  background: var(--info-bg);
+  color: var(--info-text);
 }
 
 .restock-tab-pill.neutral {
-  background: #EFE9DC;
+  background: var(--surface-3);
   color: var(--ink);
 }
 
@@ -380,7 +381,7 @@ tr.row-selected:hover {
 }
 
 .table-grouped-product tr.row-on-order td {
-  background-color: #FAFBFD;
+  background-color: var(--surface-2);
 }
 
 /* ---------- Sales History Overall Summary & Breakdowns ---------- */
@@ -396,7 +397,7 @@ tr.row-selected:hover {
   gap: 10px;
   padding: 11px 16px;
   margin-bottom: 14px;
-  background: linear-gradient(135deg, #FAF7F2 0%, #F3EDE2 100%);
+  background: linear-gradient(135deg, var(--surface-2) 0%, var(--surface-3) 100%);
   border: 1px solid var(--line, #E2DACD);
   border-left: 4px solid var(--teal, #1F6F6B);
   border-radius: var(--radius-sm, 6px);
@@ -476,7 +477,7 @@ tr.row-selected:hover {
 }
 
 .sh-breakdown-card {
-  background: #FFFFFF;
+  background: var(--surface);
   border: 1px solid var(--line, #E2DACD);
   border-radius: var(--radius, 8px);
   box-shadow: var(--shadow-sm);
@@ -487,7 +488,7 @@ tr.row-selected:hover {
 
 .sh-breakdown-head {
   padding: 11px 16px;
-  background: #FAF8F5;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line, #E2DACD);
   display: flex;
   align-items: center;
@@ -511,14 +512,14 @@ tr.row-selected:hover {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   padding: 12px 16px;
-  border-bottom: 1px solid #EFE9DC;
-  background: #FCFBF9;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
 }
 
 .sh-size-pill-card {
   padding: 8px 11px;
-  background: #FFFFFF;
-  border: 1px solid #E5DDCF;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-left: 3px solid var(--teal, #1F6F6B);
   border-radius: var(--radius-sm, 6px);
 }

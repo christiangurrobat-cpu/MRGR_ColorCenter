@@ -1,10 +1,6 @@
 /* ============================================================
    11. PRODUCT MAINTENANCE (admin)
    ============================================================ */
-function productsPage() {
-  return inventoryPage();
-}
-
 
 
 
@@ -18,8 +14,13 @@ function captureProductFormThresholds() {
   productFormSizes.forEach(s => {
     const inp = document.getElementById(`pf-thresh-size-${s}`);
     if (inp) {
-      const v = parseInt(inp.value, 10);
-      productFormThresholds[s] = (!isNaN(v) && v >= 0) ? v : 0;
+      const raw = String(inp.value ?? '').trim();
+      if (raw === '') {
+        productFormThresholds[s] = 0;
+      } else {
+        const num = Number(raw);
+        productFormThresholds[s] = isNaN(num) ? NaN : num;
+      }
     }
   });
 }
@@ -145,6 +146,22 @@ function canRemoveContainerSize(p, size) {
     };
   }
 
+  // 7. Batch & expiration tracking records
+  if (typeof EXP !== 'undefined' && Array.isArray(EXP.batches)) {
+    const batchMatch = EXP.batches.some(b => {
+      const bPid = b.productId || b.product_id;
+      const bSz = Number(b.containerSize || b.container_size);
+      const bSzId = b.sizeId || b.size_id;
+      return (bPid === pid || bPid === altPid) && (bSz === s || (sizeId && bSzId === sizeId));
+    });
+    if (batchMatch) {
+      return {
+        allowed: false,
+        reason: `Container size ${fmtSize(s)} has existing batch/expiration tracking records. Cannot remove.`
+      };
+    }
+  }
+
   return { allowed: true };
 }
 
@@ -159,9 +176,9 @@ function productSizeGridHtml(p, sizes) {
 
   return `
     <div style="overflow-x:auto;">
-      <table class="tight" style="width:100%; font-size:12px; margin:0; border-collapse:collapse; background:#fff; border-radius:var(--radius-sm); border:1px solid var(--line);">
+      <table class="tight" style="width:100%; font-size:12px; margin:0; border-collapse:collapse; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--line);">
         <thead>
-          <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+          <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
             <th style="padding:6px 10px; font-size:11px; text-transform:uppercase; color:var(--ink-soft); font-weight:700;">Container Size</th>
             <th class="right" style="padding:6px 10px; font-size:11px; text-transform:uppercase; color:var(--ink-soft); font-weight:700;">Price / Unit</th>
             <th class="center" style="padding:6px 10px; font-size:11px; text-transform:uppercase; color:var(--ink-soft); font-weight:700;">Sealed Stock</th>
@@ -186,7 +203,7 @@ function productSizeGridHtml(p, sizes) {
                 <td style="padding:8px 10px; vertical-align:middle; font-weight:600;">
                   <span>${icon} ${fmtSize(s)} ${unitLabel}</span>
                 </td>
-                <td class="right" style="padding:8px 10px; vertical-align:middle; font-weight:600; color:var(--teal-dark);">
+                <td id="pf-price-size-${s}" class="right" style="padding:8px 10px; vertical-align:middle; font-weight:600; color:var(--teal-dark);">
                   ${peso(priceForCan)}
                 </td>
                 <td class="center" style="padding:8px 10px; vertical-align:middle;">
@@ -195,7 +212,7 @@ function productSizeGridHtml(p, sizes) {
                 </td>
                 <td class="center" style="padding:8px 10px; vertical-align:middle;">
                   ${open > 0
-        ? `<span style="font-weight:700; color:#9A6216;">${formatLiters(open)}</span>`
+        ? `<span style="font-weight:700; color:var(--warning-text);">${formatLiters(open)}</span>`
         : `<span class="muted small" style="opacity:0.5;">0 L</span>`}
                 </td>
                 <td style="padding:8px 10px; vertical-align:middle;">
@@ -209,7 +226,7 @@ function productSizeGridHtml(p, sizes) {
                       placeholder="Min"
                       oninput="onProductSizeThresholdInput(${s}, this.value)"
                       required>
-                    <span id="pf-thresh-liters-${s}" style="font-size:10.5px; color:var(--teal); font-weight:600; white-space:nowrap;">(${formatLiters(currentThresh * s)})</span>
+                    <span id="pf-thresh-liters-${s}" style="font-size:10.5px; color:var(--teal-text); font-weight:600; white-space:nowrap;">(${formatLiters(currentThresh * s)})</span>
                   </div>
                 </td>
                 <td class="center" style="padding:8px 10px; vertical-align:middle;">
@@ -234,7 +251,7 @@ function productSizeChipsHtml() {
   return `<div style="display:flex; flex-wrap:wrap; gap:6px;">${productFormSizes.map(s => {
     const remCheck = p ? canRemoveContainerSize(p, s) : { allowed: true };
     const locked = !remCheck.allowed;
-    return `<span class="badge" style="background:#EAF4F3; color:var(--teal-dark); border:1px solid #C5DFDC; font-size:12px; padding:4px 8px; display:inline-flex; align-items:center; gap:6px;">
+    return `<span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border); font-size:12px; padding:4px 8px; display:inline-flex; align-items:center; gap:6px;">
       <b>${fmtSize(s)}</b>
       <button type="button" ${locked ? `disabled title="${escapeHtml(remCheck.reason)}"` : `title="Remove ${fmtSize(s)}"`} onclick="removeProductFormSize(${s})" style="border:none; background:none; cursor:${locked ? 'not-allowed' : 'pointer'}; opacity:${locked ? 0.35 : 0.8}; font-size:13px; line-height:1; padding:0; color:${locked ? 'var(--ink-soft)' : 'inherit'};">${locked ? '🔒' : '×'}</button>
     </span>`;
@@ -305,23 +322,14 @@ function removeProductFormSize(size) {
   refreshProductSizeUI();
 }
 
-function canBreakdownHtml(p) {
-  const variants = productSizeVariants(p);
-  return `<div class="can-breakdown" style="display:flex; flex-direction:column; gap:2px; font-size:12px;">${variants.map(v => {
-    const s = v.containerSize;
-    const n = productCanCount(p, s);
-    return `<div style="white-space:nowrap; ${n === 0 ? 'opacity:.45;' : ''}"><strong>${fmtSize(s)}</strong>: ${n}</div>`;
-  }).join('')}</div>`;
-}
-
 function renderProductSuppliersSummaryHtml(p) {
   if (!p) {
-    return `<div class="muted small" style="padding:10px; background:#fff; border-radius:4px; text-align:center;">Save product first to configure multiple suppliers.</div>`;
+    return `<div class="muted small" style="padding:10px; background:var(--surface); border-radius:4px; text-align:center;">Save product first to configure multiple suppliers.</div>`;
   }
   const rels = (typeof db !== 'undefined' && db.productSuppliers ? db.productSuppliers : []).filter(ps => String(ps.productId || ps.product_id) === String(p.id));
   if (!rels.length) {
     return `
-      <div style="padding:10px; background:#fff; border-radius:4px; font-size:12px; color:var(--ink-soft); display:flex; justify-content:space-between; align-items:center;">
+      <div style="padding:10px; background:var(--surface); border-radius:4px; font-size:12px; color:var(--ink-soft); display:flex; justify-content:space-between; align-items:center;">
         <span>No extra supplier links configured yet.</span>
         <button type="button" class="btn secondary small" onclick="openManageProductSuppliersModal('${p.id}')">+ Add Supplier Link</button>
       </div>
@@ -329,9 +337,9 @@ function renderProductSuppliersSummaryHtml(p) {
   }
 
   return `
-    <div style="overflow-x:auto; background:#fff; border-radius:4px; border:1px solid var(--line);">
+    <div style="overflow-x:auto; background:var(--surface); border-radius:4px; border:1px solid var(--line);">
       <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
-        <thead style="background:#FAF8F5;">
+        <thead style="background:var(--surface-2);">
           <tr>
             <th style="padding:5px 8px; text-align:left;">Supplier</th>
             <th style="padding:5px 8px; text-align:center;">Size</th>
@@ -342,9 +350,9 @@ function renderProductSuppliersSummaryHtml(p) {
         </thead>
         <tbody>
           ${rels.map(r => {
-            const s = (typeof supplierById === 'function') ? supplierById(r.supplierId || r.supplier_id) : null;
-            const sz = Number(r.containerSize || r.container_size) === 0 ? 'All' : fmtSize(r.containerSize || r.container_size);
-            return `
+    const s = (typeof supplierById === 'function') ? supplierById(r.supplierId || r.supplier_id) : null;
+    const sz = Number(r.containerSize || r.container_size) === 0 ? 'All' : fmtSize(r.containerSize || r.container_size);
+    return `
               <tr style="border-bottom:1px solid var(--line);">
                 <td style="padding:5px 8px; font-weight:600;">${escapeHtml(s ? s.name : (r.supplierId || '—'))}</td>
                 <td style="padding:5px 8px; text-align:center;">${sz}</td>
@@ -357,7 +365,7 @@ function renderProductSuppliersSummaryHtml(p) {
                 </td>
               </tr>
             `;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>
     </div>
@@ -365,7 +373,7 @@ function renderProductSuppliersSummaryHtml(p) {
 }
 
 function openProductModal(id) {
-  const user = currentUser || (typeof db !== 'undefined' && db && db.users ? db.users.find(u => u.role === 'admin') : null);
+  const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
   if (!user || (user.role !== 'staff' && user.role !== 'admin')) {
     showToast('Only Administrators and Inventory Staff can add or edit products.', 'error');
     return;
@@ -421,11 +429,22 @@ function openProductModal(id) {
   const initialType = (prop && prop.type !== undefined) ? prop.type : (p ? p.type : 'Automotive Paint');
   const initialTaxClass = (prop && prop.taxClassification !== undefined) ? prop.taxClassification : (p ? (p.taxClassification || p.tax_classification || 'vatable') : 'vatable');
   const initialColor = (prop && prop.color !== undefined) ? prop.color : (p ? p.color : '');
+  const initialColorId = (prop && prop.colorId !== undefined) ? prop.colorId : (p ? (p.colorId || p.color_id || '') : '');
   const initialStatus = (prop && prop.status !== undefined) ? prop.status : (p ? (p.status || 'active') : 'active');
 
   let initialColorName = '';
   let initialColorHex = '#FFFFFF';
-  if (initialColor && initialColor !== '-') {
+  let resolvedLibEntry = (initialColorId && typeof findColorLibraryEntry === 'function') ? findColorLibraryEntry(initialColorId) : null;
+  if (!resolvedLibEntry && p && typeof resolveProductColor === 'function') {
+    const resCol = resolveProductColor(p);
+    if (resCol && resCol.isLinked) {
+      resolvedLibEntry = findColorLibraryEntry(resCol.id);
+    }
+  }
+  if (resolvedLibEntry) {
+    initialColorName = resolvedLibEntry.name;
+    initialColorHex = resolvedLibEntry.hex;
+  } else if (initialColor && initialColor !== '-') {
     if (initialColor.startsWith('#')) {
       initialColorHex = initialColor;
       const rgb = typeof hexToRgb === 'function' ? hexToRgb(initialColor) : null;
@@ -437,6 +456,7 @@ function openProductModal(id) {
   } else {
     initialColorHex = getProductHex({ color: initialColor, name: initialName });
   }
+  const activeColorId = resolvedLibEntry ? resolvedLibEntry.id : (initialColorId || '');
   const currentColorHex = initialColorHex || '#FFFFFF';
 
   const currentSuppliers = p ? (typeof suppliersForProduct === 'function' ? suppliersForProduct(p.id) : []) : [];
@@ -444,7 +464,9 @@ function openProductModal(id) {
     ? prop.supplierId
     : (currentSuppliers.length > 0 ? currentSuppliers[0].id : (p && p.supplierId ? p.supplierId : ''));
 
-  const defaultTypes = ['Automotive Paint', 'House Paint', 'Specialty Paint'];
+  const defaultTypes = (typeof getProductCategories === 'function')
+    ? getProductCategories()
+    : ['House Paint', 'Automotive Paint', 'Specialty Paint'];
   const existingTypes = (db && Array.isArray(db.products) ? db.products : []).map(x => x && (x.type || x.category)).filter(Boolean);
   const allTypes = Array.from(new Set([...defaultTypes, ...existingTypes, initialType].filter(Boolean)));
   const allSuppliers = (db && Array.isArray(db.suppliers) ? db.suppliers : []);
@@ -455,14 +477,14 @@ function openProductModal(id) {
   const bannerNoticeHtml = isAdmin ? (
     p ? (
       pending ? `
-        <div class="full" style="background:#FEF3C7; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:4px; font-size:12px; color:#92400E;">
+        <div class="full" style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:4px; font-size:12px; color:var(--warning-text);">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
             <div style="flex:1; min-width:240px;">
               <div style="font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px;">
                 <span>⏳</span>
                 <span>Pending edit request submitted by ${escapeHtml(pending.requestedBy || 'Inventory Staff')}</span>
               </div>
-              <div style="margin-top:3px; color:#78350F;">
+              <div style="margin-top:3px; color:var(--warning-text);">
                 Submitted on ${formatDateTime(pending.requestedAt || nowISO())} (${Object.keys(pending.changes || {}).length} field change(s)). As Administrator, clicking <b>Save Changes</b> will directly apply these details and resolve the pending request.
               </div>
             </div>
@@ -472,7 +494,7 @@ function openProductModal(id) {
           </div>
         </div>
       ` : `
-        <div class="full" style="background:#EAF4F3; border:1px solid #C5DFDC; border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:var(--teal-dark); display:flex; gap:8px; align-items:flex-start;">
+        <div class="full" style="background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:var(--teal-dark); display:flex; gap:8px; align-items:flex-start;">
           <span style="font-size:16px; line-height:1;">⚡</span>
           <div>
             <strong>Administrator Direct Edit:</strong> All changes (name, brand, type, price, sizes, and thresholds) will take effect immediately across the entire system.
@@ -480,7 +502,7 @@ function openProductModal(id) {
         </div>
       `
     ) : `
-      <div class="full" style="background:#EAF4F3; border:1px solid #C5DFDC; border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:var(--teal-dark); display:flex; gap:8px; align-items:flex-start;">
+      <div class="full" style="background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:var(--teal-dark); display:flex; gap:8px; align-items:flex-start;">
         <span style="font-size:16px; line-height:1;">⚡</span>
         <div>
           <strong>Administrator Direct Entry:</strong> This new product will be created directly as <b>Active</b> and ready immediately for POS, inventory, and Purchase Orders without requiring approval.
@@ -489,24 +511,24 @@ function openProductModal(id) {
     `
   ) : (
     p ? `
-      <div class="full" style="background:#FFFBEB; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:#92400E; display:flex; gap:8px; align-items:flex-start;">
+      <div class="full" style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:var(--warning-text); display:flex; gap:8px; align-items:flex-start;">
         <span style="font-size:16px; line-height:1;">ℹ️</span>
         <div>
           <strong>Staff Edit Request:</strong> As Inventory Staff, you can edit product details (name, brand, type, color, price, sizes, and minimum thresholds). All changes will be submitted for <b>Administrator Approval</b> before taking effect.
         </div>
       </div>
       ${pending ? `
-        <div class="full" style="background:#FEF3C7; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:4px; font-size:12px; color:#92400E;">
+        <div class="full" style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:4px; font-size:12px; color:var(--warning-text);">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
             <div style="flex:1; min-width:240px;">
               <div style="font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px;">
                 <span>⏳</span>
                 <span>There is already a pending edit request for this product</span>
               </div>
-              <div style="margin-top:3px; color:#78350F;">
+              <div style="margin-top:3px; color:var(--warning-text);">
                 Submitted by <b>${escapeHtml(pending.requestedBy || 'Inventory Staff')}</b> on ${formatDateTime(pending.requestedAt || nowISO())} (${Object.keys(pending.changes || {}).length} field change(s) awaiting Admin approval).
               </div>
-              <div style="margin-top:4px; font-size:11.5px; color:#B45309;">
+              <div style="margin-top:4px; font-size:11.5px; color:var(--warning-text);">
                 💡 <em>The form is currently loaded with proposed values. Saving will update the pending request for Admin review.</em>
               </div>
             </div>
@@ -517,7 +539,7 @@ function openProductModal(id) {
         </div>
       ` : ''}
     ` : `
-      <div class="full" style="background:#FFFBEB; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:#92400E; display:flex; gap:8px; align-items:flex-start;">
+      <div class="full" style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; font-size:12px; color:var(--warning-text); display:flex; gap:8px; align-items:flex-start;">
         <span style="font-size:16px; line-height:1;">ℹ️</span>
         <div>
           <strong>Staff Product Request:</strong> As Inventory Staff, this new product will be submitted as <b>Pending Approval</b> for Administrator review and approval before becoming active in POS and inventory.
@@ -527,7 +549,7 @@ function openProductModal(id) {
   );
 
   const stockNoteHtml = p ? `
-    <div class="full" style="background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:4px;">
+    <div class="full" style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:4px;">
       <div style="display:flex; align-items:center; gap:10px;">
         <span style="font-size:20px; line-height:1;">🔒</span>
         <div>
@@ -540,18 +562,18 @@ function openProductModal(id) {
       </div>
       <div style="font-size:11.5px; text-align:right; color:var(--ink-soft); line-height:1.4;">
         Stock cannot be edited directly.<br>
-        <a href="#" onclick="closeModal();goTo('receiving');return false;" style="color:var(--teal); font-weight:600; text-decoration:underline;">Stock Receiving / Adjust &rarr;</a>
+        <a href="#" onclick="closeModal();goTo('receiving');return false;" style="color:var(--teal-text); font-weight:600; text-decoration:underline;">Stock Receiving / Adjust &rarr;</a>
       </div>
     </div>
   ` : (isAdmin ? `
-    <div class="full" style="background:#EAF4F3; border:1px solid #C5DFDC; border-radius:var(--radius-sm); padding:11px 14px; display:flex; align-items:center; gap:12px; margin-top:4px;">
+    <div class="full" style="background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:var(--radius-sm); padding:11px 14px; display:flex; align-items:center; gap:12px; margin-top:4px;">
       <span style="font-size:20px; line-height:1;">📦</span>
       <div style="flex:1; font-size:12px; color:var(--teal-dark); line-height:1.4;">
         <strong style="color:var(--ink);">Initial Stock: 0.00 L</strong> — New products start at 0 stock. Once saved, it will become <b>immediately active</b> and stock can be added via Stock Receiving or ordered via Purchase Order.
       </div>
     </div>
   ` : `
-    <div class="full" style="background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 14px; display:flex; align-items:center; gap:12px; margin-top:4px;">
+    <div class="full" style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 14px; display:flex; align-items:center; gap:12px; margin-top:4px;">
       <span style="font-size:20px; line-height:1;">📦</span>
       <div style="flex:1; font-size:12px; color:var(--ink-soft); line-height:1.4;">
         <strong style="color:var(--ink);">Initial Stock: 0.00 L</strong> — New products start at 0 stock. ⏳ <b>Approval Required:</b> As Inventory Staff, this product will be submitted as <b>Pending Approval</b> for the Administrator before it can be used in POS and stock receiving.
@@ -603,8 +625,17 @@ function openProductModal(id) {
       <div class="muted small" style="font-size:11px; margin-top:2px;">Determines Philippine VAT treatment at Point of Sale.</div>
     </div>
     <div class="field">
-      <label>Color Name <span class="muted small">(e.g. White, Sky Blue, Gloss Black)</span></label>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+        <label style="margin:0;">Color Name <span class="muted small">(e.g. White, Sky Blue)</span></label>
+        <button type="button" class="btn secondary small" style="font-size:11px; padding:2px 8px;" onclick="openProductColorLibraryPicker()">🎨 Color Library</button>
+      </div>
+      <input type="hidden" id="pf-color-id" value="${escapeAttr(activeColorId)}">
       <input id="pf-color-name" value="${escapeHtml(initialColorName)}" placeholder="e.g. White, Sky Blue" oninput="onProductColorNameInput(this.value)">
+      <div id="pf-color-link-badge" style="margin-top:4px; font-size:11px;">
+        ${resolvedLibEntry
+      ? `<span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border); font-size:10.5px;">🔗 Linked to Color Library (${escapeHtml(resolvedLibEntry.category)})</span>`
+      : `<span class="muted" style="font-size:10.5px;">Tip: Pick from Color Library to keep HEX synced across modules</span>`}
+      </div>
     </div>
     <div class="field">
       <label>Color Hex Code <span class="muted small">(Format: #FFFFFF)</span></label>
@@ -621,8 +652,8 @@ function openProductModal(id) {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
         <label for="pf-price" style="margin:0;">Price per Liter (₱/L) <span style="color:var(--danger);">*</span></label>
         <div style="display:flex; gap:6px; align-items:center;">
-          ${p && p.pendingPrice != null ? `<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #FCD34D; font-size:11px; padding:2px 6px;">⏳ Pending Approval: ${peso(p.pendingPrice)}</span>` : ''}
-          <span id="pf-recent-pill" class="badge" style="${hasSavedRecent ? 'display:inline-flex;' : 'display:none;'} background:#EBF5FB; color:#1B4F72; border:1px solid #AED6F1; font-size:11px; padding:2px 6px;" title="Recent price before last change">
+          ${p && p.pendingPrice != null ? `<span class="badge" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border); font-size:11px; padding:2px 6px;">⏳ Pending Approval: ${peso(p.pendingPrice)}</span>` : ''}
+          <span id="pf-recent-pill" class="badge" style="${hasSavedRecent ? 'display:inline-flex;' : 'display:none;'} background:var(--info-bg); color:var(--info-text); border:1px solid var(--info-border); font-size:11px; padding:2px 6px;" title="Recent price before last change">
             ${hasSavedRecent ? `Recent: ${peso(p.recentPrice)}` : ''}
           </span>
         </div>
@@ -634,7 +665,7 @@ function openProductModal(id) {
         oninput="onProductPriceInput(this.value, ${p ? Number(p.price) : 'null'}, ${hasSavedRecent ? Number(p.recentPrice) : 'null'})"
         required>
       ${user && user.role === 'staff' ? `
-        <div class="muted small" style="margin-top:4px; color:#92400E; font-size:11.5px;">
+        <div class="muted small" style="margin-top:4px; color:var(--warning-text); font-size:11.5px;">
           ℹ️ As Inventory Staff, price changes will be submitted for Admin approval before updating in the system.
         </div>
       ` : ''}
@@ -659,7 +690,7 @@ function openProductModal(id) {
         <input id="pf-status-reason" value="${escapeHtml(p ? (p.deactivationReason || p.discontinueReason || '') : '')}" placeholder="Reason for status change" style="font-size:12px;">
       </div>
     </div>
-    <div class="full" style="background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
+    <div class="full" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
       <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:600; margin-bottom:8px;">📏 Container Sizes for this Product (Liters)</div>
       <div id="pf-size-chips">${productSizeChipsHtml()}</div>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
@@ -668,7 +699,7 @@ function openProductModal(id) {
       </div>
       <div style="font-size:11.5px; color:var(--ink-soft); margin-top:6px;">Stock, opened / used leftovers, POS buttons and purchase orders follow these sizes. Container sizes with stock, POs, or transactions cannot be removed.</div>
     </div>
-    <div class="full" style="background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
+    <div class="full" style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px;">
       <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:600; margin-bottom:8px;">🔒 Stock per Size &amp; Separate Low-Stock Thresholds</div>
       <div id="pf-size-grid">${productSizeGridHtml(p, productFormSizes)}</div>
       <div style="font-size:11.5px; color:var(--ink-soft); margin-top:8px;">Each size has its own independent low-stock threshold in units. Sealed units change when POs are received or items sold.</div>
@@ -676,9 +707,9 @@ function openProductModal(id) {
     <div class="field">
       <label>Calculated Overall Threshold (Total Liters)</label>
       <div style="display:flex; align-items:center; gap:10px;">
-        <input id="pf-threshold" type="number" min="0" step="0.01" value="${p ? formatStock(p.threshold) : 5}" placeholder="5.00" required style="max-width:180px; background:#FAF8F5;" readonly title="Auto-calculated from per-size thresholds above">
+        <input id="pf-threshold" type="number" min="0" step="0.01" value="${p ? formatStock(p.threshold) : 5}" placeholder="5.00" required style="max-width:180px; background:var(--surface-2);" readonly title="Auto-calculated from per-size thresholds above">
         <span class="muted small" style="font-size:12px;">
-          Sum of size thresholds: <strong id="pf-threshold-sum" style="color:var(--teal); font-family:'Space Grotesk',sans-serif;">0.00 L</strong>
+          Sum of size thresholds: <strong id="pf-threshold-sum" style="color:var(--teal-text); font-family:'Space Grotesk',sans-serif;">0.00 L</strong>
         </span>
       </div>
       <div style="font-size:11.5px; color:var(--ink-soft); margin-top:4px;">
@@ -687,7 +718,7 @@ function openProductModal(id) {
     </div>
     ${stockNoteHtml}
     ${p ? `
-      <div class="full" style="background:#FAF7F2; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-top:8px;">
+      <div class="full" style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-top:8px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700;">
             🏢 Multiple Suppliers &amp; Procurement Costs (${(db.productSuppliers || []).filter(ps => String(ps.productId || ps.product_id) === String(p.id)).length} linked)
@@ -718,6 +749,15 @@ function submitProductFormDirectly(id) {
 }
 
 function onProductPriceInput(val, origPrice, savedRecentPrice) {
+  const numVal = parseFloat(String(val === undefined || val === null ? '' : val).trim());
+  const effectivePrice = (!isNaN(numVal) && numVal > 0) ? numVal : (origPrice && !isNaN(origPrice) ? Number(origPrice) : 0);
+  if (Array.isArray(productFormSizes)) {
+    productFormSizes.forEach(s => {
+      const cell = document.getElementById(`pf-price-size-${s}`);
+      if (cell) cell.textContent = peso(Number((effectivePrice * s).toFixed(2)));
+    });
+  }
+
   const msgEl = document.getElementById('pf-recent-price-msg');
   const pillEl = document.getElementById('pf-recent-pill');
   if (!msgEl) return;
@@ -745,7 +785,7 @@ function onProductPriceInput(val, origPrice, savedRecentPrice) {
 
     msgEl.style.display = 'block';
     msgEl.innerHTML = `
-      <div style="background:#F0F7F6; border:1px solid #CBE5E2; border-radius:6px; padding:6px 10px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <div style="background:var(--teal-tint); border:1px solid var(--teal-tint-border); border-radius:6px; padding:6px 10px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
         <div style="display:flex; align-items:center; gap:6px;">
           <span style="font-size:13px;">🕒</span>
           <span style="color:var(--ink-soft); font-size:11.5px;">Recent price: <strong style="color:var(--ink); font-size:12.5px;">${peso(origPrice)}</strong></span>
@@ -777,9 +817,63 @@ function onProductPriceInput(val, origPrice, savedRecentPrice) {
   }
 }
 
+function openProductColorLibraryPicker() {
+  if (typeof openColorLibraryPickerModal !== 'function') {
+    showToast('Color Library is not loaded.', 'error');
+    return;
+  }
+  const currentId = document.getElementById('pf-color-id')?.value || '';
+  openColorLibraryPickerModal({
+    selectedColorId: currentId,
+    title: 'Link Product to Color Library',
+    subtitle: 'Select a standardized color to reuse its exact name and HEX value across Inventory & POS.',
+    onSelect: (entry) => {
+      const idEl = document.getElementById('pf-color-id');
+      const nameEl = document.getElementById('pf-color-name');
+      const hexEl = document.getElementById('pf-color-hex');
+      const errEl = document.getElementById('pf-hex-error');
+      const badgeEl = document.getElementById('pf-color-link-badge');
+      if (idEl) idEl.value = entry.id;
+      if (nameEl) nameEl.value = entry.name;
+      if (hexEl) hexEl.value = entry.hex;
+      if (errEl) errEl.style.display = 'none';
+      updateProductColorHexPreview(entry.hex);
+      if (badgeEl) {
+        badgeEl.innerHTML = `<span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border); font-size:10.5px;">🔗 Linked to Color Library (${escapeHtml(entry.category)})</span>`;
+      }
+    }
+  });
+}
+
+function syncProductFormColorLinkState() {
+  const idEl = document.getElementById('pf-color-id');
+  const nameEl = document.getElementById('pf-color-name');
+  const hexEl = document.getElementById('pf-color-hex');
+  const badgeEl = document.getElementById('pf-color-link-badge');
+  if (!idEl || !nameEl || !hexEl) return;
+  const nameVal = nameEl.value.trim();
+  const hexVal = (typeof normalizeHexCode === 'function') ? normalizeHexCode(hexEl.value) : hexEl.value.trim().toUpperCase();
+  const matched = (typeof findColorLibraryEntry === 'function' && nameVal && hexVal)
+    ? getColorLibraryList().find(c => c.name.trim().toLowerCase() === nameVal.toLowerCase() && normalizeHexCode(c.hex) === hexVal)
+    : null;
+  if (matched) {
+    idEl.value = matched.id;
+    if (badgeEl) badgeEl.innerHTML = `<span class="badge" style="background:var(--teal-tint); color:var(--teal-dark); border:1px solid var(--teal-tint-border); font-size:10.5px;">🔗 Linked to Color Library (${escapeHtml(matched.category)})</span>`;
+  } else {
+    idEl.value = '';
+    if (badgeEl) badgeEl.innerHTML = `<span class="muted" style="font-size:10.5px;">Custom / unlinked color (pick from Color Library to link)</span>`;
+  }
+}
+
 function onProductColorNameInput(val) {
   const hexInput = document.getElementById('pf-color-hex');
-  if (hexInput && (!hexInput.value || hexInput.value === '#FFFFFF')) {
+  const matched = (typeof findColorLibraryEntry === 'function' && val)
+    ? getColorLibraryList().find(c => c.name.trim().toLowerCase() === val.trim().toLowerCase())
+    : null;
+  if (matched && hexInput) {
+    hexInput.value = matched.hex;
+    updateProductColorHexPreview(matched.hex);
+  } else if (hexInput && (!hexInput.value || hexInput.value === '#FFFFFF')) {
     const nameVal = document.getElementById('pf-name') ? document.getElementById('pf-name').value : '';
     const suggested = getProductHex({ color: val, name: nameVal });
     if (suggested && /^#[0-9A-Fa-f]{6}$/.test(suggested)) {
@@ -787,6 +881,7 @@ function onProductColorNameInput(val) {
       updateProductColorHexPreview(suggested);
     }
   }
+  syncProductFormColorLinkState();
 }
 
 function onProductColorHexInput(val) {
@@ -799,6 +894,7 @@ function onProductColorHexInput(val) {
   if (isValid) {
     updateProductColorHexPreview(val);
   }
+  syncProductFormColorLinkState();
 }
 
 function onProductColorPickerChange(val) {
@@ -809,6 +905,7 @@ function onProductColorPickerChange(val) {
   const errEl = document.getElementById('pf-hex-error');
   if (errEl) errEl.style.display = 'none';
   updateProductColorHexPreview(val);
+  syncProductFormColorLinkState();
 }
 
 function updateProductColorHexPreview(val) {
@@ -847,614 +944,667 @@ async function submitProduct(e, id) {
   const submitBtn = document.getElementById('pf-submit-btn');
   if (submitBtn) submitBtn.disabled = true;
   try {
-  const user = currentUser || (typeof db !== 'undefined' && db && db.users ? db.users.find(u => u.role === 'admin') : null);
-  if (!user || (user.role !== 'staff' && user.role !== 'admin')) {
-    if (typeof logAudit === 'function') {
-      logAudit('UNAUTHORIZED_ACCESS', 'Security', `Unauthorized attempt to add or edit product by ${(user && user.name) || 'Guest'}`, {
-        entityName: 'Product Catalog',
-        fieldChanged: 'Access Control',
-        oldValue: (user && user.role) || 'unauthenticated',
-        newValue: 'Denied (Admin/Staff Required)',
-        reason: 'Insufficient permissions for product management'
-      });
-    }
-    showToast('Only Administrators and Inventory Staff can add or edit products.', 'error');
-    return false;
-  }
-  const isAdmin = user.role === 'admin';
-  const priceInput = document.getElementById('pf-price');
-  let priceVal = priceInput.value.trim();
-  if (!priceVal && id && priceInput.placeholder) {
-    priceVal = priceInput.placeholder;
-  }
-  const priceRaw = Number(priceVal);
-  if (isNaN(priceRaw) || priceRaw <= 0) {
-    showToast('Price per Liter must be a valid positive number greater than 0.', 'error');
-    if (priceInput) priceInput.focus();
-    return false;
-  }
-
-  // Color name & Hex validation
-  const colorNameInput = document.getElementById('pf-color-name');
-  const colorHexInput = document.getElementById('pf-color-hex');
-  const colorName = (colorNameInput ? colorNameInput.value.trim() : '') || 'White';
-  let colorHex = (colorHexInput ? colorHexInput.value.trim().toUpperCase() : '') || '#FFFFFF';
-  if (!colorHex.startsWith('#')) colorHex = '#' + colorHex;
-
-  if (!/^#[0-9A-Fa-f]{6}$/.test(colorHex)) {
-    const hexErr = document.getElementById('pf-hex-error');
-    if (hexErr) hexErr.style.display = 'block';
-    showToast('Invalid Hex Code format. Please enter a valid hex color like #FFFFFF.', 'error');
-    if (colorHexInput) colorHexInput.focus();
-    return false;
-  }
-
-  captureProductFormThresholds();
-  const thresholdBySize = {};
-  const cleanSizes = sanitizeSizeList(productFormSizes);
-
-  // Validate threshold values are valid integers >= 0
-  for (const s of cleanSizes) {
-    const v = productFormThresholds[s];
-    const numV = Number(v);
-    if (v !== undefined && (isNaN(numV) || numV < 0 || !Number.isInteger(numV))) {
-      showToast(`Minimum stock threshold for ${fmtSize(s)} must be a whole number 0 or greater.`, 'error');
-      const threshInp = document.getElementById(`pf-thresh-size-${s}`);
-      if (threshInp) threshInp.focus();
+    const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+    if (!user || (user.role !== 'staff' && user.role !== 'admin')) {
+      if (typeof logAudit === 'function') {
+        logAudit('UNAUTHORIZED_ACCESS', 'Security', `Unauthorized attempt to add or edit product by ${(user && user.name) || 'Guest'}`, {
+          entityName: 'Product Catalog',
+          fieldChanged: 'Access Control',
+          oldValue: (user && user.role) || 'unauthenticated',
+          newValue: 'Denied (Admin/Staff Required)',
+          reason: 'Insufficient permissions for product management'
+        });
+      }
+      showToast('Only Administrators and Inventory Staff can add or edit products.', 'error');
       return false;
     }
-    thresholdBySize[s] = (typeof v === 'number' && !isNaN(v) && v >= 0) ? v : (s >= 16 ? 1 : (s >= 4 ? 2 : 5));
-  }
-
-  const supplierSelect = document.getElementById('pf-supplier');
-  const selectedSupplierId = supplierSelect ? supplierSelect.value : '';
-
-  const statusSelect = document.getElementById('pf-status');
-  const chosenStatus = statusSelect ? statusSelect.value : 'active';
-  const statusReasonInput = document.getElementById('pf-status-reason');
-  const statusReason = statusReasonInput ? statusReasonInput.value.trim() : '';
-
-  const taxClassEl = document.getElementById('pf-tax-class');
-  const taxClassification = taxClassEl ? taxClassEl.value : 'vatable';
-  const data = {
-    name: document.getElementById('pf-name').value.trim(),
-    brand: document.getElementById('pf-brand').value.trim(),
-    type: document.getElementById('pf-type').value,
-    taxClassification: taxClassification,
-    tax_classification: taxClassification,
-    color: colorName,
-    colorHex: colorHex,
-    color_hex: colorHex,
-    price: Number(priceRaw.toFixed(2)),
-    threshold: Number(document.getElementById('pf-threshold').value),
-    thresholdBySize: thresholdBySize,
-    sizes: cleanSizes,
-    status: chosenStatus
-  };
-  if (!data.name) {
-    showToast('Please enter a product name.', 'error');
-    return false;
-  }
-  if (!data.brand) {
-    showToast('Please enter a brand name.', 'error');
-    return false;
-  }
-  if (!data.sizes.length) {
-    showToast('Add at least one container size for this product.', 'error');
-    return false;
-  }
-  const sameKey = p => ['name', 'brand', 'color'].every(k => String(p[k] || '').trim().toLowerCase() === String(data[k] || '').trim().toLowerCase());
-  if (db.products.some(p => p.id !== id && sameKey(p))) {
-    showToast('A product with the same name, brand and color already exists.', 'error');
-    return false;
-  }
-
-  if (id) {
-    const existing = productById(id);
-    if (!existing) {
-      showToast('Product not found.', 'error');
+    const isAdmin = user.role === 'admin';
+    const priceInput = document.getElementById('pf-price');
+    let priceVal = priceInput.value.trim();
+    if (!priceVal && id && priceInput.placeholder) {
+      priceVal = priceInput.placeholder;
+    }
+    const priceRaw = Number(priceVal);
+    if (isNaN(priceRaw) || priceRaw <= 0) {
+      showToast('Price per Liter must be a valid positive number greater than 0.', 'error');
+      if (priceInput) priceInput.focus();
       return false;
     }
 
-    // Check removed sizes against stock/transaction history
-    const oldSizes = existing.sizes || [];
-    const addedSizes = (data.sizes || []).filter(s => !oldSizes.includes(s));
-    const removedSizes = (oldSizes || []).filter(s => !(data.sizes || []).includes(s));
+    // Color name & Hex validation
+    const colorNameInput = document.getElementById('pf-color-name');
+    const colorHexInput = document.getElementById('pf-color-hex');
+    const colorName = (colorNameInput ? colorNameInput.value.trim() : '') || 'White';
+    let colorHex = (colorHexInput ? colorHexInput.value.trim().toUpperCase() : '') || '#FFFFFF';
+    if (!colorHex.startsWith('#')) colorHex = '#' + colorHex;
 
-    for (const remS of removedSizes) {
-      const remCheck = canRemoveContainerSize(existing, remS);
-      if (!remCheck.allowed) {
-        showToast(remCheck.reason, 'error');
+    if (!/^#[0-9A-Fa-f]{6}$/.test(colorHex)) {
+      const hexErr = document.getElementById('pf-hex-error');
+      if (hexErr) hexErr.style.display = 'block';
+      showToast('Invalid Hex Code format. Please enter a valid hex color like #FFFFFF.', 'error');
+      if (colorHexInput) colorHexInput.focus();
+      return false;
+    }
+
+    captureProductFormThresholds();
+    const thresholdBySize = {};
+    const cleanSizes = sanitizeSizeList(productFormSizes);
+
+    // Validate threshold values are valid integers >= 0
+    for (const s of cleanSizes) {
+      const v = productFormThresholds[s];
+      const numV = Number(v);
+      if (v !== undefined && (isNaN(numV) || numV < 0 || !Number.isInteger(numV))) {
+        showToast(`Minimum stock threshold for ${fmtSize(s)} must be a whole number 0 or greater.`, 'error');
+        const threshInp = document.getElementById(`pf-thresh-size-${s}`);
+        if (threshInp) threshInp.focus();
         return false;
       }
+      thresholdBySize[s] = (typeof v === 'number' && !isNaN(v) && v >= 0) ? v : (s >= 16 ? 1 : (s >= 4 ? 2 : 5));
     }
 
-    // Require reason if deactivating or discontinuing
-    if (chosenStatus === 'inactive' && existing.status !== 'inactive' && !statusReason) {
-      showToast('Please provide a reason for setting this product to Inactive.', 'error');
-      if (statusReasonInput) statusReasonInput.focus();
+    const supplierSelect = document.getElementById('pf-supplier');
+    const selectedSupplierId = supplierSelect ? supplierSelect.value : '';
+
+    const statusSelect = document.getElementById('pf-status');
+    const chosenStatus = statusSelect ? statusSelect.value : 'active';
+    const statusReasonInput = document.getElementById('pf-status-reason');
+    const statusReason = statusReasonInput ? statusReasonInput.value.trim() : '';
+
+    const colorIdInput = document.getElementById('pf-color-id');
+    const colorId = colorIdInput ? (colorIdInput.value.trim() || null) : null;
+    const taxClassEl = document.getElementById('pf-tax-class');
+    const taxClassification = taxClassEl ? taxClassEl.value : 'vatable';
+    const data = {
+      name: document.getElementById('pf-name').value.trim(),
+      brand: document.getElementById('pf-brand').value.trim(),
+      type: document.getElementById('pf-type').value,
+      taxClassification: taxClassification,
+      tax_classification: taxClassification,
+      color: colorName,
+      colorId: colorId,
+      color_id: colorId,
+      colorHex: colorHex,
+      color_hex: colorHex,
+      price: Number(priceRaw.toFixed(2)),
+      threshold: Number(document.getElementById('pf-threshold').value),
+      thresholdBySize: thresholdBySize,
+      sizes: cleanSizes,
+      status: chosenStatus
+    };
+    if (!data.name) {
+      showToast('Please enter a product name.', 'error');
       return false;
     }
-    if (chosenStatus === 'discontinued' && existing.status !== 'discontinued' && !statusReason) {
-      showToast('Please provide a reason for setting this product to Discontinued.', 'error');
-      if (statusReasonInput) statusReasonInput.focus();
+    if (!data.brand) {
+      showToast('Please enter a brand name.', 'error');
+      return false;
+    }
+    if (!data.sizes.length) {
+      showToast('Add at least one container size for this product.', 'error');
+      return false;
+    }
+    const sameKey = p => ['name', 'brand', 'color'].every(k => String(p[k] || '').trim().toLowerCase() === String(data[k] || '').trim().toLowerCase());
+    if (db.products.some(p => p.id !== id && sameKey(p))) {
+      showToast('A product with the same name, brand and color already exists.', 'error');
       return false;
     }
 
-    const currentSuppliers = (typeof suppliersForProduct === 'function') ? suppliersForProduct(id) : [];
-    const oldSupplierId = currentSuppliers.length > 0 ? currentSuppliers[0].id : '';
+    let rollbackProductSnapshot = null;
+    let rollbackSuppliersSnapshot = null;
+    let pendingSuccessToast = '';
 
-    const changes = {};
-    if (data.name !== existing.name) changes.name = { label: 'Product Name', old: existing.name, new: data.name };
-    if (data.brand !== existing.brand) changes.brand = { label: 'Brand', old: existing.brand, new: data.brand };
-    if (data.type !== existing.type) changes.type = { label: 'Type', old: existing.type, new: data.type };
-    if (data.color !== existing.color) changes.color = { label: 'Color', old: existing.color, new: data.color };
-    if (data.colorHex !== (existing.colorHex || existing.color_hex)) changes.colorHex = { label: 'Hex Code', old: existing.colorHex || existing.color_hex || '#FFFFFF', new: data.colorHex };
-    if (chosenStatus !== (existing.status || 'active')) changes.status = { label: 'Status', old: existing.status || 'active', new: chosenStatus };
-
-    const oldPrice = Number(existing.price);
-    const newPrice = Number(data.price);
-    if (!isNaN(oldPrice) && oldPrice !== newPrice) {
-      changes.price = { label: 'Price per Liter', old: oldPrice, new: newPrice };
-    }
-
-    if (addedSizes.length > 0 || removedSizes.length > 0) {
-      changes.sizes = { label: 'Container Sizes', old: oldSizes, new: data.sizes, added: addedSizes, removed: removedSizes };
-    }
-
-    const oldThresh = Number(existing.threshold);
-    const newThresh = Number(data.threshold);
-    if (!isNaN(oldThresh) && oldThresh !== newThresh) {
-      changes.threshold = { label: 'Overall Threshold', old: oldThresh, new: newThresh };
-    }
-
-    const oldTBS = existing.thresholdBySize || {};
-    const newTBS = data.thresholdBySize || {};
-    let tbsChanged = false;
-    for (const s of (data.sizes || [])) {
-      if (Number(oldTBS[s] || 0) !== Number(newTBS[s] || 0)) {
-        tbsChanged = true;
-        break;
-      }
-    }
-    if (tbsChanged) {
-      changes.thresholdBySize = { label: 'Per-Size Thresholds', old: oldTBS, new: newTBS };
-    }
-
-    if (selectedSupplierId !== oldSupplierId) {
-      const oldS = supplierById(oldSupplierId);
-      const newS = supplierById(selectedSupplierId);
-      changes.supplier = { label: 'Supplier', old: oldS ? oldS.name : 'None', new: newS ? newS.name : 'None' };
-    }
-
-    const changeKeys = Object.keys(changes);
-
-    // Sync supplier in db.suppliers only when Admin applies directly (remove old supplier link if changed)
-    if (isAdmin) {
-      if (oldSupplierId && oldSupplierId !== selectedSupplierId) {
-        const oldSup = (db.suppliers || []).find(s => s.id === oldSupplierId);
-        if (oldSup && Array.isArray(oldSup.productIds)) {
-          oldSup.productIds = oldSup.productIds.filter(pid => pid !== id && pid !== existing.productId);
-        }
-      }
-      if (selectedSupplierId) {
-        const targetSup = (db.suppliers || []).find(s => s.id === selectedSupplierId);
-        if (targetSup) {
-          if (!Array.isArray(targetSup.productIds)) targetSup.productIds = [];
-          if (!targetSup.productIds.includes(id)) targetSup.productIds.push(id);
-        }
-      }
-    }
-
-    const adminName = (currentUser && currentUser.name) || 'Administrator';
-
-    if (isAdmin) {
-      if (changeKeys.length === 0 && !existing.pendingEdit) {
-        window._isSubmittingProduct = false;
-        if (submitBtn) submitBtn.disabled = false;
-        showToast(`Product "${existing.name}" saved. No changes made.`, 'ok');
-        closeModal();
+    if (id) {
+      const existing = productById(id);
+      if (!existing) {
+        showToast('Product not found.', 'error');
         return false;
       }
 
-      const prevProductName = existing.name;
+      // Check removed sizes against stock/transaction history
+      const oldSizes = existing.sizes || [];
+      const addedSizes = (data.sizes || []).filter(s => !oldSizes.includes(s));
+      const removedSizes = (oldSizes || []).filter(s => !(data.sizes || []).includes(s));
 
-      // Record price history & dedicated PRODUCT_PRICE_CHANGE event
-      if (changes.price) {
-        if (!Array.isArray(existing.priceHistory)) existing.priceHistory = [];
-        existing.priceHistory.push({
-          oldPrice: oldPrice,
-          newPrice: newPrice,
-          changedBy: adminName,
-          changedAt: nowISO(),
-          reason: 'Price updated in Edit Product'
-        });
-        existing.recentPrice = oldPrice;
-        existing.price = newPrice;
-        logAudit('PRODUCT_PRICE_CHANGE', 'Product', `Price changed for ${prevProductName} from ${peso(oldPrice)} to ${peso(newPrice)}`, {
-          productId: existing.id,
-          entityName: prevProductName,
-          fieldChanged: 'Price per Liter',
-          oldValue: peso(oldPrice),
-          newValue: peso(newPrice),
-          reason: statusReason || 'Price updated via Product Management'
-        });
-      } else {
-        existing.price = newPrice;
-      }
-
-      // Record container size additions / removals
-      if (addedSizes.length > 0) {
-        logAudit('CONTAINER_SIZE_ADD', 'Inventory', `Added container size(s) ${addedSizes.map(s => s + 'L').join(', ')} to ${prevProductName}`, {
-          productId: existing.id,
-          entityName: prevProductName,
-          fieldChanged: 'Container Sizes',
-          oldValue: oldSizes.length ? oldSizes.map(s => s + 'L').join(', ') : 'None',
-          newValue: data.sizes.map(s => s + 'L').join(', ')
-        });
-      }
-      if (removedSizes.length > 0) {
-        logAudit('CONTAINER_SIZE_REMOVE', 'Inventory', `Removed container size(s) ${removedSizes.map(s => s + 'L').join(', ')} from ${prevProductName}`, {
-          productId: existing.id,
-          entityName: prevProductName,
-          fieldChanged: 'Container Sizes',
-          oldValue: oldSizes.map(s => s + 'L').join(', '),
-          newValue: data.sizes.map(s => s + 'L').join(', ')
-        });
-      }
-
-      // Record stock threshold changes
-      if (changes.threshold || changes.thresholdBySize) {
-        const oldThreshDesc = `${formatLiters(oldThresh)} (${oldSizes.map(s => `${s}L: ${oldTBS[s] ?? 0} units`).join(', ')})`;
-        const newThreshDesc = `${formatLiters(newThresh)} (${data.sizes.map(s => `${s}L: ${newTBS[s] ?? 0} units`).join(', ')})`;
-        logAudit('STOCK_THRESHOLD_CHANGE', 'Inventory', `Updated stock threshold for ${prevProductName} from ${formatLiters(oldThresh)} to ${formatLiters(newThresh)}`, {
-          productId: existing.id,
-          entityName: prevProductName,
-          fieldChanged: 'Minimum Stock Threshold',
-          oldValue: oldThreshDesc,
-          newValue: newThreshDesc
-        });
-      }
-
-      // Record status changes & audit
-      const oldStatus = existing.status || 'active';
-      if (chosenStatus !== oldStatus) {
-        existing.status = chosenStatus;
-        if (chosenStatus === 'inactive') {
-          existing.deactivationReason = statusReason;
-          existing.deactivatedAt = nowISO();
-          existing.deactivatedBy = adminName;
-          logAudit('PRODUCT_DEACTIVATE', 'Product', `Product ${prevProductName} deactivated by ${adminName}. Reason: ${statusReason}`, {
-            productId: existing.id,
-            entityName: prevProductName,
-            fieldChanged: 'Product Status',
-            oldValue: oldStatus.charAt(0).toUpperCase() + oldStatus.slice(1),
-            newValue: 'Inactive',
-            reason: statusReason
-          });
-        } else if (chosenStatus === 'discontinued') {
-          existing.discontinueReason = statusReason;
-          logAudit('PRODUCT_DISCONTINUE', 'Product', `Product ${prevProductName} discontinued by ${adminName}. Reason: ${statusReason}`, {
-            productId: existing.id,
-            entityName: prevProductName,
-            fieldChanged: 'Product Status',
-            oldValue: oldStatus.charAt(0).toUpperCase() + oldStatus.slice(1),
-            newValue: 'Discontinued',
-            reason: statusReason
-          });
-        } else if (chosenStatus === 'active') {
-          existing.deactivationReason = null;
-          existing.deactivatedAt = null;
-          existing.deactivatedBy = null;
-          logAudit('PRODUCT_REACTIVATE', 'Product', `Product ${prevProductName} reactivated by ${adminName}`, {
-            productId: existing.id,
-            entityName: prevProductName,
-            fieldChanged: 'Product Status',
-            oldValue: oldStatus.charAt(0).toUpperCase() + oldStatus.slice(1),
-            newValue: 'Active',
-            reason: 'Reactivated for store operations'
-          });
-        }
-      } else if (chosenStatus === 'inactive' && statusReason) {
-        existing.deactivationReason = statusReason;
-      } else if (chosenStatus === 'discontinued' && statusReason) {
-        existing.discontinueReason = statusReason;
-      }
-
-      existing.name = data.name;
-      existing.productName = data.name;
-      existing.product_name = data.name;
-      existing.brand = data.brand;
-      existing.type = data.type;
-      existing.category = data.type;
-      existing.taxClassification = taxClassification;
-      existing.tax_classification = taxClassification;
-      existing.color = data.color;
-      existing.colorHex = data.colorHex;
-      existing.color_hex = data.colorHex;
-      existing.sizes = data.sizes;
-      existing.threshold = data.threshold;
-      existing.thresholdBySize = data.thresholdBySize;
-      existing.supplierId = selectedSupplierId;
-      existing.supplier_id = selectedSupplierId;
-      existing.updatedBy = adminName;
-      existing.updatedAt = nowISO();
-
-      // Sync variant list keeping existing size IDs intact
-      const prevVariants = existing.sizesData || [];
-      existing.sizesData = (data.sizes || []).map(s => {
-        let v = prevVariants.find(x => normalizeCanSize(x.containerSize) === s);
-        if (!v) v = productFormSizeVariants[s];
-        const sizeId = (v && v.sizeId) ? v.sizeId : nextSizeId();
-        const invId = (v && v.inventoryId) ? v.inventoryId : nextInventoryId();
-        return {
-          sizeId: sizeId,
-          productId: existing.productId || existing.id,
-          containerSize: s,
-          pricePerLiter: Number(data.price),
-          pricePerCan: Number((Number(data.price) * s).toFixed(2)),
-          minimumStock: data.thresholdBySize[s] !== undefined ? Number(data.thresholdBySize[s]) : (s >= 16 ? 1 : (s >= 4 ? 2 : 5)),
-          sealedQuantity: v ? Number(v.sealedQuantity || 0) : productCanCount(existing, s),
-          openedQuantity: v ? Number(v.openedQuantity || 0) : (productOpenedLiters(existing, s) > 0 ? 1 : 0),
-          remainingVolume: v ? Number(v.remainingVolume || 0) : productOpenedLiters(existing, s),
-          isActive: true,
-          inventoryId: invId
-        };
-      });
-
-      const hadPendingEdit = Boolean(existing.pendingEdit);
-      existing.pendingEdit = null;
-      existing.pendingPrice = null;
-      existing.pendingSizes = [];
-
-      // Log PRODUCT_UPDATE only when general product attributes changed (or pending edit was resolved), avoiding duplicate events when only price/status/size/threshold changed
-      const generalChangeKeys = changeKeys.filter(k => !['price', 'status', 'sizes', 'threshold', 'thresholdBySize'].includes(k));
-      if (generalChangeKeys.length > 0 || (hadPendingEdit && changeKeys.length === 0)) {
-        const changeSummary = generalChangeKeys.map(k => changes[k].label).join(', ');
-        const oldParts = generalChangeKeys.map(k => `${changes[k].label}: ${changes[k].old}`).join(' · ');
-        const newParts = generalChangeKeys.map(k => `${changes[k].label}: ${changes[k].new}`).join(' · ');
-        logAudit(
-          'PRODUCT_UPDATE',
-          'Product',
-          `Updated product ${existing.name}${changeSummary ? ` (${changeSummary})` : ''}${hadPendingEdit ? ' (resolved pending request)' : ''}`,
-          {
-            productId: existing.id,
-            entityName: existing.name,
-            fieldChanged: changeSummary || 'Product Attributes',
-            oldValue: oldParts || 'Pending Edit State',
-            newValue: newParts || 'Updated State',
-            meta: { changes }
-          }
-        );
-      }
-      showToast(`Product "${existing.name}" updated successfully!`, 'ok');
-    } else {
-      // Staff workflow
-      if (changeKeys.length === 0) {
-        if (existing.pendingEdit) {
-          const confirmed = await showConfirmDialog({
-            title: 'Withdraw Pending Edit Request?',
-            message: `All details for <b>${escapeHtml(existing.name)}</b> have been reverted to their original state.<br><br>Do you want to cancel and withdraw the pending edit request?`,
-            icon: '🔄',
-            confirmText: 'Yes, Withdraw Request',
-            cancelText: 'Stay in Form',
-            danger: true
-          });
-          if (confirmed) {
-            window._isSubmittingProduct = false;
-            if (submitBtn) submitBtn.disabled = false;
-            await cancelProductPendingEdit(existing.id, true);
-            return false;
-          }
-        }
-        window._isSubmittingProduct = false;
-        if (submitBtn) submitBtn.disabled = false;
-        showToast('No changes were made to the product details.', 'info');
-        closeModal();
-        return false;
-      }
-
-      const isUpdate = Boolean(existing.pendingEdit);
-      if (isUpdate) {
-        const confirmed = await showConfirmDialog({
-          title: 'Update Pending Request?',
-          message: `There is an existing pending edit request for <b>${escapeHtml(existing.name)}</b> (submitted by <b>${escapeHtml(existing.pendingEdit.requestedBy || 'Staff')}</b>).<br><br>Do you want to update the pending request with these new changes for Admin review?`,
-          icon: '✏️',
-          confirmText: 'Yes, Update Request',
-          cancelText: 'Back to Form',
-          danger: false
-        });
-        if (!confirmed) {
-          window._isSubmittingProduct = false;
-          if (submitBtn) submitBtn.disabled = false;
+      for (const remS of removedSizes) {
+        const remCheck = canRemoveContainerSize(existing, remS);
+        if (!remCheck.allowed) {
+          showToast(remCheck.reason, 'error');
           return false;
         }
       }
 
-      existing.pendingEdit = {
-        requestedBy: (currentUser && currentUser.name) || 'Inventory Staff',
-        requestedAt: nowISO(),
-        changes: changes,
-        proposed: {
-          name: data.name,
-          brand: data.brand,
-          type: data.type,
-          category: data.category,
-          taxClassification: data.taxClassification,
-          color: data.color,
-          colorHex: data.colorHex,
-          price: data.price,
-          sizes: data.sizes,
-          threshold: data.threshold,
-          thresholdBySize: data.thresholdBySize,
-          supplierId: selectedSupplierId,
-          status: chosenStatus
-        }
-      };
+      // Require reason if deactivating or discontinuing
+      if (chosenStatus === 'inactive' && existing.status !== 'inactive' && !statusReason) {
+        showToast('Please provide a reason for setting this product to Inactive.', 'error');
+        if (statusReasonInput) statusReasonInput.focus();
+        return false;
+      }
+      if (chosenStatus === 'discontinued' && existing.status !== 'discontinued' && !statusReason) {
+        showToast('Please provide a reason for setting this product to Discontinued.', 'error');
+        if (statusReasonInput) statusReasonInput.focus();
+        return false;
+      }
 
-      if (changes.price) {
-        existing.pendingPrice = changes.price.new;
-      } else {
+      const currentSuppliers = (typeof suppliersForProduct === 'function') ? suppliersForProduct(id) : [];
+      const oldSupplierId = currentSuppliers.length > 0 ? currentSuppliers[0].id : '';
+
+      const changes = {};
+      if (data.name !== existing.name) changes.name = { label: 'Product Name', old: existing.name, new: data.name };
+      if (data.brand !== existing.brand) changes.brand = { label: 'Brand', old: existing.brand, new: data.brand };
+      if (data.type !== existing.type) changes.type = { label: 'Type', old: existing.type, new: data.type };
+      if (data.taxClassification !== (existing.taxClassification || existing.tax_classification || 'vatable')) {
+        changes.taxClassification = { label: 'Tax Classification', old: existing.taxClassification || existing.tax_classification || 'vatable', new: data.taxClassification };
+      }
+      if (data.color !== existing.color) changes.color = { label: 'Color', old: existing.color, new: data.color };
+      if ((data.colorId || '') !== (existing.colorId || existing.color_id || '')) {
+        changes.colorId = { label: 'Color Library Link', old: existing.colorId || existing.color_id || '', new: data.colorId || '' };
+      }
+      if (data.colorHex !== (existing.colorHex || existing.color_hex)) changes.colorHex = { label: 'Hex Code', old: existing.colorHex || existing.color_hex || '#FFFFFF', new: data.colorHex };
+      if (chosenStatus !== (existing.status || 'active')) changes.status = { label: 'Status', old: existing.status || 'active', new: chosenStatus };
+      if (chosenStatus === 'inactive' && statusReason && statusReason !== (existing.deactivationReason || '')) {
+        changes.statusReason = { label: 'Deactivation Reason', old: existing.deactivationReason || '', new: statusReason };
+      } else if (chosenStatus === 'discontinued' && statusReason && statusReason !== (existing.discontinueReason || '')) {
+        changes.statusReason = { label: 'Discontinuation Reason', old: existing.discontinueReason || '', new: statusReason };
+      }
+
+      const oldPrice = Number(existing.price);
+      const newPrice = Number(data.price);
+      if (!isNaN(oldPrice) && oldPrice !== newPrice) {
+        changes.price = { label: 'Price per Liter', old: oldPrice, new: newPrice };
+      }
+
+      if (addedSizes.length > 0 || removedSizes.length > 0) {
+        changes.sizes = { label: 'Container Sizes', old: oldSizes, new: data.sizes, added: addedSizes, removed: removedSizes };
+      }
+
+      const oldThresh = Number(existing.threshold);
+      const newThresh = Number(data.threshold);
+      if (!isNaN(oldThresh) && oldThresh !== newThresh) {
+        changes.threshold = { label: 'Overall Threshold', old: oldThresh, new: newThresh };
+      }
+
+      const oldTBS = existing.thresholdBySize || {};
+      const newTBS = data.thresholdBySize || {};
+      let tbsChanged = false;
+      for (const s of (data.sizes || [])) {
+        if (Number(oldTBS[s] || 0) !== Number(newTBS[s] || 0)) {
+          tbsChanged = true;
+          break;
+        }
+      }
+      if (tbsChanged) {
+        changes.thresholdBySize = { label: 'Per-Size Thresholds', old: oldTBS, new: newTBS };
+      }
+
+      if (selectedSupplierId !== oldSupplierId) {
+        const oldS = supplierById(oldSupplierId);
+        const newS = supplierById(selectedSupplierId);
+        changes.supplier = { label: 'Supplier', old: oldS ? oldS.name : 'None', new: newS ? newS.name : 'None' };
+      }
+
+      const changeKeys = Object.keys(changes);
+
+      if (isAdmin) {
+        if (changeKeys.length === 0 && !existing.pendingEdit) {
+          window._isSubmittingProduct = false;
+          if (submitBtn) submitBtn.disabled = false;
+          showToast(`Product "${existing.name}" saved. No changes made.`, 'ok');
+          closeModal();
+          return false;
+        }
+
+        rollbackProductSnapshot = JSON.parse(JSON.stringify(existing));
+        rollbackSuppliersSnapshot = (db.suppliers || []).map(s => ({ id: s.id, productIds: Array.isArray(s.productIds) ? s.productIds.slice() : [] }));
+
+        // Sync supplier in db.suppliers only when Admin applies directly (remove old supplier link if changed)
+        if (oldSupplierId && oldSupplierId !== selectedSupplierId) {
+          const oldSup = (db.suppliers || []).find(s => s.id === oldSupplierId);
+          if (oldSup && Array.isArray(oldSup.productIds)) {
+            oldSup.productIds = oldSup.productIds.filter(pid => pid !== id && pid !== existing.productId);
+          }
+        }
+        if (selectedSupplierId) {
+          const targetSup = (db.suppliers || []).find(s => s.id === selectedSupplierId);
+          if (targetSup) {
+            if (!Array.isArray(targetSup.productIds)) targetSup.productIds = [];
+            if (!targetSup.productIds.includes(id)) targetSup.productIds.push(id);
+          }
+        }
+      }
+
+      const adminName = (currentUser && currentUser.name) || 'Administrator';
+
+      if (isAdmin) {
+
+        const prevProductName = existing.name;
+
+        // Record price history & dedicated PRODUCT_PRICE_CHANGE event
+        if (changes.price) {
+          if (!Array.isArray(existing.priceHistory)) existing.priceHistory = [];
+          existing.priceHistory.push({
+            oldPrice: oldPrice,
+            newPrice: newPrice,
+            changedBy: adminName,
+            changedAt: nowISO(),
+            reason: 'Price updated in Edit Product'
+          });
+          existing.recentPrice = oldPrice;
+          existing.price = newPrice;
+          logAudit('PRODUCT_PRICE_CHANGE', 'Product', `Price changed for ${prevProductName} from ${peso(oldPrice)} to ${peso(newPrice)}`, {
+            productId: existing.id,
+            entityName: prevProductName,
+            fieldChanged: 'Price per Liter',
+            oldValue: peso(oldPrice),
+            newValue: peso(newPrice),
+            reason: statusReason || 'Price updated via Product Management'
+          });
+        } else {
+          existing.price = newPrice;
+        }
+
+        // Record container size additions / removals
+        if (addedSizes.length > 0) {
+          logAudit('CONTAINER_SIZE_ADD', 'Inventory', `Added container size(s) ${addedSizes.map(s => s + 'L').join(', ')} to ${prevProductName}`, {
+            productId: existing.id,
+            entityName: prevProductName,
+            fieldChanged: 'Container Sizes',
+            oldValue: oldSizes.length ? oldSizes.map(s => s + 'L').join(', ') : 'None',
+            newValue: data.sizes.map(s => s + 'L').join(', ')
+          });
+        }
+        if (removedSizes.length > 0) {
+          logAudit('CONTAINER_SIZE_REMOVE', 'Inventory', `Removed container size(s) ${removedSizes.map(s => s + 'L').join(', ')} from ${prevProductName}`, {
+            productId: existing.id,
+            entityName: prevProductName,
+            fieldChanged: 'Container Sizes',
+            oldValue: oldSizes.map(s => s + 'L').join(', '),
+            newValue: data.sizes.map(s => s + 'L').join(', ')
+          });
+        }
+
+        // Record stock threshold changes
+        if (changes.threshold || changes.thresholdBySize) {
+          const oldThreshDesc = `${formatLiters(oldThresh)} (${oldSizes.map(s => `${s}L: ${oldTBS[s] ?? 0} units`).join(', ')})`;
+          const newThreshDesc = `${formatLiters(newThresh)} (${data.sizes.map(s => `${s}L: ${newTBS[s] ?? 0} units`).join(', ')})`;
+          logAudit('STOCK_THRESHOLD_CHANGE', 'Inventory', `Updated stock threshold for ${prevProductName} from ${formatLiters(oldThresh)} to ${formatLiters(newThresh)}`, {
+            productId: existing.id,
+            entityName: prevProductName,
+            fieldChanged: 'Minimum Stock Threshold',
+            oldValue: oldThreshDesc,
+            newValue: newThreshDesc
+          });
+        }
+
+        // Record status changes & audit
+        const oldStatus = existing.status || 'active';
+        if (chosenStatus !== oldStatus) {
+          existing.status = chosenStatus;
+          if (chosenStatus === 'inactive') {
+            existing.deactivationReason = statusReason;
+            existing.deactivatedAt = nowISO();
+            existing.deactivatedBy = adminName;
+            logAudit('PRODUCT_DEACTIVATE', 'Product', `Product ${prevProductName} deactivated by ${adminName}. Reason: ${statusReason}`, {
+              productId: existing.id,
+              entityName: prevProductName,
+              fieldChanged: 'Product Status',
+              oldValue: oldStatus.charAt(0).toUpperCase() + oldStatus.slice(1),
+              newValue: 'Inactive',
+              reason: statusReason
+            });
+          } else if (chosenStatus === 'discontinued') {
+            existing.discontinueReason = statusReason;
+            logAudit('PRODUCT_DISCONTINUE', 'Product', `Product ${prevProductName} discontinued by ${adminName}. Reason: ${statusReason}`, {
+              productId: existing.id,
+              entityName: prevProductName,
+              fieldChanged: 'Product Status',
+              oldValue: oldStatus.charAt(0).toUpperCase() + oldStatus.slice(1),
+              newValue: 'Discontinued',
+              reason: statusReason
+            });
+          } else if (chosenStatus === 'active') {
+            existing.deactivationReason = null;
+            existing.deactivatedAt = null;
+            existing.deactivatedBy = null;
+            logAudit('PRODUCT_REACTIVATE', 'Product', `Product ${prevProductName} reactivated by ${adminName}`, {
+              productId: existing.id,
+              entityName: prevProductName,
+              fieldChanged: 'Product Status',
+              oldValue: oldStatus.charAt(0).toUpperCase() + oldStatus.slice(1),
+              newValue: 'Active',
+              reason: 'Reactivated for store operations'
+            });
+          }
+        } else if (chosenStatus === 'inactive' && statusReason) {
+          existing.deactivationReason = statusReason;
+        } else if (chosenStatus === 'discontinued' && statusReason) {
+          existing.discontinueReason = statusReason;
+        }
+
+        existing.name = data.name;
+        existing.productName = data.name;
+        existing.product_name = data.name;
+        existing.brand = data.brand;
+        existing.type = data.type;
+        existing.category = data.type;
+        existing.taxClassification = taxClassification;
+        existing.tax_classification = taxClassification;
+        existing.color = data.color;
+        existing.colorId = data.colorId;
+        existing.color_id = data.colorId;
+        existing.colorHex = data.colorHex;
+        existing.color_hex = data.colorHex;
+        existing.sizes = data.sizes;
+        existing.threshold = data.threshold;
+        existing.thresholdBySize = data.thresholdBySize;
+        existing.supplierId = selectedSupplierId;
+        existing.supplier_id = selectedSupplierId;
+        existing.updatedBy = adminName;
+        existing.updatedAt = nowISO();
+
+        // Sync variant list keeping existing size IDs intact
+        const prevVariants = existing.sizesData || [];
+        existing.sizesData = (data.sizes || []).map(s => {
+          let v = prevVariants.find(x => normalizeCanSize(x.containerSize) === s);
+          if (!v) v = productFormSizeVariants[s];
+          const sizeId = (v && v.sizeId) ? v.sizeId : nextSizeId();
+          const invId = (v && v.inventoryId) ? v.inventoryId : nextInventoryId();
+          return {
+            sizeId: sizeId,
+            productId: existing.productId || existing.id,
+            containerSize: s,
+            pricePerLiter: Number(data.price),
+            pricePerCan: Number((Number(data.price) * s).toFixed(2)),
+            minimumStock: data.thresholdBySize[s] !== undefined ? Number(data.thresholdBySize[s]) : (s >= 16 ? 1 : (s >= 4 ? 2 : 5)),
+            sealedQuantity: v ? Number(v.sealedQuantity || 0) : productCanCount(existing, s),
+            openedQuantity: v ? Number(v.openedQuantity || 0) : (productOpenedLiters(existing, s) > 0 ? 1 : 0),
+            remainingVolume: v ? Number(v.remainingVolume || 0) : productOpenedLiters(existing, s),
+            isActive: true,
+            inventoryId: invId
+          };
+        });
+
+        const hadPendingEdit = Boolean(existing.pendingEdit);
+        existing.pendingEdit = null;
         existing.pendingPrice = null;
-      }
-      if (changes.sizes && addedSizes.length > 0) {
-        existing.pendingSizes = addedSizes;
-      } else {
         existing.pendingSizes = [];
-      }
 
-      const changeSummary = changeKeys.map(k => changes[k].label).join(', ');
-      const oldParts = changeKeys.map(k => `${changes[k].label}: ${k === 'price' ? peso(changes[k].old) : (Array.isArray(changes[k].old) ? changes[k].old.map(s => s + 'L').join(', ') : (typeof changes[k].old === 'object' ? JSON.stringify(changes[k].old) : changes[k].old))}`).join(' · ');
-      const newParts = changeKeys.map(k => `${changes[k].label}: ${k === 'price' ? peso(changes[k].new) : (Array.isArray(changes[k].new) ? changes[k].new.map(s => s + 'L').join(', ') : (typeof changes[k].new === 'object' ? JSON.stringify(changes[k].new) : changes[k].new))}`).join(' · ');
-      logAudit(
-        isUpdate ? 'PRODUCT_EDIT_UPDATE' : 'PRODUCT_EDIT_REQUEST',
-        'Product',
-        `Staff ${isUpdate ? 'updated' : 'submitted'} edit request for ${existing.name} (${changeSummary}) for Admin approval`,
-        {
-          productId: existing.id,
-          entityName: existing.name,
-          fieldChanged: changeSummary,
-          oldValue: oldParts,
-          newValue: newParts,
-          meta: { changes }
+        // Log PRODUCT_UPDATE only when general product attributes changed (or pending edit was resolved), avoiding duplicate events when only price/status/size/threshold changed
+        const generalChangeKeys = changeKeys.filter(k => !['price', 'status', 'sizes', 'threshold', 'thresholdBySize'].includes(k));
+        if (generalChangeKeys.length > 0 || (hadPendingEdit && changeKeys.length === 0)) {
+          const changeSummary = generalChangeKeys.map(k => changes[k].label).join(', ');
+          const oldParts = generalChangeKeys.map(k => `${changes[k].label}: ${changes[k].old}`).join(' · ');
+          const newParts = generalChangeKeys.map(k => `${changes[k].label}: ${changes[k].new}`).join(' · ');
+          logAudit(
+            'PRODUCT_UPDATE',
+            'Product',
+            `Updated product ${existing.name}${changeSummary ? ` (${changeSummary})` : ''}${hadPendingEdit ? ' (resolved pending request)' : ''}`,
+            {
+              productId: existing.id,
+              entityName: existing.name,
+              fieldChanged: changeSummary || 'Product Attributes',
+              oldValue: oldParts || 'Pending Edit State',
+              newValue: newParts || 'Updated State',
+              meta: { changes }
+            }
+          );
         }
-      );
-      showToast(
-        isUpdate
-          ? `Product edit request (${changeSummary}) successfully updated for Admin approval!`
-          : `Product edit request (${changeSummary}) submitted for Admin approval!`,
-        'ok'
-      );
-    }
-  } else {
-    window._isSubmittingProduct = true;
-    const submitBtn = document.getElementById('pf-submit-btn');
-    if (submitBtn) submitBtn.disabled = true;
-    // New product
-    if (selectedSupplierId) {
-      const targetSupplier = (db.suppliers || []).find(s => s.id === selectedSupplierId);
-      if (targetSupplier) {
-        if (!Array.isArray(targetSupplier.productIds)) targetSupplier.productIds = [];
+        pendingSuccessToast = `Product "${existing.name}" updated successfully!`;
+      } else {
+        // Staff workflow
+        if (changeKeys.length === 0) {
+          if (existing.pendingEdit) {
+            const confirmed = await showConfirmDialog({
+              title: 'Withdraw Pending Edit Request?',
+              message: `All details for <b>${escapeHtml(existing.name)}</b> have been reverted to their original state.<br><br>Do you want to cancel and withdraw the pending edit request?`,
+              icon: '🔄',
+              confirmText: 'Yes, Withdraw Request',
+              cancelText: 'Stay in Form',
+              danger: true
+            });
+            if (confirmed) {
+              window._isSubmittingProduct = false;
+              if (submitBtn) submitBtn.disabled = false;
+              await cancelProductPendingEdit(existing.id, true);
+              return false;
+            }
+          }
+          window._isSubmittingProduct = false;
+          if (submitBtn) submitBtn.disabled = false;
+          showToast('No changes were made to the product details.', 'info');
+          closeModal();
+          return false;
+        }
+
+        const isUpdate = Boolean(existing.pendingEdit);
+        if (isUpdate) {
+          const confirmed = await showConfirmDialog({
+            title: 'Update Pending Request?',
+            message: `There is an existing pending edit request for <b>${escapeHtml(existing.name)}</b> (submitted by <b>${escapeHtml(existing.pendingEdit.requestedBy || 'Staff')}</b>).<br><br>Do you want to update the pending request with these new changes for Admin review?`,
+            icon: '✏️',
+            confirmText: 'Yes, Update Request',
+            cancelText: 'Back to Form',
+            danger: false
+          });
+          if (!confirmed) {
+            window._isSubmittingProduct = false;
+            if (submitBtn) submitBtn.disabled = false;
+            return false;
+          }
+        }
+
+        existing.pendingEdit = {
+          requestedBy: (currentUser && currentUser.name) || 'Inventory Staff',
+          requestedAt: nowISO(),
+          changes: changes,
+          proposed: {
+            name: data.name,
+            brand: data.brand,
+            type: data.type,
+            category: data.category,
+            taxClassification: data.taxClassification,
+            color: data.color,
+            colorId: data.colorId,
+            colorHex: data.colorHex,
+            price: data.price,
+            sizes: data.sizes,
+            threshold: data.threshold,
+            thresholdBySize: data.thresholdBySize,
+            supplierId: selectedSupplierId,
+            status: chosenStatus
+          }
+        };
+
+        if (changes.price) {
+          existing.pendingPrice = changes.price.new;
+        } else {
+          existing.pendingPrice = null;
+        }
+        if (changes.sizes && addedSizes.length > 0) {
+          existing.pendingSizes = addedSizes;
+        } else {
+          existing.pendingSizes = [];
+        }
+
+        const changeSummary = changeKeys.map(k => changes[k].label).join(', ');
+        const oldParts = changeKeys.map(k => `${changes[k].label}: ${k === 'price' ? peso(changes[k].old) : (Array.isArray(changes[k].old) ? changes[k].old.map(s => s + 'L').join(', ') : (typeof changes[k].old === 'object' ? JSON.stringify(changes[k].old) : changes[k].old))}`).join(' · ');
+        const newParts = changeKeys.map(k => `${changes[k].label}: ${k === 'price' ? peso(changes[k].new) : (Array.isArray(changes[k].new) ? changes[k].new.map(s => s + 'L').join(', ') : (typeof changes[k].new === 'object' ? JSON.stringify(changes[k].new) : changes[k].new))}`).join(' · ');
+        logAudit(
+          isUpdate ? 'PRODUCT_EDIT_UPDATE' : 'PRODUCT_EDIT_REQUEST',
+          'Product',
+          `Staff ${isUpdate ? 'updated' : 'submitted'} edit request for ${existing.name} (${changeSummary}) for Admin approval`,
+          {
+            productId: existing.id,
+            entityName: existing.name,
+            fieldChanged: changeSummary,
+            oldValue: oldParts,
+            newValue: newParts,
+            meta: { changes }
+          }
+        );
+        showToast(
+          isUpdate
+            ? `Product edit request (${changeSummary}) successfully updated for Admin approval!`
+            : `Product edit request (${changeSummary}) submitted for Admin approval!`,
+          'ok'
+        );
       }
-    }
-
-    const newPid = nextProductId();
-    const newSizesData = (data.sizes || []).map(s => {
-      const v = productFormSizeVariants[s];
-      return {
-        sizeId: (v && v.sizeId) ? v.sizeId : nextSizeId(),
-        productId: newPid,
-        containerSize: s,
-        pricePerLiter: Number(data.price),
-        pricePerCan: Number((Number(data.price) * s).toFixed(2)),
-        minimumStock: data.thresholdBySize[s] !== undefined ? Number(data.thresholdBySize[s]) : (s >= 16 ? 1 : (s >= 4 ? 2 : 5)),
-        sealedQuantity: 0,
-        openedQuantity: 0,
-        remainingVolume: 0,
-        isActive: true,
-        inventoryId: (v && v.inventoryId) ? v.inventoryId : nextInventoryId()
-      };
-    });
-
-    if (isAdmin) {
-      data.recentPrice = null;
-      data.pendingPrice = null;
-      data.pendingSizes = [];
-      data.pendingEdit = null;
-      const newProd = {
-        id: newPid,
-        productId: newPid,
-        product_id: newPid,
-        productName: data.name,
-        product_name: data.name,
-        category: data.type,
-        supplierId: selectedSupplierId || null,
-        supplier_id: selectedSupplierId || null,
-        status: chosenStatus || 'active',
-        colorHex: colorHex,
-        color_hex: colorHex,
-        priceHistory: [],
-        createdBy: (currentUser && currentUser.name) || 'Administrator',
-        createdAt: nowISO(),
-        updatedBy: (currentUser && currentUser.name) || 'Administrator',
-        updatedAt: nowISO(),
-        reviewedBy: (currentUser && currentUser.name) || 'Administrator',
-        reviewedAt: nowISO(),
-        stock: 0,
-        canStock: {},
-        openedStock: 0,
-        openedCanSize: 0,
-        openedBySize: {},
-        sizesData: newSizesData,
-        ...data
-      };
-      if (chosenStatus === 'inactive' && statusReason) {
-        newProd.deactivationReason = statusReason;
-        newProd.deactivatedAt = nowISO();
-        newProd.deactivatedBy = (currentUser && currentUser.name) || 'Administrator';
-      } else if (chosenStatus === 'discontinued' && statusReason) {
-        newProd.discontinueReason = statusReason;
-      }
-
-      db.products.push(newProd);
-      logAudit('PRODUCT_CREATE', 'Product', `Created new product ${data.name} (${data.brand} · ${data.type}, Base Price: ${peso(data.price)}/L)`, {
-        productId: newPid,
-        entityName: data.name,
-        fieldChanged: 'New Product Record',
-        oldValue: 'None',
-        newValue: `${data.name} (${data.brand} · ${data.type}, Color: ${data.color}, Price: ${peso(data.price)}/L, Sizes: ${data.sizes.map(s => s + 'L').join(', ')})`,
-        referenceNo: newPid
-      });
-      showToast(`Product "${data.name}" added successfully and is now ${chosenStatus}!`, 'ok');
     } else {
-      data.recentPrice = null;
-      const newProd = {
-        ...data,
-        id: newPid,
-        productId: newPid,
-        product_id: newPid,
-        productName: data.name,
-        product_name: data.name,
-        category: data.type,
-        supplierId: selectedSupplierId || null,
-        supplier_id: selectedSupplierId || null,
-        status: 'pending_approval',
-        colorHex: colorHex,
-        color_hex: colorHex,
-        priceHistory: [],
-        requestedBy: (currentUser && currentUser.name) || 'Inventory Staff',
-        requestedAt: nowISO(),
-        stock: 0,
-        canStock: {},
-        openedStock: 0,
-        openedCanSize: 0,
-        openedBySize: {},
-        sizesData: newSizesData,
-        pendingSizes: []
-      };
+      window._isSubmittingProduct = true;
+      const submitBtn = document.getElementById('pf-submit-btn');
+      if (submitBtn) submitBtn.disabled = true;
+      // New product
+      if (selectedSupplierId) {
+        const targetSupplier = (db.suppliers || []).find(s => s.id === selectedSupplierId);
+        if (targetSupplier) {
+          if (!Array.isArray(targetSupplier.productIds)) targetSupplier.productIds = [];
+        }
+      }
 
-      db.products.push(newProd);
-      logAudit('PRODUCT_REQUEST', 'Product', `Staff submitted new product ${data.name} (price ${peso(data.price)}) for Admin approval`, {
-        productId: newPid,
-        entityName: data.name,
-        fieldChanged: 'New Product Request',
-        oldValue: 'None',
-        newValue: `Pending Approval (${data.brand} · ${data.type}, Price: ${peso(data.price)}/L, Sizes: ${data.sizes.map(s => s + 'L').join(', ')})`,
-        referenceNo: newPid
+      const newPid = nextProductId();
+      const newSizesData = (data.sizes || []).map(s => {
+        const v = productFormSizeVariants[s];
+        return {
+          sizeId: (v && v.sizeId) ? v.sizeId : nextSizeId(),
+          productId: newPid,
+          containerSize: s,
+          pricePerLiter: Number(data.price),
+          pricePerCan: Number((Number(data.price) * s).toFixed(2)),
+          minimumStock: data.thresholdBySize[s] !== undefined ? Number(data.thresholdBySize[s]) : (s >= 16 ? 1 : (s >= 4 ? 2 : 5)),
+          sealedQuantity: 0,
+          openedQuantity: 0,
+          remainingVolume: 0,
+          isActive: true,
+          inventoryId: (v && v.inventoryId) ? v.inventoryId : nextInventoryId()
+        };
       });
-      showToast(`Product "${data.name}" submitted for Admin approval!`, 'ok');
+
+      if (isAdmin) {
+        data.recentPrice = null;
+        data.pendingPrice = null;
+        data.pendingSizes = [];
+        data.pendingEdit = null;
+        const newProd = {
+          id: newPid,
+          productId: newPid,
+          product_id: newPid,
+          productName: data.name,
+          product_name: data.name,
+          category: data.type,
+          supplierId: selectedSupplierId || null,
+          supplier_id: selectedSupplierId || null,
+          status: chosenStatus || 'active',
+          colorId: colorId,
+          color_id: colorId,
+          colorHex: colorHex,
+          color_hex: colorHex,
+          priceHistory: [],
+          createdBy: (currentUser && currentUser.name) || 'Administrator',
+          createdAt: nowISO(),
+          updatedBy: (currentUser && currentUser.name) || 'Administrator',
+          updatedAt: nowISO(),
+          reviewedBy: (currentUser && currentUser.name) || 'Administrator',
+          reviewedAt: nowISO(),
+          stock: 0,
+          canStock: {},
+          openedStock: 0,
+          openedCanSize: 0,
+          openedBySize: {},
+          sizesData: newSizesData,
+          ...data
+        };
+        if (chosenStatus === 'inactive' && statusReason) {
+          newProd.deactivationReason = statusReason;
+          newProd.deactivatedAt = nowISO();
+          newProd.deactivatedBy = (currentUser && currentUser.name) || 'Administrator';
+        } else if (chosenStatus === 'discontinued' && statusReason) {
+          newProd.discontinueReason = statusReason;
+        }
+
+        db.products.push(newProd);
+        logAudit('PRODUCT_CREATE', 'Product', `Created new product ${data.name} (${data.brand} · ${data.type}, Base Price: ${peso(data.price)}/L)`, {
+          productId: newPid,
+          entityName: data.name,
+          fieldChanged: 'New Product Record',
+          oldValue: 'None',
+          newValue: `${data.name} (${data.brand} · ${data.type}, Color: ${data.color}, Price: ${peso(data.price)}/L, Sizes: ${data.sizes.map(s => s + 'L').join(', ')})`,
+          referenceNo: newPid
+        });
+        showToast(`Product "${data.name}" added successfully and is now ${chosenStatus}!`, 'ok');
+      } else {
+        data.recentPrice = null;
+        const newProd = {
+          ...data,
+          id: newPid,
+          productId: newPid,
+          product_id: newPid,
+          productName: data.name,
+          product_name: data.name,
+          category: data.type,
+          supplierId: selectedSupplierId || null,
+          supplier_id: selectedSupplierId || null,
+          status: 'pending_approval',
+          colorId: colorId,
+          color_id: colorId,
+          colorHex: colorHex,
+          color_hex: colorHex,
+          priceHistory: [],
+          requestedBy: (currentUser && currentUser.name) || 'Inventory Staff',
+          requestedAt: nowISO(),
+          stock: 0,
+          canStock: {},
+          openedStock: 0,
+          openedCanSize: 0,
+          openedBySize: {},
+          sizesData: newSizesData,
+          pendingSizes: []
+        };
+
+        db.products.push(newProd);
+        logAudit('PRODUCT_REQUEST', 'Product', `Staff submitted new product ${data.name} (price ${peso(data.price)}) for Admin approval`, {
+          productId: newPid,
+          entityName: data.name,
+          fieldChanged: 'New Product Request',
+          oldValue: 'None',
+          newValue: `Pending Approval (${data.brand} · ${data.type}, Price: ${peso(data.price)}/L, Sizes: ${data.sizes.map(s => s + 'L').join(', ')})`,
+          referenceNo: newPid
+        });
+        showToast(`Product "${data.name}" submitted for Admin approval!`, 'ok');
+      }
     }
-  }
-  try {
-    const savedOk = await saveDB();
-    if (!savedOk) return false;
-    closeModal();
-    if (typeof renderInventoryTable === 'function') renderInventoryTable();
-    if (typeof renderPage === 'function') renderPage();
-  } catch (err) {
-    console.error('Error saving to database:', err);
-    showToast('Failed to save product changes to database.', 'error');
-  }
+    try {
+      const savedOk = await saveDB();
+      if (!savedOk) {
+        if (rollbackProductSnapshot && id) {
+          const idx = (db.products || []).findIndex(p => p.id === id);
+          if (idx !== -1) db.products[idx] = rollbackProductSnapshot;
+        }
+        if (rollbackSuppliersSnapshot && Array.isArray(db.suppliers)) {
+          rollbackSuppliersSnapshot.forEach(rs => {
+            const sup = db.suppliers.find(s => s.id === rs.id);
+            if (sup) sup.productIds = rs.productIds;
+          });
+        }
+        return false;
+      }
+      if (pendingSuccessToast) showToast(pendingSuccessToast, 'ok');
+      closeModal();
+      if (typeof renderInventoryTable === 'function') renderInventoryTable(true);
+      if (typeof renderPage === 'function') renderPage();
+    } catch (err) {
+      console.error('Error saving to database:', err);
+      if (rollbackProductSnapshot && id) {
+        const idx = (db.products || []).findIndex(p => p.id === id);
+        if (idx !== -1) db.products[idx] = rollbackProductSnapshot;
+      }
+      if (rollbackSuppliersSnapshot && Array.isArray(db.suppliers)) {
+        rollbackSuppliersSnapshot.forEach(rs => {
+          const sup = db.suppliers.find(s => s.id === rs.id);
+          if (sup) sup.productIds = rs.productIds;
+        });
+      }
+      showToast('Failed to save product changes to database.', 'error');
+    }
   } finally {
     window._isSubmittingProduct = false;
     const btn = document.getElementById('pf-submit-btn');
@@ -1849,7 +1999,7 @@ async function getProductDependencies(productId) {
 
   // 6. Query backend dependency check endpoint for safety
   try {
-    const resp = await fetch(`api/db.php?action=check_product_dependencies&id=${encodeURIComponent(pid)}&productId=${encodeURIComponent(altPid)}`);
+    const resp = await fetch(`api/db.php?action=check_product_dependencies&id=${encodeURIComponent(pid)}&product_id=${encodeURIComponent(altPid)}`);
     if (resp.ok) {
       const json = await resp.json();
       if (json && json.success && Array.isArray(json.dependencies)) {
@@ -1896,7 +2046,7 @@ function openDeactivateProductModal(id) {
 
   const modalHtml = `
     <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <div>
           <div style="font-weight:700; font-size:15px; color:var(--ink);">${escapeHtml(p.name)}</div>
           <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">
@@ -1908,10 +2058,10 @@ function openDeactivateProductModal(id) {
         </div>
       </div>
 
-      <div style="background:#FFF; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px;">
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px;">
         <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700; margin-bottom:6px;">Current Stock Inventory</div>
         <div style="font-size:13.5px; font-weight:700; color:var(--ink);">
-          Total Stock: <span style="color:var(--teal);">${formatLiters(totalStock)}</span>
+          Total Stock: <span style="color:var(--teal-text);">${formatLiters(totalStock)}</span>
         </div>
         <div style="font-size:12px; color:var(--ink-soft); margin-top:3px;">
           Sealed units: ${sealedBreakdown || '0 units'}<br>
@@ -1920,7 +2070,7 @@ function openDeactivateProductModal(id) {
       </div>
 
       ${hasInventory ? `
-        <div style="background:#FFFBEB; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px; font-size:12px; color:#92400E; display:flex; gap:8px; align-items:flex-start;">
+        <div style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--warning-text); display:flex; gap:8px; align-items:flex-start;">
           <span style="font-size:16px; line-height:1;">⚠️</span>
           <div>
             <strong>Remaining Stock Warning:</strong> This product currently holds <b>${formatLiters(totalStock)}</b> sealed inventory and <b>${formatLiters(openedLiters)}</b> opened paint. Deactivating will exclude it from POS sales, receiving, and purchase orders.
@@ -1929,7 +2079,7 @@ function openDeactivateProductModal(id) {
       ` : ''}
 
       ${activePOs.length > 0 ? `
-        <div style="background:#FEF2F2; border:1px solid #FECACA; border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px; font-size:12px; color:#991B1B; display:flex; gap:8px; align-items:flex-start;">
+        <div style="background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--danger-text); display:flex; gap:8px; align-items:flex-start;">
           <span style="font-size:16px; line-height:1;">🚚</span>
           <div>
             <strong>Active Purchase Order Warning:</strong> This product is referenced in <b>${activePOs.length} active Purchase Order(s)</b> (${activePOs.map(o => o.poNumber).join(', ')}).
@@ -1937,7 +2087,7 @@ function openDeactivateProductModal(id) {
         </div>
       ` : ''}
 
-      <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:14px; font-size:12px; color:#166534; display:flex; gap:8px; align-items:center;">
+      <div style="background:var(--success-bg); border:1px solid var(--success-border); border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:14px; font-size:12px; color:var(--success-text); display:flex; gap:8px; align-items:center;">
         <span style="font-size:16px;">🛡️</span>
         <div>
           <b>Data Safety Guaranteed:</b> Deactivation never deletes stock records or historical transactions. All past sales, movements, price logs, and audit trails remain permanently accessible. You can reactivate this product at any time.
@@ -2030,7 +2180,7 @@ function openReactivateProductModal(id) {
   if (errors.length > 0) {
     openModal(`Cannot Reactivate: ${p.name}`, `
       <div style="font-size:13px; line-height:1.5;">
-        <div style="background:#FEF2F2; border:1px solid #FECACA; border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px; color:#991B1B;">
+        <div style="background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px; color:var(--danger-text);">
           <strong>Pre-Reactivation Check Failed:</strong> The following product details must be completed before reactivation:
           <ul style="margin:8px 0 0 18px; padding:0;">
             ${errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}
@@ -2050,7 +2200,7 @@ function openReactivateProductModal(id) {
 
   const modalHtml = `
     <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <div>
           <div style="font-weight:700; font-size:15px; color:var(--ink);">${escapeHtml(p.name)}</div>
           <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">
@@ -2062,7 +2212,7 @@ function openReactivateProductModal(id) {
         </div>
       </div>
 
-      <div style="background:#FFF; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px;">
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px;">
         <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700; margin-bottom:6px;">Pre-Reactivation Verification</div>
         <table style="width:100%; font-size:12px; border-collapse:collapse;">
           <tr>
@@ -2071,7 +2221,7 @@ function openReactivateProductModal(id) {
           </tr>
           <tr>
             <td style="padding:4px 0; color:var(--ink-soft);">✓ Current Inventory:</td>
-            <td style="padding:4px 0; font-weight:600; color:var(--teal);">${formatLiters(p.stock || 0)} sealed · ${formatLiters(productOpenedStock(p))} opened</td>
+            <td style="padding:4px 0; font-weight:600; color:var(--teal-text);">${formatLiters(p.stock || 0)} sealed · ${formatLiters(productOpenedStock(p))} opened</td>
           </tr>
           <tr>
             <td style="padding:4px 0; color:var(--ink-soft);">✓ Container Sizes:</td>
@@ -2084,7 +2234,7 @@ function openReactivateProductModal(id) {
         </table>
       </div>
 
-      <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:var(--radius-sm); padding:10px 12px; font-size:12px; color:#166534; display:flex; gap:8px; align-items:center;">
+      <div style="background:var(--success-bg); border:1px solid var(--success-border); border-radius:var(--radius-sm); padding:10px 12px; font-size:12px; color:var(--success-text); display:flex; gap:8px; align-items:center;">
         <span style="font-size:16px;">🟢</span>
         <div>
           Reactivating this product will return its status to <b>ACTIVE</b>, making it immediately available for POS transactions, Stock Receiving, and Purchase Orders.
@@ -2159,7 +2309,7 @@ function openDiscontinueProductModal(id) {
 
   const modalHtml = `
     <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-      <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <div>
           <div style="font-weight:700; font-size:15px; color:var(--ink);">${escapeHtml(p.name)}</div>
           <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">
@@ -2171,7 +2321,7 @@ function openDiscontinueProductModal(id) {
         </div>
       </div>
 
-      <div style="background:#FFF7ED; border:1px solid #FDBA74; border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px; font-size:12px; color:#C2410C;">
+      <div style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--warning-text);">
         <strong>Notice on Discontinuation:</strong> Product will be permanently retired from future purchasing and stock replenishment. All historical transaction logs and reports remain fully accessible.
       </div>
 
@@ -2255,24 +2405,24 @@ async function openDeleteProductModal(id) {
     // BLOCKED DELETION
     const modalHtml = `
       <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-        <div style="background:#FEF2F2; border:1px solid #FECACA; border-radius:var(--radius-sm); padding:14px; margin-bottom:14px; display:flex; gap:10px; align-items:flex-start;">
+        <div style="background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px; display:flex; gap:10px; align-items:flex-start;">
           <span style="font-size:24px; line-height:1;">🛑</span>
           <div>
-            <div style="font-size:14.5px; font-weight:700; color:#991B1B;">Permanent Deletion Blocked</div>
-            <div style="font-size:12px; color:#7F1D1D; margin-top:2px;">
+            <div style="font-size:14.5px; font-weight:700; color:var(--danger-text);">Permanent Deletion Blocked</div>
+            <div style="font-size:12px; color:var(--danger-text); margin-top:2px;">
               Product <b>${escapeHtml(p.name)}</b> cannot be deleted because it has active inventory or historical dependencies.
             </div>
           </div>
         </div>
 
-        <div style="background:#FFF; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px;">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px;">
           <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700; margin-bottom:8px;">Identified System Dependencies:</div>
-          <ul style="margin:0; padding-left:18px; font-size:12.5px; color:#B91C1C; display:flex; flex-direction:column; gap:4px;">
+          <ul style="margin:0; padding-left:18px; font-size:12.5px; color:var(--danger-text); display:flex; flex-direction:column; gap:4px;">
             ${deps.map(d => `<li><b>${escapeHtml(d)}</b></li>`).join('')}
           </ul>
         </div>
 
-        <div style="background:#FAF8F5; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; font-size:12px; color:var(--ink-soft); line-height:1.45;">
+        <div style="background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; font-size:12px; color:var(--ink-soft); line-height:1.45;">
           💡 <strong>Accounting &amp; Audit Compliance:</strong> To maintain strict audit trails, accurate financial records, and historical movement history, products with past records cannot be deleted.<br><br>
           Please <b>Deactivate</b> (temporary pause) or <b>Discontinue</b> (permanent phase-out) this product instead.
         </div>
@@ -2294,17 +2444,17 @@ async function openDeleteProductModal(id) {
 function openDeleteProductConfirmStep1(p) {
   const modalHtml = `
     <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-      <div style="background:#FFFBEB; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; gap:10px; align-items:flex-start;">
+      <div style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px; display:flex; gap:10px; align-items:flex-start;">
         <span style="font-size:22px; line-height:1;">⚠️</span>
         <div>
-          <div style="font-size:14px; font-weight:700; color:#92400E;">Permanent Deletion Warning</div>
-          <div style="font-size:12px; color:#78350F; margin-top:2px;">
+          <div style="font-size:14px; font-weight:700; color:var(--warning-text);">Permanent Deletion Warning</div>
+          <div style="font-size:12px; color:var(--warning-text); margin-top:2px;">
             This action will permanently delete <b>${escapeHtml(p.name)}</b> from the system. This cannot be undone.
           </div>
         </div>
       </div>
 
-      <div style="background:#FFF; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px;">
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:14px;">
         <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700; margin-bottom:6px;">Clean Product Verification</div>
         <table style="width:100%; font-size:12px; border-collapse:collapse;">
           <tr>
@@ -2317,11 +2467,11 @@ function openDeleteProductConfirmStep1(p) {
           </tr>
           <tr>
             <td style="padding:3px 0; color:var(--ink-soft);">Stock Status:</td>
-            <td style="padding:3px 0; font-weight:700; color:var(--teal);">0.00 L (Zero inventory)</td>
+            <td style="padding:3px 0; font-weight:700; color:var(--teal-text);">0.00 L (Zero inventory)</td>
           </tr>
           <tr>
             <td style="padding:3px 0; color:var(--ink-soft);">Transactions:</td>
-            <td style="padding:3px 0; font-weight:700; color:var(--teal);">None (No POs, sales, or movements)</td>
+            <td style="padding:3px 0; font-weight:700; color:var(--teal-text);">None (No POs, sales, or movements)</td>
           </tr>
         </table>
       </div>
@@ -2344,10 +2494,10 @@ function openDeleteProductConfirmStep2(id) {
 
   const modalHtml = `
     <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-      <div style="background:#FEF2F2; border:1px solid #FECACA; border-radius:var(--radius-sm); padding:14px; margin-bottom:14px; text-align:center;">
+      <div style="background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px; text-align:center;">
         <span style="font-size:28px;">🗑️</span>
-        <div style="font-size:15px; font-weight:700; color:#991B1B; margin-top:4px;">Final Permanent Deletion Step</div>
-        <div style="font-size:12px; color:#7F1D1D; margin-top:4px;">
+        <div style="font-size:15px; font-weight:700; color:var(--danger-text); margin-top:4px;">Final Permanent Deletion Step</div>
+        <div style="font-size:12px; color:var(--danger-text); margin-top:4px;">
           To permanently delete <b>${escapeHtml(p.name)}</b>, please type <b>DELETE</b> in the box below.
         </div>
       </div>
@@ -2472,5 +2622,6 @@ window.toggleProductStatus = toggleProductStatus;
 window.onProductColorNameInput = onProductColorNameInput;
 window.onProductColorHexInput = onProductColorHexInput;
 window.onProductColorPickerChange = onProductColorPickerChange;
+window.openProductColorLibraryPicker = openProductColorLibraryPicker;
 window.updateProductColorHexPreview = updateProductColorHexPreview;
 window.onProductFormStatusChange = onProductFormStatusChange;

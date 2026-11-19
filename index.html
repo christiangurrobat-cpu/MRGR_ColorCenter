@@ -1,59 +1,75 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MRGR Color Center — Sales &amp; Inventory System</title>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('mrgr_theme') || localStorage.getItem('theme');
+        var theme = saved === 'dark' ? 'dark' : 'light';
+        var root = document.documentElement;
+        root.setAttribute('data-theme', theme);
+        root.classList.toggle('dark-mode', theme === 'dark');
+        root.classList.toggle('light-mode', theme === 'light');
+        root.style.colorScheme = theme;
+      } catch (e) { }
+    })();
+  </script>
   <link rel="icon" type="image/png" href="assets/images/favicon.png?v=20261108">
   <link rel="shortcut icon" href="favicon.ico?v=20261108">
   <link rel="apple-touch-icon" href="assets/images/logo.png?v=20261108">
-  <link rel="stylesheet" href="assets/css/fonts.css?v=20261108a">
-  <link rel="stylesheet" href="assets/css/base.css?v=20261118a">
-  <link rel="stylesheet" href="assets/css/shell.css?v=20261118a">
-  <link rel="stylesheet" href="assets/css/components.css?v=20261105j">
-  <link rel="stylesheet" href="assets/css/purchase-orders.css?v=20261118a">
-  <link rel="stylesheet" href="assets/css/forms-modals.css?v=20261118a">
-  <link rel="stylesheet" href="assets/css/pos.css?v=20261108m">
-  <link rel="stylesheet" href="assets/css/audit.css?v=20261105h">
-  <link rel="stylesheet" href="assets/css/charts-alerts.css?v=20261106a">
-  <link rel="stylesheet" href="assets/css/approvals.css?v=20261105h">
-  <link rel="stylesheet" href="assets/css/expiration.css?v=20261117a">
-  <link rel="stylesheet" href="assets/css/discounts.css?v=20261117a">
+  <link rel="stylesheet" href="assets/css/fonts.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/base.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/shell.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/components.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/purchase-orders.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/forms-modals.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/pos.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/audit.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/charts-alerts.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/approvals.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/expiration.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/discounts.css?v=20261119cmfix">
+  <link rel="stylesheet" href="assets/css/color-library.css?v=20261119clui2">
 </head>
 
 <body>
 
   <div id="app">
-    <div style="padding:80px 20px;text-align:center;color:#6B6259;font-family:system-ui,sans-serif;">
-      <img src="assets/images/logo.png" alt="MRGR Color Center Logo" style="width:72px;height:72px;border-radius:50%;display:block;margin:0 auto 16px;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
-      <div style="font-weight:600;font-size:16px;color:#241E19;">MRGR Color Center</div>
-      <div style="font-size:13px;color:#8A8070;margin-top:4px;">Loading system…</div>
+    <div style="padding:80px 20px;text-align:center;color:var(--ink-soft,#6B6259);font-family:system-ui,sans-serif;">
+      <img src="assets/images/logo.png" alt="MRGR Color Center Logo"
+        style="width:72px;height:72px;border-radius:50%;display:block;margin:0 auto 16px;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
+      <div style="font-weight:600;font-size:16px;color:var(--ink,#241E19);">MRGR Color Center</div>
+      <div style="font-size:13px;color:var(--ink-soft,#8A8070);margin-top:4px;">Loading system…</div>
     </div>
   </div>
   <div id="modal-root"></div>
   <div id="toast-root"></div>
 
-  <script src="assets/js/core.js?v=20261108s"></script>
-  <script src="assets/js/shell.js?v=20261108s"></script>
-  <script src="assets/js/dashboards.js?v=20261108r"></script>
-  <script src="assets/js/pos.js?v=20261108s"></script>
-  <script src="assets/js/color-mixing.js?v=20261108p"></script>
-  <script src="assets/js/products.js?v=20261105h"></script>
-  <script src="assets/js/inventory.js?v=20261108r"></script>
-  <script src="assets/js/sales.js?v=20261108s"></script>
-  <script src="assets/js/reports.js?v=20261108r"></script>
-  <script src="assets/js/suppliers.js?v=20261108r"></script>
-  <script src="assets/js/users.js?v=20261105h"></script>
-  <script src="assets/js/receiving.js?v=20261108r"></script>
-  <script src="assets/js/alerts.js?v=20261108r"></script>
-  <script src="assets/js/expiration.js?v=20261117a"></script>
-  <script src="assets/js/discounts.js?v=20261117a"></script>
-  <script src="assets/js/purchase-orders.js?v=20261108s"></script>
-  <script src="assets/js/approvals.js?v=20261108r"></script>
-  <script src="assets/js/modals.js?v=20261105h"></script>
-  <script src="assets/js/audit.js?v=20261108r"></script>
-  <script src="assets/js/boot.js?v=20261108r"></script>
+  <script src="assets/js/core.js?v=20261119cmfix"></script>
+  <script src="assets/js/color-library.js?v=20261119clui2"></script>
+  <script src="assets/js/shell.js?v=20261119cat1"></script>
+  <script src="assets/js/dashboards.js?v=20261119cmfix"></script>
+  <script src="assets/js/pos.js?v=20261119cat1"></script>
+  <script src="assets/js/color-mixing.js?v=20261119cat1"></script>
+  <script src="assets/js/products.js?v=20261119cat1"></script>
+  <script src="assets/js/inventory.js?v=20261119cat1"></script>
+  <script src="assets/js/sales.js?v=20261119cmfix"></script>
+  <script src="assets/js/reports.js?v=20261119cmfix"></script>
+  <script src="assets/js/suppliers.js?v=20261119cmfix"></script>
+  <script src="assets/js/users.js?v=20261119cmfix"></script>
+  <script src="assets/js/receiving.js?v=20261119cmfix"></script>
+  <script src="assets/js/alerts.js?v=20261119cmfix"></script>
+  <script src="assets/js/expiration.js?v=20261119cmfix"></script>
+  <script src="assets/js/discounts.js?v=20261119cmfix"></script>
+  <script src="assets/js/purchase-orders.js?v=20261119cmfix"></script>
+  <script src="assets/js/approvals.js?v=20261119cmfix"></script>
+  <script src="assets/js/modals.js?v=20261119cmfix"></script>
+  <script src="assets/js/audit.js?v=20261119cmfix"></script>
+  <script src="assets/js/boot.js?v=20261119cmfix"></script>
 </body>
 
 </html>

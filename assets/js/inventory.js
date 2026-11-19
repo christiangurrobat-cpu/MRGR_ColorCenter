@@ -10,7 +10,106 @@ let invSupplierFilter = '';
 let invSearchQuery = '';
 let invExpandedProductIds = new Set();
 let invExpandedMovementsProductIds = new Set();
+let invExpandedBatchSizeKeys = new Set();
 let invShowAllMovements = false;
+
+const EXP_INV_ORDER = { expired: 0, critical: 1, soon: 2, good: 3, none: 4 };
+const EXP_INV_META = {
+  expired: { label: 'Expired', icon: '⛔', pillClass: 'exp-expired', chipClass: 'chip-exp-expired' },
+  critical: { label: 'Critical', icon: '🔥', pillClass: 'exp-critical', chipClass: 'chip-exp-critical' },
+  soon: { label: 'Expiring Soon', icon: '🕒', pillClass: 'exp-soon', chipClass: 'chip-exp-soon' },
+  good: { label: 'Good', icon: '✅', pillClass: 'exp-good', chipClass: '' },
+  none: { label: 'Not Specified', icon: '❔', pillClass: 'exp-none', chipClass: '' }
+};
+
+function initInventoryPage() {
+  if (!currentUser || !['admin', 'staff'].includes(currentUser.role)) return;
+  if (typeof expLoad === 'function') {
+    const staleDate = typeof EXP !== 'undefined' && EXP.data && EXP.data.today && EXP.data.today !== todayISO();
+    if (typeof EXP === 'undefined' || !EXP.loading) {
+      expLoad(typeof EXP !== 'undefined' ? (EXP.loaded && !staleDate) : true);
+    }
+  }
+}
+
+function getInventorySizeBatches(p, size) {
+  if (!p || typeof EXP === 'undefined' || !EXP.data || !Array.isArray(EXP.data.batches)) return [];
+  const variant = typeof productSizeVariantBySize === 'function' ? productSizeVariantBySize(p, size) : null;
+  const targetSizeId = variant && variant.sizeId ? String(variant.sizeId) : '';
+  const normSize = normalizeCanSize(size);
+  const pId = String(p.id);
+
+  const matched = EXP.data.batches.filter(b => {
+    if (!b || b.depleted || !(Number(b.remainingQty) > 0)) return false;
+    if (targetSizeId && b.sizeId) {
+      return String(b.sizeId) === targetSizeId;
+    }
+    return String(b.productId) === pId && normalizeCanSize(b.containerSize) === normSize;
+  });
+
+  matched.sort((a, b) => {
+    const ra = EXP_INV_ORDER[a.expiryStatus] ?? 9;
+    const rb = EXP_INV_ORDER[b.expiryStatus] ?? 9;
+    if (ra !== rb) return ra - rb;
+    const ea = a.expirationDate ? String(a.expirationDate).slice(0, 10) : '9999-99-99';
+    const eb = b.expirationDate ? String(b.expirationDate).slice(0, 10) : '9999-99-99';
+    if (ea !== eb) return ea.localeCompare(eb);
+    return String(a.dateReceived || '').localeCompare(String(b.dateReceived || ''));
+  });
+  return matched;
+}
+
+function getInventorySizeExpirationSummary(p, size) {
+  const batches = getInventorySizeBatches(p, size);
+  const byStatus = { expired: 0, critical: 0, soon: 0, good: 0, none: 0 };
+  let totalBatchQty = 0;
+  let nearestDate = null;
+  let nearestDays = null;
+
+  batches.forEach(b => {
+    const qty = Number(b.remainingQty) || 0;
+    if (qty <= 0) return;
+    totalBatchQty += qty;
+    const st = EXP_INV_META[b.expiryStatus] ? b.expiryStatus : 'none';
+    byStatus[st] += qty;
+    if (b.expirationDate) {
+      const dStr = String(b.expirationDate).slice(0, 10);
+      if (!nearestDate || dStr < nearestDate) {
+        nearestDate = dStr;
+        nearestDays = b.daysRemaining;
+      }
+    }
+  });
+
+  const expiringQty = byStatus.expired + byStatus.critical + byStatus.soon;
+  let worstStatus = null;
+  if (totalBatchQty > 0) {
+    if (byStatus.expired > 0) worstStatus = 'expired';
+    else if (byStatus.critical > 0) worstStatus = 'critical';
+    else if (byStatus.soon > 0) worstStatus = 'soon';
+    else if (byStatus.good > 0) worstStatus = 'good';
+    else worstStatus = 'none';
+  }
+
+  return { batches, byStatus, totalBatchQty, expiringQty, nearestDate, nearestDays, worstStatus };
+}
+
+function toggleInventorySizeBatches(productId, size) {
+  const key = `${productId}_${normalizeCanSize(size)}`;
+  if (invExpandedBatchSizeKeys.has(key)) {
+    invExpandedBatchSizeKeys.delete(key);
+  } else {
+    invExpandedBatchSizeKeys.add(key);
+  }
+  const detailRow = document.getElementById(`inv-detail-row-${productId}`);
+  if (detailRow) {
+    const p = productById(productId);
+    if (p) {
+      const td = detailRow.querySelector('td');
+      if (td) td.innerHTML = productInventoryDetailsHtml(p, invStatusFilter, invSizeFilter);
+    }
+  }
+}
 
 function setInventorySort(field) {
   if (invSortField === field) {
@@ -74,12 +173,15 @@ function renderInventoryMovementsPanel() {
 
 function inventoryPage() {
   const canManage = currentUser && (currentUser.role === 'admin' || currentUser.role === 'staff');
+  const isAdmin = Boolean(currentUser && currentUser.role === 'admin');
   const readOnly = currentUser && currentUser.role === 'cashier';
   const allGroupedMoves = groupStockMovements(db.movements);
   const pendingProducts = (db.products || []).filter(p => p.status === 'pending_approval' || Boolean(p.pendingEdit) || (p.pendingSizes && p.pendingSizes.length > 0) || (p.pendingPrice != null && Number(p.pendingPrice) > 0));
   const activeProducts = (db && Array.isArray(db.products) ? db.products : []).filter(p => p && (p.type || '').toLowerCase() !== 'accessory');
 
-  const productTypes = Array.from(new Set(activeProducts.map(p => p && (p.type || p.category)).filter(Boolean)));
+  const productTypes = (typeof getProductCategories === 'function')
+    ? getProductCategories()
+    : Array.from(new Set(activeProducts.map(p => p && (p.type || p.category)).filter(Boolean)));
   const allDistinctSizes = Array.from(new Set(activeProducts.flatMap(p => productSizes(p)))).sort((a, b) => a - b);
   const allSuppliers = (db && Array.isArray(db.suppliers) ? db.suppliers : []).filter(s => s && s.name).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
@@ -125,9 +227,13 @@ function inventoryPage() {
       <button type="button" id="inv-search-clear-btn" class="inv-search-clear" onclick="clearInventorySearch()" title="Clear search" style="display:${invSearchQuery ? 'inline-flex' : 'none'};">&times;</button>
     </div>
     <div class="inv-filter-controls">
-      <select id="inv-type-filter" class="inv-select inv-select-type" onchange="renderInventoryTable()" title="Filter by paint category/type">
+      <select id="inv-type-filter" class="inv-select inv-select-type" onchange="onInventoryTypeFilterChange(this)" title="Filter by paint category/type">
         <option value="">All Categories</option>
         ${productTypes.map(t => `<option value="${escapeHtml(t)}" ${invTypeFilter === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+        ${isAdmin ? `
+          <option disabled>──────────</option>
+          <option value="__add_category__">+ Add Category</option>
+        ` : ''}
       </select>
       <select id="inv-size-filter" class="inv-select inv-select-size" onchange="renderInventoryTable()" title="Filter by container size">
         <option value="">All Sizes</option>
@@ -190,7 +296,7 @@ function renderInventoryTable(keepPage = false) {
   const searchInput = document.getElementById('inv-search');
   if (searchInput) invSearchQuery = searchInput.value;
   const typeSelect = document.getElementById('inv-type-filter');
-  if (typeSelect) invTypeFilter = typeSelect.value;
+  if (typeSelect && typeSelect.value !== '__add_category__') invTypeFilter = typeSelect.value;
   const sizeSelect = document.getElementById('inv-size-filter');
   if (sizeSelect) invSizeFilter = sizeSelect.value;
   const supSelect = document.getElementById('inv-supplier-filter');
@@ -205,6 +311,156 @@ function renderInventoryTable(keepPage = false) {
   const tableEl = document.getElementById('inventory-table');
   if (tableEl) tableEl.innerHTML = inventoryTableHtml();
   if (typeof syncRouteState === 'function') syncRouteState({ push: false });
+}
+
+function onInventoryTypeFilterChange(selectEl) {
+  if (selectEl && selectEl.value === '__add_category__') {
+    selectEl.value = invTypeFilter || '';
+    openAddCategoryModal();
+    return;
+  }
+  renderInventoryTable();
+}
+
+function openAddCategoryModal() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Only Administrators can add product categories.', 'error');
+    return;
+  }
+
+  const existingCats = (typeof getProductCategories === 'function') ? getProductCategories() : [];
+  const bodyHtml = `
+    <form id="add-category-form" onsubmit="return submitAddCategory(event)">
+      <div class="field" style="margin-bottom:12px;">
+        <label for="ac-name">Category Name <span style="color:var(--danger);">*</span></label>
+        <input id="ac-name" type="text" maxlength="80" placeholder="e.g. Industrial Coating, Wood Stain, Primer" autocomplete="off" required>
+        <div id="ac-error" style="color:var(--danger); font-size:12px; margin-top:4px; display:none;"></div>
+        <div class="muted small" style="margin-top:4px;">New categories become immediately available in Inventory filtering, Add Product, Edit Product, and POS.</div>
+      </div>
+      <div style="background:var(--surface-2, #FAF7F2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px;">
+        <div class="muted small" style="font-weight:700; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Existing Categories (${existingCats.length})</div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+          ${existingCats.map(c => `<span class="badge ghost small">${escapeHtml(c)}</span>`).join('')}
+        </div>
+      </div>
+    </form>
+  `;
+  const footHtml = `
+    <button type="button" class="btn secondary" onclick="closeModal()">Cancel</button>
+    <button type="button" class="btn" id="ac-submit-btn" onclick="submitAddCategory(null)">+ Save Category</button>
+  `;
+  openModal('Add Product Category', bodyHtml, footHtml, 'modal-sm');
+  setTimeout(() => {
+    const inp = document.getElementById('ac-name');
+    if (inp) inp.focus();
+  }, 30);
+}
+
+async function submitAddCategory(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('Only Administrators can add product categories.', 'error');
+    return false;
+  }
+
+  const inp = document.getElementById('ac-name');
+  const errEl = document.getElementById('ac-error');
+  const submitBtn = document.getElementById('ac-submit-btn');
+  const showErr = (msg) => {
+    if (errEl) {
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    }
+    showToast(msg, 'error');
+    if (inp) inp.focus();
+  };
+
+  if (errEl) {
+    errEl.textContent = '';
+    errEl.style.display = 'none';
+  }
+
+  const name = String(inp ? inp.value : '').replace(/\s+/g, ' ').trim();
+  if (!name || name.length < 2) {
+    showErr('Category name must be at least 2 characters long.');
+    return false;
+  }
+  if (name.length > 80) {
+    showErr('Category name must not exceed 80 characters.');
+    return false;
+  }
+  if (/[\x00-\x1F\x7F<>]/.test(name)) {
+    showErr('Category name contains invalid characters.');
+    return false;
+  }
+  const low = name.toLowerCase();
+  if (['__add_category__', 'all', 'all categories', 'accessory', 'accessories'].includes(low)) {
+    showErr(`Category name "${name}" is reserved and cannot be used.`);
+    return false;
+  }
+
+  const existingCats = (typeof getProductCategories === 'function') ? getProductCategories() : [];
+  if (existingCats.some(c => String(c).toLowerCase() === low)) {
+    showErr(`Category "${name}" already exists.`);
+    return false;
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await fetch('api/db.php?action=add_category', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      showErr(data.error || `Failed to save category (HTTP ${res.status}).`);
+      return false;
+    }
+
+    if (!db.settings || typeof db.settings !== 'object') db.settings = {};
+    db.settings.product_categories = Array.isArray(data.categories) ? data.categories : [...existingCats, data.category || name];
+
+    try {
+      if (typeof storage !== 'undefined' && typeof DB_KEY !== 'undefined') {
+        await storage.set(DB_KEY, JSON.stringify(db));
+      }
+    } catch (cacheErr) { /* ignore local cache failure */ }
+
+    if (typeof broadcastDbUpdate === 'function') broadcastDbUpdate();
+    if (typeof logAudit === 'function') {
+      logAudit('CATEGORY_CREATE', 'Inventory', `Added new product category "${data.category || name}"`, {
+        entityName: data.category || name,
+        fieldChanged: 'Product Categories',
+        oldValue: `${existingCats.length} categories`,
+        newValue: data.category || name
+      });
+    }
+
+    closeModal();
+    showToast(`Category "${data.category || name}" added successfully!`, 'ok');
+
+    // Refresh the Inventory dropdown (and page) so the new category appears immediately
+    if (typeof renderPage === 'function') {
+      renderPage();
+    } else {
+      const sel = document.getElementById('inv-type-filter');
+      if (sel) {
+        const cats = (typeof getProductCategories === 'function') ? getProductCategories() : db.settings.product_categories;
+        const isAdm = Boolean(currentUser && currentUser.role === 'admin');
+        sel.innerHTML = `<option value="">All Categories</option>`
+          + cats.map(t => `<option value="${escapeHtml(t)}" ${invTypeFilter === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')
+          + (isAdm ? `<option disabled>──────────</option><option value="__add_category__">+ Add Category</option>` : '');
+      }
+      renderInventoryTable(true);
+    }
+  } catch (err) {
+    console.error('Failed to add category:', err);
+    showErr('Network or server error while saving category.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+  return false;
 }
 
 function clearInventorySearch() {
@@ -256,10 +512,10 @@ function productStatusBadgeHtml(p) {
 function productInventoryAlertBadgesHtml(p, statusFilter = '', sizeFilter = '') {
   if (!p) return '<span class="muted">—</span>';
   if (p.status === 'inactive') {
-    return `<span class="inv-alert-pill" style="background:#F3F4F6; color:#6B7280; border:1px solid #D1D5DB;"><span class="inv-alert-dot" style="background:#9CA3AF;"></span>Inactive</span>`;
+    return `<span class="inv-alert-pill" style="background:var(--surface-3); color:var(--ink-soft); border:1px solid var(--line);"><span class="inv-alert-dot" style="background:#9CA3AF;"></span>Inactive</span>`;
   }
   if (p.status === 'discontinued') {
-    return `<span class="inv-alert-pill" style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"><span class="inv-alert-dot" style="background:#F97316;"></span>Discontinued</span>`;
+    return `<span class="inv-alert-pill" style="background:var(--warning-bg); color:var(--warning-text); border:1px solid var(--warning-border);"><span class="inv-alert-dot" style="background:#F97316;"></span>Discontinued</span>`;
   }
   if (p.status === 'pending_approval') {
     return `<span class="inv-alert-pill alert-pending" title="Awaiting Administrator review and approval"><span class="inv-alert-dot"></span>Pending Approval</span>`;
@@ -279,7 +535,8 @@ function productInventoryAlertBadgesHtml(p, statusFilter = '', sizeFilter = '') 
           size: s,
           status: 'out',
           label: `${fmtSize(s)} – Out of Stock`,
-          cssClass: 'alert-out'
+          cssClass: 'alert-out',
+          title: `${fmtSize(s)} container: 0 units remaining in stock`
         });
       }
     } else if (st === 'low') {
@@ -288,7 +545,8 @@ function productInventoryAlertBadgesHtml(p, statusFilter = '', sizeFilter = '') 
           size: s,
           status: 'low',
           label: `${fmtSize(s)} – Low Stock`,
-          cssClass: 'alert-low'
+          cssClass: 'alert-low',
+          title: `${fmtSize(s)} container: Stock quantity is at or below individual minimum threshold`
         });
       }
     } else if (st === 'ok') {
@@ -297,49 +555,44 @@ function productInventoryAlertBadgesHtml(p, statusFilter = '', sizeFilter = '') 
           size: s,
           status: 'ok',
           label: `${fmtSize(s)} – In Stock`,
-          cssClass: 'alert-ok'
+          cssClass: 'alert-ok',
+          title: `${fmtSize(s)} container: Healthy available stock`
         });
       }
     }
   });
 
+  const stockFallbackPill = (() => {
+    if (alerts.length > 0) return null;
+    if (sf === 'on_order') {
+      const openPOs = openPOsForProduct(p.id);
+      const poNum = openPOs.length > 0 ? openPOs[0].poNumber : '';
+      return `<span class="inv-alert-pill" style="background:var(--info-bg); color:var(--info-text); border:1px solid var(--info-border);"><span class="inv-alert-dot" style="background:#1B4F72;"></span>On Order${poNum ? ' (' + escapeHtml(poNum) + ')' : ''}</span>`;
+    }
+    if (sf === 'low' || (!sf && isProductLowStock(p))) {
+      return `<span class="inv-alert-pill alert-low" title="Stock quantity is at or below minimum threshold"><span class="inv-alert-dot"></span>Low Stock</span>`;
+    }
+    if (isProductOutOfStock(p) || sf === 'out') {
+      return `<span class="inv-alert-pill alert-out" title="Zero available stock"><span class="inv-alert-dot"></span>Out of Stock</span>`;
+    }
+    return `<span class="inv-alert-pill alert-ok" title="All container sizes meet healthy stock levels"><span class="inv-alert-dot"></span>In Stock</span>`;
+  })();
+
   if (alerts.length > 0) {
+    const stockHtml = alerts.map(a => `
+        <span class="inv-alert-pill ${a.cssClass}" title="${escapeAttr(a.title)}">
+          <span class="inv-alert-dot"></span>
+          ${escapeHtml(a.label)}
+        </span>
+      `).join('');
     return `
       <div class="inv-alerts-list">
-        ${alerts.map(a => `
-          <span class="inv-alert-pill ${a.cssClass}" title="${fmtSize(a.size)} container: ${a.status === 'out' ? '0 units remaining in stock' : (a.status === 'low' ? 'Stock quantity is at or below individual minimum threshold' : 'Healthy available stock')}">
-            <span class="inv-alert-dot"></span>
-            ${escapeHtml(a.label)}
-          </span>
-        `).join('')}
+        ${stockHtml}
       </div>
     `;
   }
 
-  if (sf === 'on_order') {
-    const openPOs = openPOsForProduct(p.id);
-    const poNum = openPOs.length > 0 ? openPOs[0].poNumber : '';
-    return `<span class="inv-alert-pill" style="background:#EBF5FB; color:#1B4F72; border:1px solid #AED6F1;"><span class="inv-alert-dot" style="background:#1B4F72;"></span>On Order${poNum ? ' (' + escapeHtml(poNum) + ')' : ''}</span>`;
-  }
-
-  if (sf === 'low' || (!sf && isProductLowStock(p))) {
-    return `<span class="inv-alert-pill alert-low" title="Stock quantity is at or below minimum threshold"><span class="inv-alert-dot"></span>Low Stock</span>`;
-  }
-
-  if (isProductOutOfStock(p) || sf === 'out') {
-    return `<span class="inv-alert-pill alert-out" title="Zero available stock"><span class="inv-alert-dot"></span>Out of Stock</span>`;
-  }
-
-  return `<span class="inv-alert-pill alert-ok" title="All container sizes meet healthy stock levels"><span class="inv-alert-dot"></span>In Stock</span>`;
-}
-
-function filterInventory() {
-  renderInventoryTable();
-}
-
-function suppliersForProduct(productId) {
-  if (!productId) return [];
-  return (db && Array.isArray(db.suppliers) ? db.suppliers : []).filter(s => s && Array.isArray(s.productIds) && s.productIds.includes(productId));
+  return stockFallbackPill;
 }
 
 function supplierNamesForProduct(productId) {
@@ -385,38 +638,225 @@ function toggleProductInventoryDetails(productId) {
   if (typeof syncRouteState === 'function') syncRouteState({ push: false });
 }
 
-function openProductStockDetailsModal(productId) {
-  toggleProductInventoryDetails(productId);
-}
-
 function renderPendingEditChangesList(changes) {
   if (!changes || typeof changes !== 'object') return '<span class="muted small">No specific field changes recorded.</span>';
   const items = [];
   if (changes.name) {
-    items.push(`<div><b>Product Name:</b> <span class="muted"><del>${escapeHtml(changes.name.old)}</del></span> ➔ <b style="color:var(--teal);">${escapeHtml(changes.name.new)}</b></div>`);
+    items.push(`<div><b>Product Name:</b> <span class="muted"><del>${escapeHtml(changes.name.old)}</del></span> ➔ <b style="color:var(--teal-text);">${escapeHtml(changes.name.new)}</b></div>`);
   }
   if (changes.brand) {
-    items.push(`<div><b>Brand:</b> <span class="muted"><del>${escapeHtml(changes.brand.old)}</del></span> ➔ <b style="color:var(--teal);">${escapeHtml(changes.brand.new)}</b></div>`);
+    items.push(`<div><b>Brand:</b> <span class="muted"><del>${escapeHtml(changes.brand.old)}</del></span> ➔ <b style="color:var(--teal-text);">${escapeHtml(changes.brand.new)}</b></div>`);
   }
   if (changes.type) {
-    items.push(`<div><b>Type:</b> <span class="muted"><del>${escapeHtml(changes.type.old)}</del></span> ➔ <b style="color:var(--teal);">${escapeHtml(changes.type.new)}</b></div>`);
+    items.push(`<div><b>Type:</b> <span class="muted"><del>${escapeHtml(changes.type.old)}</del></span> ➔ <b style="color:var(--teal-text);">${escapeHtml(changes.type.new)}</b></div>`);
   }
   if (changes.color) {
-    items.push(`<div><b>Color:</b> <span class="muted"><del>${escapeHtml(changes.color.old)}</del></span> ➔ <b style="color:var(--teal);">${escapeHtml(changes.color.new)}</b></div>`);
+    items.push(`<div><b>Color:</b> <span class="muted"><del>${escapeHtml(changes.color.old)}</del></span> ➔ <b style="color:var(--teal-text);">${escapeHtml(changes.color.new)}</b></div>`);
   }
   if (changes.price) {
-    items.push(`<div><b>Price/Liter:</b> <span class="muted"><del>${peso(changes.price.old)}</del></span> ➔ <b style="color:var(--teal); font-size:13px;">${peso(changes.price.new)}</b></div>`);
+    items.push(`<div><b>Price/Liter:</b> <span class="muted"><del>${peso(changes.price.old)}</del></span> ➔ <b style="color:var(--teal-text); font-size:13px;">${peso(changes.price.new)}</b></div>`);
   }
   if (changes.sizes && changes.sizes.added) {
-    items.push(`<div><b>New Container Size(s):</b> <b style="color:var(--teal);">${changes.sizes.added.map(s => s + 'L').join(', ')}</b></div>`);
+    items.push(`<div><b>New Container Size(s):</b> <b style="color:var(--teal-text);">${changes.sizes.added.map(s => s + 'L').join(', ')}</b></div>`);
   }
   if (changes.threshold) {
-    items.push(`<div><b>Total Threshold:</b> <span class="muted"><del>${formatLiters(changes.threshold.old)}</del></span> ➔ <b style="color:var(--teal);">${formatLiters(changes.threshold.new)}</b></div>`);
+    items.push(`<div><b>Total Threshold:</b> <span class="muted"><del>${formatLiters(changes.threshold.old)}</del></span> ➔ <b style="color:var(--teal-text);">${formatLiters(changes.threshold.new)}</b></div>`);
   }
   if (changes.thresholdBySize) {
-    items.push(`<div><b>Per-Size Thresholds:</b> <span class="badge" style="background:#EBF5FB; color:#1B4F72; font-size:11px;">Updated min units</span></div>`);
+    items.push(`<div><b>Per-Size Thresholds:</b> <span class="badge" style="background:var(--info-bg); color:var(--info-text); font-size:11px;">Updated min units</span></div>`);
   }
-  return items.map(html => `<div style="padding:6px 10px; background:#FAF8F5; border-radius:4px; border-left:3px solid var(--teal); font-size:12px;">${html}</div>`).join('');
+  return items.map(html => `<div style="padding:6px 10px; background:var(--surface-2); border-radius:4px; border-left:3px solid var(--teal); font-size:12px;">${html}</div>`).join('');
+}
+
+function productInventoryExpirationChipsHtml(p, sortedSizes, sizeFilter = '') {
+  if (!p || typeof EXP === 'undefined' || !EXP.loaded || !EXP.data || !Array.isArray(EXP.data.batches)) return '';
+  const targetSz = sizeFilter ? normalizeCanSize(sizeFilter) : 0;
+  const chips = [];
+
+  (sortedSizes || []).forEach(s => {
+    if (targetSz && normalizeCanSize(s) !== targetSz) return;
+    const expSum = getInventorySizeExpirationSummary(p, s);
+    if (expSum.totalBatchQty <= 0) return;
+    ['expired', 'critical', 'soon'].forEach(st => {
+      const qty = expSum.byStatus[st];
+      if (qty > 0) {
+        const meta = EXP_INV_META[st];
+        const canWord = expSum.totalBatchQty === 1 ? 'unit' : 'units';
+        chips.push(`
+          <div class="inv-alert-chip ${meta.chipClass}" onclick="event.stopPropagation(); toggleInventorySizeBatches('${escapeAttr(p.id)}', ${Number(s)})" title="Click to view ${fmtSize(s)} batches">
+            <span class="inv-alert-chip-icon">${meta.icon}</span>
+            <span class="inv-alert-chip-size">${fmtSize(s)}</span>
+            <span class="inv-alert-chip-sep">–</span>
+            <span class="inv-alert-chip-counts"><b>${qty}/${expSum.totalBatchQty}</b> ${canWord}</span>
+            <span class="inv-alert-chip-sep">–</span>
+            <span class="inv-alert-chip-badge">${meta.label}</span>
+          </div>
+        `);
+      }
+    });
+  });
+
+  return chips.join('');
+}
+
+function productInventoryExpirationSectionHtml(p, sortedSizes) {
+  const canViewExp = currentUser && (currentUser.role === 'admin' || currentUser.role === 'staff');
+  if (!canViewExp) return '';
+
+  const thresholds = (typeof EXP !== 'undefined' && EXP.data && EXP.data.thresholds) ? EXP.data.thresholds : { critical: 30, soon: 90 };
+  const isLoaded = typeof EXP !== 'undefined' && EXP.loaded && EXP.data && Array.isArray(EXP.data.batches);
+
+  let bodyHtml = '';
+  if (!isLoaded) {
+    bodyHtml = `<div class="muted small" style="padding:12px 4px;">⏳ Loading batch expiration data…</div>`;
+  } else if (!sortedSizes || sortedSizes.length === 0) {
+    bodyHtml = `<div class="inv-can-empty-sizes">No container sizes configured for this product.</div>`;
+  } else {
+    const rowsHtml = sortedSizes.map(s => {
+      const unitLabel = s <= 1 ? 'Can' : (s <= 4 ? 'Gallon' : 'Drum');
+      const icon = s <= 1 ? '🧴' : (s <= 4 ? '🪣' : '🛢️');
+      const totalStock = productCanCount(p, s);
+      const expSum = getInventorySizeExpirationSummary(p, s);
+      const sizeKey = `${p.id}_${normalizeCanSize(s)}`;
+      const isBatchesOpen = invExpandedBatchSizeKeys.has(sizeKey);
+
+      const nearestDateHtml = expSum.nearestDate && typeof expFmtDate === 'function'
+        ? escapeHtml(expFmtDate(expSum.nearestDate))
+        : '<span class="muted">—</span>';
+
+      const daysTextHtml = expSum.nearestDays !== null && expSum.nearestDays !== undefined && typeof expDaysText === 'function'
+        ? `<span style="font-weight:600; color:${expSum.nearestDays < 0 ? 'var(--danger-text)' : (expSum.nearestDays <= thresholds.critical ? 'var(--danger-text)' : (expSum.nearestDays <= thresholds.soon ? 'var(--warning-text)' : 'var(--success-text)'))};">${escapeHtml(expDaysText({ daysRemaining: expSum.nearestDays }))}</span>`
+        : '<span class="muted">—</span>';
+
+      let statusCellHtml = '<span class="muted small">No active batches</span>';
+      if (expSum.totalBatchQty > 0 && expSum.worstStatus) {
+        const meta = EXP_INV_META[expSum.worstStatus];
+        const breakdownTags = ['expired', 'critical', 'soon', 'good', 'none']
+          .filter(st => expSum.byStatus[st] > 0 && (st !== expSum.worstStatus || expSum.byStatus[st] < expSum.totalBatchQty))
+          .map(st => `<span class="inv-exp-mini-tag ${st}">${EXP_INV_META[st].label}: ${expSum.byStatus[st]}</span>`)
+          .join('');
+        statusCellHtml = `
+          <span class="inv-alert-pill ${meta.pillClass}">
+            <span class="inv-alert-dot"></span>
+            ${escapeHtml(meta.label)}
+          </span>
+          ${breakdownTags ? `<div class="inv-exp-breakdown">${breakdownTags}</div>` : ''}
+        `;
+      }
+
+      const expiringQtyHtml = expSum.expiringQty > 0
+        ? `<strong style="color:${(expSum.byStatus.expired > 0 || expSum.byStatus.critical > 0) ? 'var(--danger-text)' : 'var(--warning-text)'};">${expSum.expiringQty}</strong> <small>${expSum.expiringQty === 1 ? 'unit' : 'units'}</small>`
+        : `<span class="muted">0 units</span>`;
+
+      const batchesBtnHtml = expSum.batches.length > 0
+        ? `<button type="button" class="btn ${isBatchesOpen ? 'ghost' : 'secondary'} small" style="padding:3px 9px; font-size:11.5px;" onclick="event.stopPropagation(); toggleInventorySizeBatches('${escapeAttr(p.id)}', ${Number(s)})">${isBatchesOpen ? '▴ Hide' : '▾ View'} Batches (${expSum.batches.length})</button>`
+        : `<span class="muted small">—</span>`;
+
+      const batchSubRowHtml = (isBatchesOpen && expSum.batches.length > 0) ? `
+        <tr class="inv-exp-batches-row">
+          <td colspan="7">
+            <div class="inv-exp-batches-panel">
+              <div class="inv-exp-batches-head">
+                <span>Active Batches for ${fmtSize(s)} ${unitLabel} (${expSum.batches.length} batch${expSum.batches.length === 1 ? '' : 'es'}, ${expSum.totalBatchQty} unit${expSum.totalBatchQty === 1 ? '' : 's'})</span>
+                <span class="muted" style="font-weight:normal;">Batches with remaining stock &gt; 0</span>
+              </div>
+              <table class="inv-exp-batches-table">
+                <thead>
+                  <tr>
+                    <th>Batch #</th>
+                    <th>Date Received</th>
+                    <th>Expiration Date</th>
+                    <th>Days Remaining</th>
+                    <th style="text-align:right;">Remaining Qty</th>
+                    <th>Status</th>
+                    <th style="text-align:right;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${expSum.batches.map(b => {
+        const bMeta = EXP_INV_META[b.expiryStatus] || EXP_INV_META.none;
+        const bExpDate = b.expirationDate && typeof expFmtDate === 'function' ? expFmtDate(b.expirationDate) : '—';
+        const bDays = typeof expDaysText === 'function' ? expDaysText(b) : '—';
+        const bRecv = b.dateReceived && typeof expFmtDate === 'function' ? expFmtDate(b.dateReceived) : '—';
+        return `
+                      <tr>
+                        <td><code class="exp-code">${escapeHtml(b.batchNumber || b.batchId)}</code></td>
+                        <td>${escapeHtml(bRecv)}</td>
+                        <td>${escapeHtml(bExpDate)}</td>
+                        <td>${escapeHtml(bDays)}</td>
+                        <td style="text-align:right;"><b>${b.remainingQty}</b> <span class="muted">/ ${b.originalQty}</span></td>
+                        <td>
+                          <span class="inv-alert-pill ${bMeta.pillClass}">
+                            <span class="inv-alert-dot"></span>
+                            ${escapeHtml(bMeta.label)}
+                          </span>
+                        </td>
+                        <td style="text-align:right;">
+                          <button type="button" class="btn secondary small" style="padding:2px 8px; font-size:11px;" onclick="event.stopPropagation(); expOpenDetail('${escapeAttr(b.batchId)}')">Inspect</button>
+                        </td>
+                      </tr>
+                    `;
+      }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      ` : '';
+
+      return `
+        <tr>
+          <td class="inv-td-size" style="text-align:left;">
+            <div class="inv-can-cell-size">
+              <span class="inv-can-row-icon">${icon}</span>
+              <span class="inv-can-row-name">${fmtSize(s)} ${unitLabel}</span>
+            </div>
+          </td>
+          <td style="text-align:right;"><strong>${totalStock}</strong> <small>${totalStock === 1 ? 'unit' : 'units'}</small></td>
+          <td style="text-align:right;">${expiringQtyHtml}</td>
+          <td>${nearestDateHtml}</td>
+          <td>${daysTextHtml}</td>
+          <td>${statusCellHtml}</td>
+          <td style="text-align:right;">${batchesBtnHtml}</td>
+        </tr>
+        ${batchSubRowHtml}
+      `;
+    }).join('');
+
+    bodyHtml = `
+      <div class="inv-can-table-wrap">
+        <table class="inv-can-table inv-exp-table">
+          <thead>
+            <tr>
+              <th>Container Size</th>
+              <th style="text-align:right;">Total Stock Qty</th>
+              <th style="text-align:right;">Expiring Qty</th>
+              <th>Nearest Expiration</th>
+              <th>Days Remaining</th>
+              <th>Expiration Status</th>
+              <th style="text-align:right;">Batches</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="inv-friendly-box inv-exp-box" style="margin-bottom:16px;">
+      <div class="inv-box-header">
+        <span class="inv-box-title">🗓️ Expiration Status by Container Size</span>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span class="inv-box-meta">Critical &le; ${thresholds.critical}d · Soon &le; ${thresholds.soon}d</span>
+          <button type="button" class="btn ghost small" style="padding:2px 8px; font-size:11px; height:24px;" onclick="event.stopPropagation(); goToExpiration('all')">Open Expiration Tracking &rarr;</button>
+        </div>
+      </div>
+      ${bodyHtml}
+    </div>
+  `;
 }
 
 function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
@@ -548,6 +988,25 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
     }
 
     const titleText = `${fmtSize(s)} ${unitLabel}: ${count} in stock, minimum ${sizeThresh} ${canWord} (${formatLiters(threshLitersForSize)})`;
+    const expSum = isAuthorized && typeof EXP !== 'undefined' && EXP.loaded ? getInventorySizeExpirationSummary(p, s) : null;
+    let expCellHtml = '<span class="muted small">—</span>';
+    if (expSum && expSum.totalBatchQty > 0 && expSum.worstStatus) {
+      const eMeta = EXP_INV_META[expSum.worstStatus];
+      const warnParts = ['expired', 'critical', 'soon']
+        .filter(st => expSum.byStatus[st] > 0)
+        .map(st => `${expSum.byStatus[st]} ${EXP_INV_META[st].label}`);
+      expCellHtml = `
+        <div style="display:flex; flex-direction:column; align-items:flex-start; gap:3px;">
+          <span class="inv-alert-pill ${eMeta.pillClass}" title="Batch expiration status for ${fmtSize(s)} (independent of stock level)">
+            <span class="inv-alert-dot"></span>
+            ${escapeHtml(eMeta.label)}
+          </span>
+          ${warnParts.length ? `<span class="muted" style="font-size:10.5px; line-height:1.2;">${escapeHtml(warnParts.join(' · '))}</span>` : ''}
+        </div>
+      `;
+    } else if (isAuthorized && (typeof EXP === 'undefined' || !EXP.loaded)) {
+      expCellHtml = '<span class="muted small">…</span>';
+    }
 
     return `
       <tr class="${rowStatusClass}" title="${escapeHtml(titleText)}">
@@ -582,6 +1041,7 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
             </div>
           </div>
         </td>
+        ${isAuthorized ? `<td class="inv-td-exp" style="text-align:left;">${expCellHtml}</td>` : ''}
       </tr>
     `;
   }).join('');
@@ -646,6 +1106,8 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
     ? (isAllMovesExpanded ? `All ${movesCount} transactions` : `Latest ${Math.min(5, movesCount)} of ${movesCount} transaction${movesCount === 1 ? '' : 's'}`)
     : 'No transactions recorded yet';
 
+  const expAlertChipsHtml = productInventoryExpirationChipsHtml(p, sortedSizes, sizeFilter);
+
   return `
     <div class="inv-friendly-detail">
       <!-- Friendly Status Banner & Quick Actions -->
@@ -673,6 +1135,13 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
           </div>
         ` : ''}
 
+        ${expAlertChipsHtml ? `
+          <div class="inv-alert-chips-wrap">
+            <span class="inv-alert-chips-label">Expiration Alerts:</span>
+            ${expAlertChipsHtml}
+          </div>
+        ` : ''}
+
         ${hasOpenPO ? `
           <div class="inv-alert-po-note">
             🚚 <span>Active Purchase Order <b>${openPOsForThis.map(o => o.poNumber).join(', ')}</b> in progress (${poStatusBadgeText(openPOsForThis[0].status)}). Restock delivery pending.</span>
@@ -681,10 +1150,10 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
       </div>
 
       ${p.pendingEdit ? `
-        <div style="background:#FEF3C7; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:4px;">
+        <div style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:4px;">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
             <div>
-              <div style="font-weight:700; color:#92400E; font-size:13.5px; display:flex; align-items:center; gap:6px;">
+              <div style="font-weight:700; color:var(--warning-text); font-size:13.5px; display:flex; align-items:center; gap:6px;">
                 <span>⏳</span>
                 <span>Product Edit Request Pending Admin Approval</span>
               </div>
@@ -699,7 +1168,7 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
               </div>
             ` : `
               <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                <span class="badge" style="background:#FFF; color:#92400E; border:1px solid #FCD34D;">⏳ Waiting for Admin Approval</span>
+                <span class="badge" style="background:var(--surface); color:var(--warning-text); border:1px solid var(--warning-border);">⏳ Waiting for Admin Approval</span>
                 ${currentUser && currentUser.role === 'staff' ? `
                   <button type="button" class="btn secondary small" style="padding:4px 9px; font-size:11.5px;" onclick="event.stopPropagation(); openProductModal('${p.id}')" title="Modify your pending request">✏️ Modify</button>
                   <button type="button" class="btn secondary small danger" style="padding:4px 9px; font-size:11.5px;" onclick="event.stopPropagation(); cancelProductPendingEdit('${p.id}')" title="Cancel/withdraw your pending edit request">✕ Cancel Request</button>
@@ -707,7 +1176,7 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
               </div>
             `}
           </div>
-          <div style="background:#fff; border:1px solid #FDE68A; border-radius:6px; padding:10px 12px; margin-top:8px;">
+          <div style="background:var(--surface); border:1px solid var(--warning-border); border-radius:6px; padding:10px 12px; margin-top:8px;">
             <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); margin-bottom:6px;">Proposed Changes:</div>
             <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:6px;">
               ${renderPendingEditChangesList(p.pendingEdit.changes || {})}
@@ -717,9 +1186,9 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
       ` : ''}
 
       ${!p.pendingEdit && p.pendingSizes && p.pendingSizes.length > 0 ? `
-        <div style="background:#FEF3C7; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
           <div>
-            <span style="font-weight:700; color:#92400E;">⏳ New Container Size(s) Pending Admin Approval:</span>
+            <span style="font-weight:700; color:var(--warning-text);">⏳ New Container Size(s) Pending Admin Approval:</span>
             <span style="margin-left:6px; font-weight:600;">${p.pendingSizes.map(s => s + 'L').join(', ')}</span>
           </div>
           ${currentUser && currentUser.role === 'admin' ? `
@@ -732,10 +1201,10 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
       ` : ''}
 
       ${!p.pendingEdit && p.pendingPrice != null && Number(p.pendingPrice) > 0 ? `
-        <div style="background:#FEF3C7; border:1px solid #FCD34D; border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="background:var(--warning-bg); border:1px solid var(--warning-border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
           <div>
-            <span style="font-weight:700; color:#92400E;">⏳ Price Change Pending Admin Approval:</span>
-            <span style="margin-left:6px; font-weight:600;">Current: ${peso(p.price)}/L ➔ Requested: <b style="color:var(--teal); font-size:13.5px;">${peso(p.pendingPrice)}/L</b></span>
+            <span style="font-weight:700; color:var(--warning-text);">⏳ Price Change Pending Admin Approval:</span>
+            <span style="margin-left:6px; font-weight:600;">Current: ${peso(p.price)}/L ➔ Requested: <b style="color:var(--teal-text); font-size:13.5px;">${peso(p.pendingPrice)}/L</b></span>
           </div>
           ${currentUser && currentUser.role === 'admin' ? `
             <div style="display:flex; gap:6px;">
@@ -764,6 +1233,7 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
                     <th class="inv-th-qty">Stock Quantity</th>
                     <th class="inv-th-vol">Total Volume</th>
                     <th class="inv-th-level">Stock Level</th>
+                    ${isAuthorized ? '<th class="inv-th-exp">Expiration</th>' : ''}
                   </tr>
                 </thead>
                 <tbody>
@@ -829,7 +1299,10 @@ function productInventoryDetailsHtml(p, statusFilter = '', sizeFilter = '') {
         </div>
       </div>
 
-      <!-- 3. Recent Stock Activity for this Product -->
+      <!-- 3. Container-Level Expiration Breakdown -->
+      ${productInventoryExpirationSectionHtml(p, sortedSizes)}
+
+      <!-- 4. Recent Stock Activity for this Product -->
       <div class="inv-friendly-box inv-activity-box">
         <div class="inv-box-header">
           <div style="display:flex; align-items:center; gap:8px;">
@@ -963,7 +1436,7 @@ function productMovementHistoryHtml(p, isAllExpanded = false) {
     <div class="inv-movement-table-wrap">
       <table class="movement-table tight" style="margin:0; width:100%; border-collapse:collapse;">
         <thead>
-          <tr style="background:#FAF8F5; border-bottom:1px solid var(--line);">
+          <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
             <th class="movement-date-td" style="font-size:10.5px; padding:8px 12px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700;">Date &amp; Time</th>
             <th class="movement-type-td" style="font-size:10.5px; padding:8px 12px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700;">Type</th>
             <th style="font-size:10.5px; padding:8px 12px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); font-weight:700; text-align:left;">Container Size / Item</th>
@@ -1252,10 +1725,12 @@ function inventoryTableHtml() {
 </thead>
 <tbody>
   ${pagedList.length ? pagedList.map(p => {
-    const hex = getProductDefaultColor(p);
+    const resolvedCol = (typeof resolveProductColor === 'function') ? resolveProductColor(p) : { name: p.color || '-', hex: getProductDefaultColor(p), isLinked: false };
+    const hex = resolvedCol.hex || getProductDefaultColor(p);
     const rgb = hexToRgb(hex);
     const rgbaBg = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`;
     const detected = detectMixedColorName(rgb.r, rgb.g, rgb.b);
+    const colorDisplay = resolvedCol.isLinked ? resolvedCol.name : (p.color || detected.name);
     const isExpanded = invExpandedProductIds.has(p.id);
     const isLow = productHasLowStock(p);
     const lowSizes = productLowSizes(p);
@@ -1268,7 +1743,7 @@ function inventoryTableHtml() {
       <td class="inv-td-product">
         <div class="inv-prod-title-wrap">
           <span class="inv-expand-caret" id="inv-caret-${p.id}">${isExpanded ? '▼' : '▶'}</span>
-          <span class="hover-color-swatch inv-swatch-circle" style="background:${hex};" title="Color tone: ${escapeHtml(detected.name)} (${hex})"></span>
+          <span class="hover-color-swatch inv-swatch-circle" style="background:${hex};" title="Color: ${escapeHtml(colorDisplay)} (${hex})${resolvedCol.isLinked ? ' · Linked to Color Library' : ''}"></span>
           <span class="inv-prod-name">${escapeHtml(p.name)}</span>
           ${productStatusBadgeHtml(p)}
           ${p.status === 'pending_approval' ? `<span class="badge warning small">⏳ Pending Approval</span>` : ''}
@@ -1276,7 +1751,7 @@ function inventoryTableHtml() {
           ${!p.pendingEdit && p.pendingSizes && p.pendingSizes.length > 0 ? `<span class="badge warning small">⏳ Pending Size (${p.pendingSizes.map(s => s + 'L').join(', ')})</span>` : ''}
           ${!p.pendingEdit && p.pendingPrice != null && Number(p.pendingPrice) > 0 ? `<span class="badge warning small">⏳ Pending Price (${peso(p.pendingPrice)})</span>` : ''}
         </div>
-        ${p.color && p.color !== '-' ? `<div class="inv-prod-color-line muted small">Color: <b>${escapeHtml(p.color)}</b> <span class="inv-color-tone">(${detected.name})</span></div>` : ''}
+        ${(colorDisplay && colorDisplay !== '-') ? `<div class="inv-prod-color-line muted small">Color: <b>${escapeHtml(colorDisplay)}</b> <span class="inv-color-tone">(${escapeHtml(hex)})</span></div>` : ''}
         ${hasOpenOrder ? `
           <div class="inv-prod-order-line">
             <a href="#" onclick="event.stopPropagation(); openPODetail('${openPOs[0].id}'); return false;" class="badge info small inv-on-order-badge" title="Active Purchase Order: ${openPOs.map(o => o.poNumber).join(', ')}">
@@ -1287,10 +1762,10 @@ function inventoryTableHtml() {
       </td>
       <td class="inv-td-brand">${escapeHtml(p.brand || '—')}</td>
       <td class="inv-td-supplier">${supplierBadgesHtml(p.id)}</td>
-      <td class="inv-td-type"><span class="badge" style="background:#F4EFE6; color:#6B6259;">${escapeHtml(p.type || p.category || 'General')}</span></td>
+      <td class="inv-td-type"><span class="badge" style="background:var(--surface-3); color:var(--ink-soft);">${escapeHtml(p.type || p.category || 'General')}</span></td>
       <td class="right inv-td-price">
         <div style="font-weight:600; color:var(--ink);">${peso(p.price)}<span class="muted small">/L</span></div>
-        ${p.pendingEdit && p.pendingEdit.changes && p.pendingEdit.changes.price ? `<div style="font-size:11px; color:#92400E; font-weight:700; margin-top:2px;" title="Requested price awaiting Admin approval">⏳ Req: ${peso(p.pendingEdit.changes.price.new)}</div>` : (!p.pendingEdit && p.pendingPrice != null && Number(p.pendingPrice) > 0 ? `<div style="font-size:11px; color:#92400E; font-weight:700; margin-top:2px;" title="Requested price awaiting Admin approval">⏳ Req: ${peso(p.pendingPrice)}</div>` : '')}
+        ${p.pendingEdit && p.pendingEdit.changes && p.pendingEdit.changes.price ? `<div style="font-size:11px; color:var(--warning-text); font-weight:700; margin-top:2px;" title="Requested price awaiting Admin approval">⏳ Req: ${peso(p.pendingEdit.changes.price.new)}</div>` : (!p.pendingEdit && p.pendingPrice != null && Number(p.pendingPrice) > 0 ? `<div style="font-size:11px; color:var(--warning-text); font-weight:700; margin-top:2px;" title="Requested price awaiting Admin approval">⏳ Req: ${peso(p.pendingPrice)}</div>` : '')}
         ${p.recentPrice != null && Number(p.recentPrice) > 0 && Math.abs(Number(p.recentPrice) - Number(p.price)) > 0.01 ? `<div class="muted small" style="font-size:11px; opacity:0.85; margin-top:2px;" title="Recent price before last change">Recent: <del>${peso(p.recentPrice)}</del></div>` : ''}
       </td>
       <td class="right inv-td-total-stock">

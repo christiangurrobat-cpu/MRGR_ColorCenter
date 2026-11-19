@@ -3,12 +3,126 @@
    ============================================================ */
 const DB_KEY = 'mrgr_color_center_db';
 const SESSION_KEY = 'mrgr_color_center_session';
+const THEME_STORAGE_KEY = 'mrgr_theme';
 let db = null;          // the whole "database" object
 let currentUser = null; // who is logged in right now
 let currentPage = null; // which screen we are on, e.g. 'dashboard', 'pos'
 let cart = [];          // items being built up in the current POS sale
 let currentSaleCustomerName = ''; // customer name for the current POS sale
 let posConfirmPromiseResolve = null; // POS cashier order confirmation resolver
+
+/* ============================================================
+   1.1 THEME MANAGEMENT SYSTEM (Light / Dark Mode)
+   ============================================================ */
+function getActiveTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY) || localStorage.getItem('theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    const attr = document.documentElement && document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr;
+  } catch (e) { }
+  return 'light';
+}
+
+function applyTheme(theme, options = {}) {
+  const norm = theme === 'dark' ? 'dark' : 'light';
+  const isDark = norm === 'dark';
+  const root = document.documentElement;
+  if (root) {
+    root.setAttribute('data-theme', norm);
+    root.classList.toggle('dark-mode', isDark);
+    root.classList.toggle('light-mode', !isDark);
+    root.style.colorScheme = norm;
+  }
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.setAttribute('data-theme', norm);
+    document.body.classList.toggle('dark-mode', isDark);
+    document.body.classList.toggle('light-mode', !isDark);
+  }
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, norm);
+    } catch (e) { }
+  }
+  updateThemeToggleButtons(norm, Boolean(options.animate));
+  return norm;
+}
+
+function setTheme(theme, options = {}) {
+  return applyTheme(theme, { persist: true, animate: true, ...options });
+}
+
+function toggleTheme() {
+  const current = getActiveTheme();
+  const next = current === 'dark' ? 'light' : 'dark';
+  return applyTheme(next, { persist: true, animate: true });
+}
+
+function updateThemeToggleButtons(theme, animate = false) {
+  if (typeof document === 'undefined') return;
+  const norm = (theme || getActiveTheme()) === 'dark' ? 'dark' : 'light';
+  const isDark = norm === 'dark';
+  const labelText = isDark ? 'Dark' : 'Light';
+  const titleText = isDark
+    ? 'Dark Mode active — click to switch to Light Mode'
+    : 'Light Mode active — click to switch to Dark Mode';
+
+  document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
+    btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+    btn.setAttribute('aria-label', titleText);
+    btn.setAttribute('title', titleText);
+    btn.setAttribute('data-active-theme', norm);
+    const lbl = btn.querySelector('.theme-toggle-label');
+    if (lbl) lbl.textContent = labelText;
+    if (animate) {
+      btn.classList.remove('is-animating');
+      void btn.offsetWidth;
+      btn.classList.add('is-animating');
+      if (btn._animTimer) clearTimeout(btn._animTimer);
+      btn._animTimer = setTimeout(() => btn.classList.remove('is-animating'), 350);
+    }
+  });
+
+  document.querySelectorAll('[data-theme-option]').forEach(optBtn => {
+    const optTheme = optBtn.getAttribute('data-theme-option');
+    const active = optTheme === norm;
+    optBtn.classList.toggle('active', active);
+    optBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function renderThemeToggleButton(extraClass = '') {
+  const theme = getActiveTheme();
+  const isDark = theme === 'dark';
+  const labelText = isDark ? 'Dark' : 'Light';
+  const titleText = isDark
+    ? 'Dark Mode active — click to switch to Light Mode'
+    : 'Light Mode active — click to switch to Dark Mode';
+  return `
+    <button type="button" class="theme-toggle-btn ${extraClass}" id="theme-toggle-btn" data-theme-toggle="true" data-active-theme="${theme}" onclick="toggleTheme()" title="${titleText}" aria-label="${titleText}" aria-pressed="${isDark ? 'true' : 'false'}">
+      <span class="theme-toggle-icon-wrap" aria-hidden="true">
+        <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+      </span>
+      <span class="theme-toggle-label">${labelText}</span>
+    </button>`;
+}
+
+try {
+  applyTheme(getActiveTheme(), { persist: false, animate: false });
+} catch (e) { }
 
 // Storage helper: supports both window.storage and localStorage
 const storage = {
@@ -205,11 +319,6 @@ function formatDateInputMMDDYYYY(iso) {
   return `${m}/${d}/${y}`;
 }
 
-// Backwards-compatible alias for PO module
-function formatPOInputDate(iso) {
-  return formatDateInputMMDDYYYY(iso);
-}
-
 function updateDateYearISO(iso, targetYear, defaultMD = '01-01') {
   const curY = getCurrentYear();
   const today = todayISO();
@@ -247,10 +356,6 @@ function closeAppMonthDayPicker() {
   const poEl = document.getElementById('po-calendar-popover');
   if (poEl) poEl.remove();
   appCalConfig = null;
-}
-
-function closePOCalendar() {
-  closeAppMonthDayPicker();
 }
 
 function openAppMonthDayPicker(config) {
@@ -516,8 +621,15 @@ function escapeAttr(str) {
 
 function getProductHex(product) {
   if (!product) return '';
-  if (product.colorHex && /^#[0-9A-Fa-f]{6}$/i.test(product.colorHex)) {
-    return product.colorHex;
+  if ((product.colorId || product.color_id) && typeof findColorLibraryEntry === 'function') {
+    const libEntry = findColorLibraryEntry(product.colorId || product.color_id);
+    if (libEntry && libEntry.hex && /^#[0-9A-Fa-f]{6}$/i.test(libEntry.hex)) {
+      return libEntry.hex.toUpperCase();
+    }
+  }
+  const directHex = product.colorHex || product.color_hex;
+  if (directHex && /^#[0-9A-Fa-f]{6}$/i.test(directHex)) {
+    return directHex.toUpperCase();
   }
   if (typeof getProductDefaultColor === 'function') {
     return getProductDefaultColor(product);
@@ -533,8 +645,27 @@ function generateReceiptNo() {
   const dateStr = now.getFullYear().toString() +
     String(now.getMonth() + 1).padStart(2, '0') +
     String(now.getDate()).padStart(2, '0');
-  const seq = String((db && db.sales ? db.sales.length : 0) + 1).padStart(4, '0');
-  return `OR-${dateStr}-${seq}`;
+  const salesList = (db && Array.isArray(db.sales)) ? db.sales : [];
+  const usedReceipts = new Set();
+  let maxSeq = salesList.length;
+  for (const s of salesList) {
+    const r = String((s && (s.receiptNo || s.receipt_no)) || '').trim();
+    if (r) {
+      usedReceipts.add(r.toUpperCase());
+      const m = r.match(/^OR-\d{8}-(\d+)$/i);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!isNaN(n) && n > maxSeq) maxSeq = n;
+      }
+    }
+  }
+  let nextSeq = maxSeq + 1;
+  let candidate = `OR-${dateStr}-${String(nextSeq).padStart(4, '0')}`;
+  while (usedReceipts.has(candidate.toUpperCase())) {
+    nextSeq++;
+    candidate = `OR-${dateStr}-${String(nextSeq).padStart(4, '0')}`;
+  }
+  return candidate;
 }
 
 function getReceiptNo(sale) {
@@ -674,6 +805,7 @@ function normalizeDbPayload(rawDb) {
         const prodName = p.productName || p.product_name || p.name;
         const category = p.category || p.type;
         const supplierId = p.supplierId || p.supplier_id || null;
+        const colorId = p.colorId || p.color_id || null;
         const prod = {
           ...p,
           id: prodId,
@@ -684,6 +816,8 @@ function normalizeDbPayload(rawDb) {
           product_name: prodName,
           type: p.type || category,
           category: category,
+          colorId: colorId,
+          color_id: colorId,
           supplierId: supplierId,
           supplier_id: supplierId,
           status: p.status || 'active',
@@ -746,6 +880,8 @@ function normalizeDbPayload(rawDb) {
 
   if (!Array.isArray(processed.adjustmentRequests)) processed.adjustmentRequests = [];
   if (!Array.isArray(processed.voidRequests)) processed.voidRequests = [];
+  if (!Array.isArray(processed.colorLibrary)) processed.colorLibrary = [];
+  if (!Array.isArray(processed.colorFormulas)) processed.colorFormulas = [];
 
   if (Array.isArray(processed.productSuppliers)) {
     processed.productSuppliers = processed.productSuppliers.map(ps => ({
@@ -934,9 +1070,19 @@ async function saveDB() {
     }
     if (db.deletedProductIds && db.deletedProductIds.length) db.deletedProductIds = [];
     if (db.deletedProductSupplierIds && db.deletedProductSupplierIds.length) db.deletedProductSupplierIds = [];
+    if (db.deletedSupplierIds && db.deletedSupplierIds.length) db.deletedSupplierIds = [];
 
     // Broadcast update to all other open tabs on this machine
     broadcastDbUpdate();
+
+    // Keep Expiration Tracking batch ledger synchronized with stock changes
+    if (typeof EXP !== 'undefined') {
+      EXP.loaded = false;
+      EXP.summaryTs = 0;
+      if ((currentPage === 'inventory' || currentPage === 'products' || currentPage === 'expiration') && typeof expLoad === 'function' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'staff')) {
+        expLoad(true);
+      }
+    }
   } catch (e) {
     console.error('Save to MySQL failed', e);
     showToast(e && e.message ? ('Save failed: ' + e.message) : 'Could not save to database — check connection.', 'error');

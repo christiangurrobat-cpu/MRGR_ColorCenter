@@ -26,7 +26,36 @@ function usersPage() {
         <p class="muted">Only Administrators have permission to manage user accounts.</p>
       </div>`;
   }
+  const activeTheme = typeof getActiveTheme === 'function' ? getActiveTheme() : 'light';
   return `
+  <div class="theme-settings-panel">
+    <div class="theme-settings-info">
+      <h3>Appearance &amp; Theme Settings</h3>
+      <p>Choose between Light Mode and Dark Mode across all modules. Your preference is saved automatically.</p>
+    </div>
+    <div class="theme-mode-options" role="group" aria-label="Theme Mode Selection">
+      <button type="button" class="theme-mode-option-btn ${activeTheme === 'light' ? 'active' : ''}" data-theme-option="light" onclick="setTheme('light')" aria-pressed="${activeTheme === 'light' ? 'true' : 'false'}">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <span>Light Mode</span>
+      </button>
+      <button type="button" class="theme-mode-option-btn ${activeTheme === 'dark' ? 'active' : ''}" data-theme-option="dark" onclick="setTheme('dark')" aria-pressed="${activeTheme === 'dark' ? 'true' : 'false'}">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+        <span>Dark Mode</span>
+      </button>
+    </div>
+  </div>
   <div class="panel">
 <div class="panel-head row"><h3>Users</h3><div class="spacer"></div><button class="btn small" onclick="openUserModal()">+ Add User</button></div>
 <div class="panel-body tight table-scroll">
@@ -195,7 +224,6 @@ async function submitUser(e, id) {
         }
       );
     }
-    showToast('User updated.');
   } else {
     const newUser = { id: uid('u'), status: 'active', password, ...data };
     db.users.push(newUser);
@@ -211,7 +239,6 @@ async function submitUser(e, id) {
         reason: 'New staff/user account registration'
       }
     );
-    showToast('User added.');
   }
   const savedOk = await saveDB();
   // Clear any in-memory password fields after persisting and refresh localStorage cache without plaintext passwords
@@ -222,8 +249,10 @@ async function submitUser(e, id) {
     try { await storage.set(DB_KEY, JSON.stringify(db)); } catch (err) { }
   }
   if (!savedOk) {
+    await loadDB();
     return false;
   }
+  showToast(id ? 'User updated.' : 'User added.', 'ok');
   closeModal();
   renderApp();
   return false;
@@ -267,7 +296,12 @@ async function toggleUserStatus(id) {
       reason: u.status === 'active' ? 'Administrator reactivated user account' : 'Administrator deactivated user account'
     }
   );
-  await saveDB();
+  const savedOk = await saveDB();
+  if (!savedOk) {
+    await loadDB();
+    renderPage();
+    return;
+  }
   renderPage();
-  showToast(`User ${u.status === 'active' ? 'activated' : 'deactivated'}.`);
+  showToast(`User ${u.status === 'active' ? 'activated' : 'deactivated'}.`, 'ok');
 }

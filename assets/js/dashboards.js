@@ -4,17 +4,17 @@
 
 function renderAuditCategoryBadgeSimple(cat, action) {
   const catMap = {
-    login_logout: { label: '🔐 Session', bg: '#EDE9FE', color: '#5B21B6', border: '#DDD6FE' },
-    security_events: { label: '🛡️ Security', bg: '#FEE2E2', color: '#991B1B', border: '#FCA5A5' },
-    product_changes: { label: '📦 Product', bg: '#E0F2FE', color: '#0369A1', border: '#BAE6FD' },
-    stock_movements: { label: '🚚 Stock Move', bg: '#FEF3C7', color: '#92400E', border: '#FDE68A' },
-    purchase_orders: { label: '📋 Purchase Order', bg: '#F0FDF4', color: '#166534', border: '#BBF7D0' },
-    sales_transactions: { label: '🛒 POS Sale', bg: '#F3E8FF', color: '#6B21A8', border: '#E9D5FF' },
-    returns_refunds: { label: '↩️ Return/Refund', bg: '#FFF1F2', color: '#9F1239', border: '#FECDD3' },
-    color_mixing: { label: '🎨 Color Mix', bg: '#FDF4FF', color: '#86198F', border: '#F5D0FE' },
-    user_management: { label: '👤 User Admin', bg: '#F1F5F9', color: '#334155', border: '#CBD5E1' }
+    login_logout: { label: '🔐 Session', bg: 'var(--purple-bg)', color: 'var(--purple-text)', border: 'var(--purple-border)' },
+    security_events: { label: '🛡️ Security', bg: 'var(--danger-bg)', color: 'var(--danger-text)', border: 'var(--danger-border)' },
+    product_changes: { label: '📦 Product', bg: 'var(--info-bg)', color: 'var(--info-text)', border: 'var(--info-border)' },
+    stock_movements: { label: '🚚 Stock Move', bg: 'var(--warning-bg)', color: 'var(--warning-text)', border: 'var(--warning-border)' },
+    purchase_orders: { label: '📋 Purchase Order', bg: 'var(--success-bg)', color: 'var(--success-text)', border: 'var(--success-border)' },
+    sales_transactions: { label: '🛒 POS Sale', bg: 'var(--purple-bg)', color: 'var(--purple-text)', border: 'var(--purple-border)' },
+    returns_refunds: { label: '↩️ Return/Refund', bg: 'var(--danger-bg)', color: 'var(--danger-text)', border: 'var(--danger-border)' },
+    color_mixing: { label: '🎨 Color Mix', bg: 'var(--purple-bg)', color: 'var(--purple-text)', border: 'var(--purple-border)' },
+    user_management: { label: '👤 User Admin', bg: 'var(--surface-3)', color: 'var(--ink)', border: 'var(--line)' }
   };
-  const c = catMap[cat] || { label: action || 'Activity', bg: '#F5F1E9', color: 'var(--ink-soft)', border: '#E2DACD' };
+  const c = catMap[cat] || { label: action || 'Activity', bg: 'var(--surface-3)', color: 'var(--ink-soft)', border: 'var(--line)' };
   return `<span class="badge" style="background:${c.bg}; color:${c.color}; border:1px solid ${c.border}; font-size:11px; font-weight:700; padding:2px 8px;">${c.label}</span>`;
 }
 
@@ -49,7 +49,7 @@ function renderAdminAuditLogRows(rows) {
         <td style="white-space:nowrap; vertical-align:middle; width:130px;">${timeText}</td>
         <td style="vertical-align:middle; white-space:nowrap;">
           <div style="font-weight:600; font-size:12.5px; color:var(--ink);">${userName}</div>
-          <span class="badge" style="font-size:10px; padding:1px 6px; background:#F5F1E9; color:var(--ink-soft); border:1px solid #E2DACD;">${userRole}</span>
+          <span class="badge" style="font-size:10px; padding:1px 6px; background:var(--surface-3); color:var(--ink-soft); border:1px solid var(--line);">${userRole}</span>
         </td>
         <td style="vertical-align:middle; white-space:nowrap; width:140px;">${categoryBadge}</td>
         <td style="vertical-align:middle; font-size:12.5px; color:var(--ink); line-height:1.4;">${details || action}</td>
@@ -88,7 +88,7 @@ function renderAdminAuditLogPanel() {
       <div>
         <h3 style="margin:0; display:flex; align-items:center; gap:8px;">
           <span>🛡️ User Activity &amp; Audit Log</span>
-          <span class="badge" style="background:#EDE9FE; color:#5B21B6; border:1px solid #DDD6FE; font-size:11.5px; padding:2px 8px;">
+          <span class="badge" style="background:var(--purple-bg); color:var(--purple-text); border:1px solid var(--purple-border); font-size:11.5px; padding:2px 8px;">
             Security &amp; Governance
           </span>
         </h3>
@@ -165,7 +165,7 @@ function renderAdminPOMonitoringPanel() {
     const totalQty = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
     return `
             <tr>
-              <td><code style="color:var(--teal); font-weight:700;">${escapeHtml(po.poNumber)}</code></td>
+              <td><code style="color:var(--teal-text); font-weight:700;">${escapeHtml(po.poNumber)}</code></td>
               <td><b>${escapeHtml((supplier && supplier.name) || po.supplierName || 'Unknown')}</b></td>
               <td>${formatDateTime(po.orderDate || po.date)}</td>
               <td>${items.length} line item${items.length === 1 ? '' : 's'} (${totalQty} units)</td>
@@ -267,7 +267,7 @@ function renderAdminReportsOverviewPanel() {
   const healthyPct = Math.round((summary.healthyProducts / totalProds) * 100);
 
   return `
-  <div class="panel" style="background:linear-gradient(180deg, #FFFFFF 0%, #FAF8F5 100%);">
+  <div class="panel" style="background:linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);">
     <div class="panel-head row wrap" style="gap:10px;">
       <div>
         <h3 style="margin:0; display:flex; align-items:center; gap:8px;">
@@ -284,25 +284,25 @@ function renderAdminReportsOverviewPanel() {
     </div>
     <div class="panel-body" style="padding:18px 20px;">
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:14px; margin-bottom:18px;">
-        <div style="background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
           <div style="font-size:11.5px; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Catalog Valuation</div>
           <div style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; color:var(--ink); margin-top:4px;">${peso(invVal)}</div>
-          <div style="font-size:11.5px; color:var(--teal); margin-top:2px;">Estimated warehouse stock value</div>
+          <div style="font-size:11.5px; color:var(--teal-text); margin-top:2px;">Estimated warehouse stock value</div>
         </div>
 
-        <div style="background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
           <div style="font-size:11.5px; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Stock Health Score</div>
           <div style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; color:var(--success); margin-top:4px;">${healthyPct}%</div>
           <div style="font-size:11.5px; color:var(--ink-soft); margin-top:2px;">${summary.healthyProducts} of ${summary.totalProducts} products fully stocked</div>
         </div>
 
-        <div style="background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
           <div style="font-size:11.5px; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Reorder Demand</div>
           <div style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; color:${summary.needsPOSizes ? 'var(--danger)' : 'var(--success)'}; margin-top:4px;">${summary.needsPOSizes} Sizes</div>
           <div style="font-size:11.5px; color:var(--ink-soft); margin-top:2px;">across ${summary.needsPOProducts} products needing PO</div>
         </div>
 
-        <div style="background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
+        <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow-sm);">
           <div style="font-size:11.5px; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Active Suppliers</div>
           <div style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; color:var(--orange); margin-top:4px;">${db.suppliers.filter(s => s.status === 'active').length}</div>
           <div style="font-size:11.5px; color:var(--ink-soft); margin-top:2px;">registered supplier accounts</div>
@@ -363,7 +363,7 @@ function renderStaffIncomingDeliveriesPanel() {
     const totalCans = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
     return `
             <tr>
-              <td><code style="color:var(--teal); font-weight:700;">${escapeHtml(po.poNumber)}</code></td>
+              <td><code style="color:var(--teal-text); font-weight:700;">${escapeHtml(po.poNumber)}</code></td>
               <td><b>${escapeHtml((supplier && supplier.name) || po.supplierName || 'Unknown')}</b></td>
               <td>${formatDateTime(po.orderDate || po.date)}</td>
               <td>${items.length} line item${items.length === 1 ? '' : 's'} (${totalCans} units)</td>
@@ -474,7 +474,7 @@ function formatAdminTxnProductsSoldSummary(items, saleId) {
         ${it.isBlend && it.hex ? `<span class="cm-color-dot" style="background:${escapeHtml(it.hex)}; width:9px; height:9px; min-width:9px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.15);"></span>` : ''}
         <span style="font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.name)}</span>
         ${parts.length ? `<span class="muted small" style="font-size:11px; white-space:nowrap;">(${escapeHtml(parts.join(', '))})</span>` : ''}
-        <span style="font-weight:700; color:var(--teal); font-size:11.5px; white-space:nowrap;">×${it.qty}</span>
+        <span style="font-weight:700; color:var(--teal-text); font-size:11.5px; white-space:nowrap;">×${it.qty}</span>
       </div>
     `;
   }).join('');
@@ -484,7 +484,7 @@ function formatAdminTxnProductsSoldSummary(items, saleId) {
       ${lines}
       ${remainingCount > 0 ? `
         <div style="margin-top:2px;">
-          <a href="#" onclick="toggleAdminTxnRow('${escapeAttr(saleId)}'); return false;" style="color:var(--teal); font-size:11px; font-weight:600; text-decoration:underline;">
+          <a href="#" onclick="toggleAdminTxnRow('${escapeAttr(saleId)}'); return false;" style="color:var(--teal-text); font-size:11px; font-weight:600; text-decoration:underline;">
             + ${remainingCount} more item${remainingCount === 1 ? '' : 's'} (click for details)
           </a>
         </div>
@@ -545,7 +545,7 @@ function renderAdminRecentTransactionsPanel(recent) {
                       ${escapeHtml(item.name)}
                     </div>
                     ${item.components.length ? `
-                      <div class="muted small" style="font-size:11px; margin-top:2px; color:#6B6259;">
+                      <div class="muted small" style="font-size:11px; margin-top:2px; color:var(--ink-soft);">
                         Formula: ${item.components.map(cp => `${cp.percentage}% ${escapeHtml(cp.name)}`).join(' + ')}
                       </div>
                     ` : ''}
@@ -553,12 +553,12 @@ function renderAdminRecentTransactionsPanel(recent) {
                   <td style="padding:7px 10px; color:var(--ink-soft);">${escapeHtml(item.brand)}</td>
                   <td style="padding:7px 10px;">
                     <div style="display:flex; align-items:center; gap:5px;">
-                      ${item.hex ? `<span style="font-family:monospace; font-size:11px; font-weight:600; color:var(--teal);">(${escapeHtml(item.hex)})</span>` : ''}
+                      ${item.hex ? `<span style="font-family:monospace; font-size:11px; font-weight:600; color:var(--teal-text);">(${escapeHtml(item.hex)})</span>` : ''}
                       <span>${escapeHtml(item.colorName)}</span>
                     </div>
                   </td>
                   <td style="padding:7px 10px; text-align:center; font-weight:600;">
-                    <span class="badge" style="background:#F2EDE4; border:1px solid #E5DDCF; color:var(--ink); font-size:11px; padding:2px 7px;">${escapeHtml(item.sizeStr)}</span>
+                    <span class="badge" style="background:var(--surface-3); border:1px solid var(--line); color:var(--ink); font-size:11px; padding:2px 7px;">${escapeHtml(item.sizeStr)}</span>
                   </td>
                   <td style="padding:7px 10px; text-align:right; font-weight:600;">${formatStock(item.qty)}</td>
                   <td style="padding:7px 10px; text-align:right;">${peso(item.unitPrice)}</td>
@@ -571,7 +571,7 @@ function renderAdminRecentTransactionsPanel(recent) {
               <tr class="dash-txn-row ${isExpanded ? 'expanded' : ''}" id="dash-txn-row-${s.id}">
                 <td>
                   <a href="#" onclick="viewSale('${escapeAttr(s.id)}'); return false;" class="receipt-link" title="Click to view Official Receipt">
-                    <code style="color:var(--teal); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code>
+                    <code style="color:var(--teal-text); font-weight:700;">${escapeHtml(getReceiptNo(s))}</code>
                   </a>
                 </td>
                 <td style="white-space:nowrap; font-size:12.5px;">${formatDateTime(s.date)}</td>
@@ -586,15 +586,15 @@ function renderAdminRecentTransactionsPanel(recent) {
                 <td class="center" style="white-space:nowrap;">${saleStatusBadge(s.status)}</td>
                 <td class="right" style="text-align:right; white-space:nowrap;">
                   ${refundTotal > 0 ? `
-                    <div style="font-weight:700; font-family:'Space Grotesk'; font-size:13px;">${peso(netTotal)}</div>
+                    <div style="font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13px;">${peso(netTotal)}</div>
                     <div class="muted small" style="color:var(--danger); font-size:10.5px;" title="Original: ${peso(s.total)}">Orig: ${peso(s.total)}</div>
                   ` : `
-                    <div style="font-weight:700; font-family:'Space Grotesk'; font-size:13px;">${peso(s.total)}</div>
+                    <div style="font-weight:700; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:13px;">${peso(s.total)}</div>
                   `}
                 </td>
                 <td style="text-align:right; white-space:nowrap;">
                   <div class="row wrap" style="justify-content:flex-end; gap:5px;">
-                    <button type="button" class="btn ghost small ${isExpanded ? 'active' : ''}" id="btn-expand-txn-${s.id}" onclick="toggleAdminTxnRow('${s.id}')" title="Toggle detailed product breakdown" style="font-size:11.5px; padding:3px 8px; color:var(--teal);">
+                    <button type="button" class="btn ghost small ${isExpanded ? 'active' : ''}" id="btn-expand-txn-${s.id}" onclick="toggleAdminTxnRow('${s.id}')" title="Toggle detailed product breakdown" style="font-size:11.5px; padding:3px 8px; color:var(--teal-text);">
                       ${isExpanded ? '▴ Close' : '▾ Details'}
                     </button>
                     <button type="button" class="btn ghost small" onclick='viewSale("${s.id}")' title="View Official Receipt" style="font-size:11.5px; padding:3px 8px;">
@@ -605,15 +605,15 @@ function renderAdminRecentTransactionsPanel(recent) {
               </tr>
 
               <!-- Expandable Details Row -->
-              <tr id="dash-txn-details-${s.id}" class="dash-txn-details-row" style="display:${isExpanded ? 'table-row' : 'none'}; background:#FAF7F2; border-bottom:2px solid var(--line);">
+              <tr id="dash-txn-details-${s.id}" class="dash-txn-details-row" style="display:${isExpanded ? 'table-row' : 'none'}; background:var(--surface-2); border-bottom:2px solid var(--line);">
                 <td colspan="8" style="padding:14px 18px; border-top:1px dashed var(--line); border-bottom:2px solid var(--line-light);">
-                  <div class="dash-txn-expanded-container" style="background:#FFFFFF; border:1px solid var(--line); border-radius:var(--radius-sm); padding:14px 16px; box-shadow:var(--shadow-sm);">
+                  <div class="dash-txn-expanded-container" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:14px 16px; box-shadow:var(--shadow-sm);">
                     
                     <!-- Header row with meta info -->
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px; padding-bottom:10px; border-bottom:1px dashed var(--line);">
                       <div>
                         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                          <span style="font-family:'Space Grotesk'; font-weight:700; font-size:14px; color:var(--teal);">
+                          <span style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-weight:700; font-size:14px; color:var(--teal-text);">
                             Official Receipt: ${escapeHtml(receiptNo)}
                           </span>
                           ${saleStatusBadge(s.status)}
@@ -635,9 +635,9 @@ function renderAdminRecentTransactionsPanel(recent) {
                       <div style="font-weight:700; font-size:12.5px; margin-bottom:6px; color:var(--ink);">
                         📦 Products Sold &amp; Line Items (${itemsCount}):
                       </div>
-                      <table style="width:100%; font-size:12px; margin:0; border:1px solid var(--line-light); background:#fff;">
+                      <table style="width:100%; font-size:12px; margin:0; border:1px solid var(--line-light); background:var(--surface);">
                         <thead>
-                          <tr style="background:#F7F4EE; border-bottom:1px solid var(--line);">
+                          <tr style="background:var(--surface-2); border-bottom:1px solid var(--line);">
                             <th style="padding:6px 10px; width:30px; text-align:center;">#</th>
                             <th style="padding:6px 10px;">Product Name</th>
                             <th style="padding:6px 10px;">Brand</th>
@@ -655,20 +655,20 @@ function renderAdminRecentTransactionsPanel(recent) {
                     </div>
 
                     <!-- Financial Summary Card (Subtotal, Total Due) -->
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; padding:12px 14px; background:#FAF6EE; border:1px solid var(--line); border-radius:6px; font-size:12px;">
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; padding:12px 14px; background:var(--surface-2); border:1px solid var(--line); border-radius:6px; font-size:12px;">
                       <div>
                         <span class="muted" style="display:block; font-size:11px; margin-bottom:2px;">Subtotal:</span>
-                        <strong style="font-size:13.5px; font-family:'Space Grotesk';">${peso(subtotalAmount)}</strong>
+                        <strong style="font-size:13.5px; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;">${peso(subtotalAmount)}</strong>
                       </div>
                       ${(Number(s.discountAmount || s.discount || 0) > 0) ? `
                         <div>
                           <span class="muted" style="display:block; font-size:11px; margin-bottom:2px;">Promo Discount (10%):</span>
-                          <strong style="font-size:13.5px; font-family:'Space Grotesk'; color:var(--teal); font-weight:700;">-${peso(Number(s.discountAmount || s.discount || 0))}</strong>
+                          <strong style="font-size:13.5px; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--teal-text); font-weight:700;">-${peso(Number(s.discountAmount || s.discount || 0))}</strong>
                         </div>
                       ` : ''}
                       <div>
                         <span class="muted" style="display:block; font-size:11px; margin-bottom:2px;">Total Due:</span>
-                        <strong style="font-size:14px; font-family:'Space Grotesk'; color:var(--teal);">${peso(totalAmount)}</strong>
+                        <strong style="font-size:14px; font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; color:var(--teal-text);">${peso(totalAmount)}</strong>
                         ${refundTotal > 0 ? `<div class="muted small" style="color:var(--danger); font-size:11px;">Net: ${peso(netTotal)}</div>` : ''}
                       </div>
                     </div>
@@ -717,10 +717,10 @@ function adminDashboard() {
 
   return `
   <!-- Friendly Welcome Banner -->
-  <div style="background: linear-gradient(135deg, #FAF6EE 0%, #F1E9DA 100%); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 22px; margin-bottom: 20px; box-shadow: var(--shadow-sm); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px;">
+  <div style="background: linear-gradient(135deg, var(--surface-2) 0%, var(--surface-3) 100%); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 22px; margin-bottom: 20px; box-shadow: var(--shadow-sm); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px;">
     <div>
       <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-        <span style="font-family: 'Space Grotesk'; font-size: 20px; font-weight: 700; color: var(--ink);">
+        <span style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size: 20px; font-weight: 700; color: var(--ink);">
           ${greeting.emoji} ${greeting.text}, ${escapeHtml((currentUser && currentUser.name) || 'User')}!
         </span>
         <span class="badge" style="background:#0F766E; color:#FFFFFF; border:none; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px;">
@@ -740,7 +740,7 @@ function adminDashboard() {
           🚨 ${summary.criticalOutProducts} Products Out of Stock (${summary.criticalOutSizes} Variants)
         </span>
       ` : ''}
-      <span class="badge" style="background:#EBF5FB; color:#1B4F72; border:1px solid #AED6F1; padding: 6px 14px; font-size: 12px; font-weight:700;" title="${summary.onOrderSizes} container variants on order">
+      <span class="badge" style="background:var(--info-bg); color:var(--info-text); border:1px solid var(--info-border); padding: 6px 14px; font-size: 12px; font-weight:700;" title="${summary.onOrderSizes} container variants on order">
         📋 ${openPOCount} Open PO${openPOCount === 1 ? '' : 's'} (${summary.onOrderSizes} Variants on Order)
       </span>
     </div>
@@ -755,7 +755,7 @@ function adminDashboard() {
       <button class="btn small" style="background:var(--teal); color:#fff;" onclick="goToApprovalsTab('adjustments')" title="Approve or reject pending stock adjustment requests">
         ⚖️ Approve / Reject Adjustments ${pendingAdj.length ? `<span class="nav-badge">${pendingAdj.length}</span>` : ''}
       </button>
-      <button class="btn small secondary" onclick="goToExpiration('all')" title="Open Expiration Tracking module">
+      <button id="exp-dash-quick-btn" class="btn small secondary" onclick="goToExpiration('all')" title="Open Expiration Tracking module">
         🗓️ Expiration Tracking ${typeof expBadgeCount === 'function' && expBadgeCount() > 0 ? `<span class="nav-badge" style="background:var(--danger);">${expBadgeCount()}</span>` : ''}
       </button>
       <button class="btn secondary small" onclick="goTo('users')" title="Manage user accounts, roles, and staff permissions">
@@ -804,7 +804,7 @@ function adminDashboard() {
         <div class="label" style="margin-bottom:0;">⏳ Pending Approvals</div>
         ${totalPending ? `<span class="badge warning" style="font-size:10px; font-weight:700; padding:1px 6px;">Action Req.</span>` : `<span class="badge ok" style="font-size:10px; font-weight:600; padding:1px 6px;">Clear</span>`}
       </div>
-      <div class="value" style="${totalPending ? 'color:var(--mustard-dark, #92400E);' : ''}">${totalPending}</div>
+      <div class="value" style="${totalPending ? 'color:var(--warning-text);' : ''}">${totalPending}</div>
       <div class="sub" style="font-size:12px; line-height:1.45;">
         ${totalPending > 0 ? `
           <span><b>${pendingAdj.length}</b> adjustments</span> · 
@@ -871,10 +871,10 @@ function adminDashboard() {
     </div>
 
     <!-- Card 8: Expiration Tracking -->
-    <div class="stat-card clickable ${typeof expBadgeCount === 'function' && expBadgeCount() > 0 ? 'danger' : ''}" onclick="goToExpiration('all')" title="Click to monitor batch expiration dates and shelf life">
+    <div id="exp-dash-stat-card" class="stat-card clickable ${typeof expBadgeCount === 'function' && expBadgeCount() > 0 ? 'danger' : ''}" onclick="goToExpiration('all')" title="Click to monitor batch expiration dates and shelf life">
       <div class="label">🗓️ Expiration Tracking</div>
-      <div class="value">${typeof EXP !== 'undefined' && EXP && EXP.summary ? `${(EXP.summary.expired || 0) + (EXP.summary.critical || 0)} Urgent` : 'Batches'}</div>
-      <div class="sub">${typeof EXP !== 'undefined' && EXP && EXP.summary ? `<b>${EXP.summary.expired || 0}</b> expired · <b>${EXP.summary.critical || 0}</b> critical · <b>${EXP.summary.soon || 0}</b> soon` : 'Shelf-life & FIFO monitoring'}</div>
+      <div class="value">${typeof EXP !== 'undefined' && EXP && EXP.summary ? `${(EXP.summary.expired || 0) + (EXP.summary.critical || 0)} Urgent` : 'Loading…'}</div>
+      <div class="sub">${typeof EXP !== 'undefined' && EXP && EXP.summary ? `<b>${EXP.summary.expired || 0}</b> expired · <b>${EXP.summary.critical || 0}</b> critical · <b>${EXP.summary.soon || 0}</b> soon` : 'Checking batch expiration…'}</div>
       <div class="stat-card-footer">
         <span class="stat-action-link">Expiration Tracking &rarr;</span>
       </div>
@@ -884,7 +884,7 @@ function adminDashboard() {
   ${totalPending > 0 ? `
     <div class="alert-banner warning" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; border-left:4px solid var(--mustard); margin-bottom:12px;">
       <span>⏳ <b>${totalPending} Pending Approval Request${totalPending === 1 ? '' : 's'} awaiting your decision</b> (${pendingAdj.length} stock adjustment${pendingAdj.length === 1 ? '' : 's'}, ${pendingPOs.length} purchase order${pendingPOs.length === 1 ? '' : 's'}, ${pendingVoid.length} void request${pendingVoid.length === 1 ? '' : 's'}, ${pendingInv.length} catalog update${pendingInv.length === 1 ? '' : 's'}).</span>
-      <a href="#" onclick="goTo('approvals'); return false;" style="font-weight:700; color:var(--teal); text-decoration:underline;">Review in Approvals Hub &rarr;</a>
+      <a href="#" onclick="goTo('approvals'); return false;" style="font-weight:700; color:var(--teal-text); text-decoration:underline;">Review in Approvals Hub &rarr;</a>
     </div>
   ` : ''}
 
@@ -894,7 +894,7 @@ function adminDashboard() {
       <a href="#" onclick="goTo('alerts');return false;" style="font-weight:700; text-decoration:underline;">View Low-Stock Alerts &rarr;</a>
     </div>
   ` : (summary.onOrderSizes ? `
-    <div class="alert-banner" style="background:#EBF5FB; border-color:#AED6F1; color:#1B4F72; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+    <div class="alert-banner" style="background:var(--info-bg); border-color:var(--info-border); color:var(--info-text); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <span>✅ <b>All ${summary.onOrderSizes} low-stock container size${summary.onOrderSizes === 1 ? '' : 's'} have purchase orders placed</b> and are awaiting delivery.</span>
       <a href="#" onclick="goTo('alerts');return false;" style="font-weight:700; text-decoration:underline;">View On-Order Items &rarr;</a>
     </div>
@@ -921,7 +921,7 @@ function adminDashboard() {
         </h3>
         <div class="muted small" style="margin-top:4px;">
           ${summary.needsPOProducts ? `⚠️ <b>${summary.needsPOProducts}</b> product(s) needing purchase orders (<b>${summary.needsPOSizes}</b> eligible container sizes).` : '✅ All low-stock products have purchase orders en route.'}
-          ${summary.onOrderSizes ? `<span style="margin-left:6px; color:#1B4F72; font-weight:600;">(${summary.onOrderSizes} container sizes already on order awaiting delivery)</span>` : ''}
+          ${summary.onOrderSizes ? `<span style="margin-left:6px; color:var(--info-text); font-weight:600;">(${summary.onOrderSizes} container sizes already on order awaiting delivery)</span>` : ''}
         </div>
       </div>
       <div class="spacer"></div>
@@ -955,7 +955,7 @@ function adminDashboard() {
     }).sort((a, b) => Number(a) - Number(b));
     if (!sizes.length) return '';
     const rowSpan = sizes.length;
-    const bgGroup = pIdx % 2 === 1 ? 'background:#FCFBF9;' : 'background:#FFFFFF;';
+    const bgGroup = pIdx % 2 === 1 ? 'background:var(--surface-2);' : 'background:var(--surface);';
 
     return sizes.map((s, idx) => {
       const isFirst = idx === 0;
@@ -968,48 +968,48 @@ function adminDashboard() {
       const threshVol = thresh * Number(s);
       const st = LowStockService.getVariantStockStatus(p, s);
       const poSt = LowStockService.getVariantPOStatus(p, s, sizeId);
-      const borderBottom = isLast ? 'border-bottom: 2px solid #D8D1C4;' : 'border-bottom: 1px solid #F0ECE1;';
+      const borderBottom = isLast ? 'border-bottom: 2px solid var(--line-strong);' : 'border-bottom: 1px solid var(--line-light);';
       const rowClass = `dash-row dash-prod-row-${p.id} ${isLast ? 'product-row-last' : ''} ${poSt.status === 'on_order' ? 'row-on-order' : ''}`;
 
       return `
             <tr class="${rowClass}" style="${bgGroup}">
               ${isFirst ? `
-                <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
                     <span style="font-weight:700; font-size:13.5px; color:var(--ink); line-height:1.3;">
                       ${escapeHtml(p.name)}
                     </span>
                   </div>
                   <div style="font-size:11.5px; color:var(--ink-soft); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:700; color:var(--teal);">(${getProductHex(p)})</code>
+                    <code style="font-family:'Space Grotesk',monospace; font-size:11px; font-weight:700; color:var(--teal-text);">(${getProductHex(p)})</code>
                     ${p.color && p.color !== '-' ? `<span style="font-weight:500;">(${escapeHtml(p.color)})</span>` : ''}
                   </div>
                   <div class="muted small" style="margin-top:4px; font-size:11px;">
                     Total Stock: <b style="${productHasLowStock(p) ? 'color:var(--danger);' : ''}">${formatLiters(p.stock)}</b>
                   </div>
                 </td>
-                <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC; font-weight:600;">
+                <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line); font-weight:600;">
                   ${escapeHtml(p.brand)}
                 </td>
-                <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid #D8D1C4; border-right: 1px solid #EFE9DC;">
+                <td rowspan="${rowSpan}" style="vertical-align:middle; border-bottom: 2px solid var(--line); border-right: 1px solid var(--line);">
                   ${supplierBadgesHtml(p.id)}
                 </td>
               ` : ''}
 
               <!-- Container Size -->
               <td class="center" style="vertical-align:middle; ${borderBottom}">
-                <span class="badge" style="background:#FAF8F5; border:1px solid #E5DDCF; font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:12px; padding:2px 8px;">
+                <span class="badge" style="background:var(--surface-2); border:1px solid var(--line); font-weight:700; font-family:'Space Grotesk',sans-serif; color:var(--ink); font-size:12px; padding:2px 8px;">
                   ${fmtSize(s)}
                 </span>
               </td>
 
               <!-- Stock Quantity (Units) -->
-              <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:#B45309;' : 'color:var(--ink);')}">
+              <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:var(--warning-text);' : 'color:var(--ink);')}">
                 ${count} ${count === 1 ? 'unit' : 'units'}
               </td>
 
               <!-- Stock Volume (L) -->
-              <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:#B45309;' : 'color:var(--ink);')}">
+              <td class="right" style="font-weight:600; font-family:'Space Grotesk',sans-serif; vertical-align:middle; ${borderBottom} ${st === 'out' ? 'color:var(--danger);' : (st === 'low' ? 'color:var(--warning-text);' : 'color:var(--ink);')}">
                 ${formatLiters(stockVol)}
               </td>
 
@@ -1150,50 +1150,6 @@ function updateStaffMovementsTableContainer() {
   }
 }
 
-/**
- * Renders date and time stacked in a clean, robust format for stock movement tables.
- * Safely handles valid dates (ISO, MySQL datetime, Date objects), null/undefined,
- * empty strings, and invalid date formats.
- */
-function renderMovementDateTimeCell(dateVal) {
-  if (dateVal === null || dateVal === undefined) {
-    return `<div class="movement-datetime-cell"><span class="datetime-day text-muted" style="color:var(--ink-soft); opacity:0.6;">—</span></div>`;
-  }
-
-  if (typeof dateVal === 'string' && dateVal.trim() === '') {
-    return `<div class="movement-datetime-cell"><span class="datetime-day text-muted" style="color:var(--ink-soft); opacity:0.6;">—</span></div>`;
-  }
-
-  let d = null;
-  if (dateVal instanceof Date) {
-    d = dateVal;
-  } else if (typeof dateVal === 'string') {
-    const clean = dateVal.trim();
-    // Normalize MySQL datetime 'YYYY-MM-DD HH:mm:ss' to ISO format for consistent cross-browser parsing
-    const isoCandidate = clean.includes(' ') && !clean.includes('T') ? clean.replace(' ', 'T') : clean;
-    d = new Date(isoCandidate);
-    if (isNaN(d.getTime())) {
-      d = new Date(clean);
-    }
-  } else {
-    d = new Date(dateVal);
-  }
-
-  if (!d || isNaN(d.getTime())) {
-    return `<div class="movement-datetime-cell"><span class="datetime-day">${escapeHtml(String(dateVal))}</span></div>`;
-  }
-
-  const dayStr = d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
-  const timeStr = d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
-
-  return `
-    <div class="movement-datetime-cell">
-      <div class="datetime-day">${escapeHtml(dayStr)}</div>
-      <div class="datetime-time">${escapeHtml(timeStr)}</div>
-    </div>
-  `;
-}
-
 function renderMovementTypeBadgeClean(type) {
   const t = String(type || '').toLowerCase();
   switch (t) {
@@ -1307,9 +1263,9 @@ function renderStaffStockMovementsTable() {
 
   if (!pageItems.length) {
     return `
-      <div style="padding: 44px 20px; text-align: center; background: #FFFFFF;">
+      <div style="padding: 44px 20px; text-align: center; background: var(--surface);">
         <div style="font-size: 34px; margin-bottom: 10px;">📦</div>
-        <div style="font-family: 'Space Grotesk'; font-size: 16px; font-weight: 700; color: var(--ink);">
+        <div style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: var(--ink);">
           No Stock Movements Found
         </div>
         <div class="muted small" style="margin-top: 5px; max-width: 420px; margin-left: auto; margin-right: auto;">
@@ -1439,10 +1395,10 @@ function renderStaffStockMovementsTable() {
     </div>
 
     <!-- Pagination Controls -->
-    <div class="mrgr-pagination" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 18px; border-top:1px solid var(--line); background:#FAF8F5; gap:12px;">
+    <div class="mrgr-pagination" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 18px; border-top:1px solid var(--line); background:var(--surface-2); gap:12px;">
       <div class="mrgr-pagination-left" style="font-size:12.5px; color:var(--ink-soft);">
         Showing <b>${showingStart}–${showingEnd}</b> of <b>${total}</b> transactions
-        ${hasFilter ? '<span style="color:var(--teal); font-weight:600; margin-left:4px;">(filtered)</span>' : ''}
+        ${hasFilter ? '<span style="color:var(--teal-text); font-weight:600; margin-left:4px;">(filtered)</span>' : ''}
       </div>
       <div class="mrgr-pagination-right" style="display:flex; align-items:center; gap:8px;">
         <button type="button" class="mrgr-page-btn nav-prev" ${currentPageNum <= 1 ? 'disabled' : ''} onclick="changeStaffMovementsPage(${currentPageNum - 1})" title="Previous Page">
@@ -1499,7 +1455,7 @@ function openStaffMovementDetailModal(moveId) {
             ${renderMovementTypeBadgeClean(target.type)}
             ${renderMovementRefPillClean(refInfo)}
           </div>
-          <div style="font-family:'Space Grotesk'; font-size:15px; font-weight:700; color:var(--ink);">
+          <div style="font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; font-size:15px; font-weight:700; color:var(--ink);">
             ${escapeHtml(target.productName || (prod && prod.name) || 'Stock Movement')}
           </div>
         </div>
@@ -1547,7 +1503,7 @@ function openStaffMovementDetailModal(moveId) {
 
         <div class="movement-modal-field">
           <div class="field-lbl">Internal Movement ID</div>
-          <div class="field-val"><code style="font-family:'Space Grotesk',monospace; font-size:12px; color:var(--teal);">${escapeHtml(target.id)}</code></div>
+          <div class="field-val"><code style="font-family:'Space Grotesk',monospace; font-size:12px; color:var(--teal-text);">${escapeHtml(target.id)}</code></div>
         </div>
       </div>
 
@@ -1739,7 +1695,7 @@ function staffDashboard() {
         </div>
         <span class="staff-kpi-tag ${myPendingAdj.length ? 'tag-urgent' : 'tag-ok'}">${myPendingAdj.length ? 'Awaiting Admin Approval' : 'Clear'}</span>
       </div>
-      <div class="staff-kpi-value" style="${myPendingAdj.length ? 'color:var(--mustard-dark, #92400E);' : ''}">${myPendingAdj.length} Request${myPendingAdj.length === 1 ? '' : 's'}</div>
+      <div class="staff-kpi-value" style="${myPendingAdj.length ? 'color:var(--warning-text);' : ''}">${myPendingAdj.length} Request${myPendingAdj.length === 1 ? '' : 's'}</div>
       <div class="staff-kpi-sub">
         <span>${myPendingAdj.length ? 'Awaiting Admin Approval' : 'No pending adjustment requests'}</span>
       </div>
@@ -1768,7 +1724,7 @@ function staffDashboard() {
       <button type="button" class="staff-action-btn-highlight accent-warm" onclick="goTo('inventory')" title="Browse catalog inventory and check stock counts">
         <span>📦</span> Inventory Management ${getModuleBadgeHtml('inventory')}
       </button>
-      <button type="button" class="staff-action-btn-highlight accent-adjust" onclick="goToExpiration('all')" title="Monitor batch expiration dates and shelf life">
+      <button id="exp-staff-quick-btn" type="button" class="staff-action-btn-highlight accent-adjust" onclick="goToExpiration('all')" title="Monitor batch expiration dates and shelf life">
         <span>🗓️</span> Expiration Tracking ${getModuleBadgeHtml('expiration')}
       </button>
 

@@ -18,5 +18,5 @@ echo Project Directory: %CD%
 echo URL: http://MRGR_ColorCenter
 echo ====================================================
 start http://MRGR_ColorCenter
-php -S 0.0.0.0:80
+php -S 0.0.0.0:80 index.php
 pause

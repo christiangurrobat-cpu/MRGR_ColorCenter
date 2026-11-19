@@ -452,31 +452,6 @@ function setAuditDatePreset(preset) {
   loadAuditLogs();
 }
 
-function onAuditDateChange() {
-  const fromEl = document.getElementById('al-from');
-  const toEl = document.getElementById('al-to');
-  const toIso = (v) => {
-    if (!v) return '';
-    if (typeof parseMMDDYYYYToISO === 'function') return parseMMDDYYYYToISO(v) || v;
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v).trim());
-    return m ? `${m[3]}-${m[1]}-${m[2]}` : String(v).trim();
-  };
-  let f = toIso(fromEl ? fromEl.value : '');
-  let t = toIso(toEl ? toEl.value : '');
-  if (f && t && f > t) {
-    const tmp = f;
-    f = t;
-    t = tmp;
-    if (fromEl) fromEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(f) : f;
-    if (toEl) toEl.value = typeof formatDateInputMMDDYYYY === 'function' ? formatDateInputMMDDYYYY(t) : t;
-  }
-  auditFilters.from = f;
-  auditFilters.to = t;
-  resetPaginationPage('audit_log');
-  updateAuditDatePresetsUI();
-  loadAuditLogs();
-}
-
 function clearAuditDates() {
   setAuditDatePreset('all');
 }
@@ -629,7 +604,7 @@ function auditLogPage() {
       <div>
         🏛️ <b>Historical Audit Records:</b> Showing ${!f.from && !f.to ? 'All-Time' : (f.from && f.to && f.from.slice(0, 4) === f.to.slice(0, 4) ? `Year ${f.from.slice(0, 4)}` : `${f.from ? formatDateReadable(f.from) : 'Start'} – ${f.to ? formatDateReadable(f.to) : 'Present'}`)} events. All system audit trail events are permanently retained and cannot be overwritten.
       </div>
-      <button type="button" class="btn ghost small" onclick="setAuditDatePreset('year')" style="color:#7B4F09; border-color:#D19A42; background:#fff;">Return to Current Year (${curY}) &rarr;</button>
+      <button type="button" class="btn ghost small" onclick="setAuditDatePreset('year')" style="color:var(--warning-text); border-color:var(--warning-border); background:var(--surface);">Return to Current Year (${curY}) &rarr;</button>
     </div>
   ` : ''}
 
@@ -1313,8 +1288,8 @@ function openAuditDetailModal(idx) {
               ${c.existingList.length ? c.existingList.map(sz => `<span class="audit-size-pill">${escapeHtml(sz)}</span>`).join('') : '<span class="muted small">None</span>'}
             </div>
           </div>
-          <div class="audit-detail-card" style="border-color:#A7F3D0; background:#F0FDF4;">
-            <div class="audit-size-section-label" style="margin-bottom:6px; color:#065F46;">Updated Size List</div>
+          <div class="audit-detail-card" style="border-color:var(--success-border); background:var(--success-bg);">
+            <div class="audit-size-section-label" style="margin-bottom:6px; color:var(--success-text);">Updated Size List</div>
             <div class="audit-badges-wrap">
               ${c.newList.map(sz => {
       const isAdded = c.addedList.includes(sz);
@@ -1334,9 +1309,9 @@ function openAuditDetailModal(idx) {
             <div class="audit-ba-header">Previous Quantity</div>
             <div class="audit-ba-content">${escapeHtml(s.prevQty)}</div>
           </div>
-          <div class="audit-ba-pane" style="background:${s.isNeg ? '#FEF2F2' : '#ECFDF5'}; border:1px solid ${s.isNeg ? '#FECACA' : '#A7F3D0'};">
-            <div class="audit-ba-header" style="color:${s.isNeg ? '#991B1B' : '#065F46'};">Quantity Adjustment</div>
-            <div class="audit-ba-content" style="color:${s.isNeg ? '#B91C1C' : '#047857'}; font-weight:700;">${escapeHtml(s.adjQty)}</div>
+          <div class="audit-ba-pane" style="background:${s.isNeg ? 'var(--danger-bg)' : 'var(--success-bg)'}; border:1px solid ${s.isNeg ? 'var(--danger-border)' : 'var(--success-border)'};">
+            <div class="audit-ba-header" style="color:${s.isNeg ? 'var(--danger-text)' : 'var(--success-text)'};">Quantity Adjustment</div>
+            <div class="audit-ba-content" style="color:${s.isNeg ? 'var(--danger-text)' : 'var(--success-text)'}; font-weight:700;">${escapeHtml(s.adjQty)}</div>
           </div>
           <div class="audit-ba-pane audit-ba-new">
             <div class="audit-ba-header">Final Quantity Balance</div>
@@ -1354,17 +1329,17 @@ function openAuditDetailModal(idx) {
       <div style="margin-top:12px;">
         <div class="audit-detail-section-label" style="margin-bottom:8px;">🛡️ Security Access Control Resolution</div>
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px;">
-          <div class="audit-detail-card" style="border-left:3px solid #DC2626; background:#FEF2F2;">
+          <div class="audit-detail-card" style="border-left:3px solid #DC2626; background:var(--danger-bg);">
             <div class="audit-detail-label">Restricted Module Target</div>
-            <div style="font-size:14px; font-weight:700; color:#991B1B;">${escapeHtml(moduleName)}</div>
+            <div style="font-size:14px; font-weight:700; color:var(--danger-text);">${escapeHtml(moduleName)}</div>
           </div>
           <div class="audit-detail-card">
             <div class="audit-detail-label">Attempted Role / User</div>
             <div style="font-size:13px; font-weight:600;">${escapeHtml(userName)} (${escapeHtml(attemptedRole)})</div>
           </div>
-          <div class="audit-detail-card" style="border-left:3px solid #DC2626; background:#FEF2F2;">
+          <div class="audit-detail-card" style="border-left:3px solid #DC2626; background:var(--danger-bg);">
             <div class="audit-detail-label">Access Enforcement Result</div>
-            <div style="font-size:14px; font-weight:700; color:#DC2626;">Access Denied (Blocked)</div>
+            <div style="font-size:14px; font-weight:700; color:var(--danger-text);">Access Denied (Blocked)</div>
           </div>
         </div>
       </div>`;
@@ -1447,7 +1422,7 @@ function openAuditDetailModal(idx) {
         <div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">
           <table style="width:100%; font-size:12.5px;">
             <thead>
-              <tr style="background:#F5F1E9;">
+              <tr style="background:var(--surface-3);">
                 <th style="padding:7px 10px;">Field / Attribute</th>
                 <th style="padding:7px 10px;">Previous Value</th>
                 <th style="padding:7px 10px;">New Value</th>
@@ -1458,7 +1433,7 @@ function openAuditDetailModal(idx) {
                 <tr>
                   <td style="padding:6px 10px; font-weight:600;">${escapeHtml(ch.field || '')}</td>
                   <td style="padding:6px 10px; color:var(--ink);">${escapeHtml(ch.oldValue != null ? String(ch.oldValue) : '—')}</td>
-                  <td style="padding:6px 10px; color:#03543F; font-weight:600;">${escapeHtml(ch.newValue != null ? String(ch.newValue) : '—')}</td>
+                  <td style="padding:6px 10px; color:var(--success-text); font-weight:600;">${escapeHtml(ch.newValue != null ? String(ch.newValue) : '—')}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1473,7 +1448,7 @@ function openAuditDetailModal(idx) {
         <div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">
           <table style="width:100%; font-size:12.5px;">
             <thead>
-              <tr style="background:#F5F1E9;">
+              <tr style="background:var(--surface-3);">
                 <th style="padding:7px 10px;">Item</th>
                 <th style="padding:7px 10px;" class="right">Qty / Size</th>
                 <th style="padding:7px 10px;" class="right">Unit Price</th>
@@ -1501,7 +1476,7 @@ function openAuditDetailModal(idx) {
         <div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">
           <table style="width:100%; font-size:12.5px;">
             <thead>
-              <tr style="background:#F5F1E9;">
+              <tr style="background:var(--surface-3);">
                 <th style="padding:7px 10px;">Returned Product</th>
                 <th style="padding:7px 10px;" class="right">Returned Qty</th>
                 <th style="padding:7px 10px;" class="right">Refund Credit</th>

@@ -68,6 +68,9 @@ async function init() {
     } else {
       currentPage = defaultPageFor(currentUser.role);
     }
+    if (currentPage === 'pos' && typeof posLoadBatchStatus === 'function') {
+      await posLoadBatchStatus(false);
+    }
   } else if (!isForcedLogin && initialRoute && initialRoute.hasExplicitPage) {
     try {
       sessionStorage.setItem(PENDING_AUTH_ROUTE_KEY, JSON.stringify({
